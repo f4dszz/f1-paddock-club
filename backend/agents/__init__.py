@@ -9,12 +9,21 @@ Phase 2+: Replace mock with real LLM calls and tool invocations.
 """
 
 from __future__ import annotations
+import logging
+
 from state import TravelPlanState
 from llm import get_llm, provider_label
 
+logger = logging.getLogger(__name__)
+
 
 def _msg(agent: str, text: str) -> dict:
-    """Helper to create a streaming status message."""
+    """Helper to create a streaming status message.
+
+    Also logs the message so every agent status line lands in the
+    file-based audit trail, not just in state['messages'].
+    """
+    logger.info("[%s] %s", agent, text)
     return {"agent": agent, "text": text, "type": "status"}
 
 
@@ -181,6 +190,7 @@ def itinerary_agent(state: TravelPlanState) -> dict:
                 f"Return exactly {days_count} day lines."
             )
 
+            logger.info("itinerary_agent calling LLM (provider=%s, days=%d)", provider_label(), days_count)
             structured = llm.with_structured_output(Itinerary)
             result = structured.invoke(
                 [("system", system), ("user", user)]
@@ -190,6 +200,7 @@ def itinerary_agent(state: TravelPlanState) -> dict:
                 raise ValueError("LLM returned empty itinerary")
             used_llm = True
         except Exception as e:
+            logger.exception("itinerary_agent LLM call failed, falling back to mock")
             days = _itinerary_mock(state)
             return {
                 "itinerary": days,
@@ -260,6 +271,7 @@ def tour_agent(state: TravelPlanState) -> dict:
                 "accessibility-related, honor it in your picks."
             )
 
+            logger.info("tour_agent calling LLM (provider=%s, city=%s)", provider_label(), state.get("gp_city", ""))
             structured = llm.with_structured_output(TourRecs)
             result = structured.invoke(
                 [("system", system), ("user", user)]
@@ -269,6 +281,7 @@ def tour_agent(state: TravelPlanState) -> dict:
                 raise ValueError("LLM returned empty recommendations")
             used_llm = True
         except Exception as e:
+            logger.exception("tour_agent LLM call failed, falling back to mock")
             recs = _tour_mock(state)
             return {
                 "tour": recs,

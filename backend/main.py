@@ -8,12 +8,17 @@ Provides:
 from __future__ import annotations
 import asyncio
 import json
+import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from logging_config import setup_logging
 from graph import plan_trip
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="F1 Paddock Club", version="0.1.0")

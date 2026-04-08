@@ -21,6 +21,9 @@ Thumbs.db
 # Claude Code local settings
 .claude/
 
+# Backend log files
+backend/logs/
+
 # Node / frontend (for future Next.js migration)
 node_modules/
 .next/

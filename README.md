@@ -97,6 +97,7 @@ f1-paddock-club/
 │   ├── llm.py                 # Pluggable LLM client wrapper (Phase 2)
 │   ├── agents/__init__.py     # All 7 agent node functions
 │   ├── tools/__init__.py      # External tool stubs (Phase 3+)
+│   ├── logging_config.py      # File logger setup (writes to logs/)
 │   ├── requirements.txt
 │   └── .env.example           # Documents all supported env vars
 └── frontend/
@@ -206,6 +207,16 @@ curl -X POST http://localhost:8000/plan \
 #### WebSocket `/ws`
 
 Send the same JSON payload, receive a stream of `{type: "message", data: {...}}` frames as agents complete, then a final `{type: "result", data: {...}}` and `{type: "done"}`.
+
+### Logs
+
+Every run writes a structured audit trail to `backend/logs/backend.log` (UTF-8, append mode). Each agent's status messages, LLM call boundaries, and any exceptions land there with timestamps and the originating module name. The pretty console output from the CLI test is untouched — file logs are additive, not a replacement.
+
+```bash
+tail -f backend/logs/backend.log   # follow live
+```
+
+Bump verbosity with `LOG_LEVEL=DEBUG` in your `.env` (or `export`) to see LLM init details and prompts-related debug lines. `backend/logs/` is gitignored.
 
 ---
 

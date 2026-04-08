@@ -22,8 +22,11 @@ Graph structure:
        END
 """
 
+import logging
+
 from langgraph.graph import StateGraph, START, END
 
+from logging_config import setup_logging
 from state import TravelPlanState
 from agents import (
     parse_input,
@@ -36,6 +39,12 @@ from agents import (
     should_retry_budget,
     increment_retry,
 )
+
+# Initialize file logging as soon as this module is imported. Safe to
+# call multiple times; see logging_config.setup_logging for details.
+setup_logging()
+
+logger = logging.getLogger(__name__)
 
 
 def build_graph() -> StateGraph:
@@ -128,7 +137,23 @@ def plan_trip(user_input: dict) -> dict:
         "messages": [],
     }
 
+    logger.info(
+        "plan_trip start gp=%s city=%s origin=%s budget=%s extra_days=%s",
+        initial_state["gp_name"],
+        initial_state["gp_city"],
+        initial_state["origin"],
+        initial_state["budget"],
+        initial_state["extra_days"],
+    )
     result = graph.invoke(initial_state)
+    bs = result.get("budget_summary") or {}
+    logger.info(
+        "plan_trip done total=%s budget=%s within=%s retries=%s",
+        bs.get("total"),
+        bs.get("budget"),
+        bs.get("within_budget"),
+        result.get("retry_count", 0),
+    )
     return result
 
 

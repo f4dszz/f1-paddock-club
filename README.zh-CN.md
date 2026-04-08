@@ -99,6 +99,7 @@ f1-paddock-club/
 │   ├── llm.py                 # 可插拔大模型客户端封装（Phase 2 新增）
 │   ├── agents/__init__.py     # 7 个智能体节点函数
 │   ├── tools/__init__.py      # 外部工具占位（Phase 3+）
+│   ├── logging_config.py      # 文件日志配置（写到 logs/）
 │   ├── requirements.txt
 │   └── .env.example           # 列出所有支持的环境变量
 └── frontend/
@@ -208,6 +209,16 @@ curl -X POST http://localhost:8000/plan \
 #### WebSocket `/ws`
 
 发送同样的 JSON，服务端会随着每个智能体完成推送 `{type: "message", data: {...}}`，最后再推一个 `{type: "result", data: {...}}` 和 `{type: "done"}`。
+
+### 日志
+
+每次运行都会往 `backend/logs/backend.log` 追加一份结构化日志（UTF-8 编码），每个智能体的状态消息、LLM 调用的起止、以及任何异常堆栈都会带上时间戳和来源模块名落进去。CLI 那份漂亮的 console 输出不动，文件日志是**额外**的审计轨迹，不是替代。
+
+```bash
+tail -f backend/logs/backend.log   # 实时跟踪
+```
+
+想看更详细的（LLM 初始化参数、调试行），把 `LOG_LEVEL=DEBUG` 写到 `.env` 里或 `export` 出来就行。`backend/logs/` 已经在 `.gitignore` 里，不会被提交。
 
 ---
 

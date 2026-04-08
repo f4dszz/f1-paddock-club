@@ -22,6 +22,7 @@ backend/.env file (loaded automatically here via python-dotenv).
 """
 
 from __future__ import annotations
+import logging
 import os
 
 # Load .env file if python-dotenv is installed. Best-effort: if the
@@ -32,6 +33,9 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 PROVIDER = os.environ.get("LLM_PROVIDER", "openai").lower()
@@ -65,10 +69,12 @@ def get_llm(temperature: float = 0.7, max_tokens: int = 1024):
 
 def _get_openai(temperature: float, max_tokens: int):
     if not os.environ.get("OPENAI_API_KEY"):
+        logger.info("OPENAI_API_KEY not set, agents will use mock fallback")
         return None
     try:
         from langchain_openai import ChatOpenAI
     except ImportError:
+        logger.warning("langchain-openai not installed, agents will use mock fallback")
         return None
     try:
         kwargs: dict = {
@@ -79,17 +85,21 @@ def _get_openai(temperature: float, max_tokens: int):
         base_url = os.environ.get("OPENAI_BASE_URL")
         if base_url:
             kwargs["base_url"] = base_url
+        logger.debug("initializing ChatOpenAI model=%s base_url=%s", DEFAULT_OPENAI_MODEL, base_url or "default")
         return ChatOpenAI(**kwargs)
     except Exception:
+        logger.exception("failed to initialize ChatOpenAI")
         return None
 
 
 def _get_anthropic(temperature: float, max_tokens: int):
     if not os.environ.get("ANTHROPIC_API_KEY"):
+        logger.info("ANTHROPIC_API_KEY not set, agents will use mock fallback")
         return None
     try:
         from langchain_anthropic import ChatAnthropic
     except ImportError:
+        logger.warning("langchain-anthropic not installed, agents will use mock fallback")
         return None
     try:
         kwargs: dict = {
@@ -100,6 +110,8 @@ def _get_anthropic(temperature: float, max_tokens: int):
         base_url = os.environ.get("ANTHROPIC_BASE_URL")
         if base_url:
             kwargs["base_url"] = base_url
+        logger.debug("initializing ChatAnthropic model=%s base_url=%s", DEFAULT_ANTHROPIC_MODEL, base_url or "default")
         return ChatAnthropic(**kwargs)
     except Exception:
+        logger.exception("failed to initialize ChatAnthropic")
         return None
