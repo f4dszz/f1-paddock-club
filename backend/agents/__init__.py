@@ -10,11 +10,17 @@ Phase 2+: Replace mock with real LLM calls and tool invocations.
 
 from __future__ import annotations
 from state import TravelPlanState
+from llm import get_llm
 
 
 def _msg(agent: str, text: str) -> dict:
     """Helper to create a streaming status message."""
     return {"agent": agent, "text": text, "type": "status"}
+
+
+def _trip_days(state: TravelPlanState) -> int:
+    """Standard race weekend (Fri/Sat/Sun) plus any extra days."""
+    return 3 + int(state.get("extra_days", 0) or 0)
 
 
 # ── parse_input ──────────────────────────────────────────────────────
@@ -117,26 +123,90 @@ def hotel_agent(state: TravelPlanState) -> dict:
 
 
 # ── itinerary_agent ──────────────────────────────────────────────────
-def itinerary_agent(state: TravelPlanState) -> dict:
-    """Plan day-by-day schedule. Parallel with tour_agent."""
-    # TODO: Replace with real LLM call
-    days = [
+def _itinerary_mock(state: TravelPlanState) -> list[str]:
+    return [
         "Day 1 (Fri): Arrive + settle in. Evening: explore old town.",
         "Day 2 (Sat): FP3 + Qualifying. Afternoon: Parco di Monza.",
         "Day 3 (Sun): Race Day! Arrive early. Post-race track walk.",
         "Day 4 (Mon): Milan city day — Duomo, Galleria, Last Supper.",
         "Day 5 (Tue): Lake Como day trip — Bellagio, boat tour.",
     ]
+
+
+def itinerary_agent(state: TravelPlanState) -> dict:
+    """Plan day-by-day schedule. Parallel with tour_agent.
+
+    Phase 2: Real Claude call via langchain-anthropic, with mock fallback
+    when ANTHROPIC_API_KEY is missing or the call fails.
+    """
+    llm = get_llm(temperature=0.7, max_tokens=900)
+    days_count = _trip_days(state)
+    used_llm = False
+
+    if llm is not None:
+        try:
+            from pydantic import BaseModel, Field
+
+            class Itinerary(BaseModel):
+                days: list[str] = Field(
+                    description=(
+                        "One concise line per day starting with "
+                        "'Day N (DayOfWeek): '. Max ~140 chars per line."
+                    )
+                )
+
+            chosen_hotel = ""
+            if state.get("hotel"):
+                chosen_hotel = state["hotel"][0].get("name", "")
+
+            stops = state.get("stops") or ""
+            special = state.get("special_requests") or ""
+
+            system = (
+                "You are an expert travel planner curating a Formula 1 fan "
+                "trip. You produce tight, practical day-by-day itineraries. "
+                "Race weekends always run Friday (FP1/FP2), Saturday "
+                "(FP3/Qualifying), Sunday (Race)."
+            )
+            user = (
+                f"Plan a {days_count}-day itinerary for the {state['gp_name']} "
+                f"in {state['gp_city']} (race date: {state['gp_date']}).\n"
+                f"Origin: {state.get('origin', '')}\n"
+                f"Hotel base: {chosen_hotel or 'TBD'}\n"
+                f"Stops / multi-city plan: {stops or 'none'}\n"
+                f"Special requests: {special or 'none'}\n\n"
+                "Cover all three race-weekend sessions appropriately. "
+                "Use the extra days for the city and nearby day trips. "
+                "Each day = ONE line, starting 'Day N (DayOfWeek): '. "
+                f"Return exactly {days_count} day lines."
+            )
+
+            structured = llm.with_structured_output(Itinerary)
+            result = structured.invoke(
+                [("system", system), ("user", user)]
+            )
+            days = [d.strip() for d in result.days if d and d.strip()]
+            if not days:
+                raise ValueError("LLM returned empty itinerary")
+            used_llm = True
+        except Exception as e:
+            days = _itinerary_mock(state)
+            return {
+                "itinerary": days,
+                "messages": [_msg("plan", f"LLM failed ({e.__class__.__name__}), used mock itinerary")],
+            }
+    else:
+        days = _itinerary_mock(state)
+
+    label = "Claude" if used_llm else "mock"
     return {
         "itinerary": days,
-        "messages": [_msg("plan", f"Created {len(days)}-day itinerary")],
+        "messages": [_msg("plan", f"Created {len(days)}-day itinerary ({label})")],
     }
 
 
 # ── tour_agent ───────────────────────────────────────────────────────
-def tour_agent(state: TravelPlanState) -> dict:
-    """Recommend sights and restaurants. Parallel with itinerary_agent."""
-    # TODO: Replace with real LLM call
+def _tour_mock(state: TravelPlanState) -> list[str]:
     recs = [
         "🏎 Monza Circuit Museum (€15) — inside the track, race history",
         "🏛 Duomo Rooftop (€14) — panoramic Milan views",
@@ -146,10 +216,71 @@ def tour_agent(state: TravelPlanState) -> dict:
     special = state.get("special_requests", "")
     if special:
         recs.append(f"📝 Noted your request: {special}")
+    return recs
 
+
+def tour_agent(state: TravelPlanState) -> dict:
+    """Recommend sights and restaurants. Parallel with itinerary_agent.
+
+    Phase 2: Real Claude call via langchain-anthropic, with mock fallback.
+    """
+    llm = get_llm(temperature=0.8, max_tokens=900)
+    days_count = _trip_days(state)
+    used_llm = False
+
+    if llm is not None:
+        try:
+            from pydantic import BaseModel, Field
+
+            class TourRecs(BaseModel):
+                recommendations: list[str] = Field(
+                    description=(
+                        "One line per recommendation. Format: "
+                        "'<emoji> Name (€price) — short why-it-is-cool note'."
+                    )
+                )
+
+            special = state.get("special_requests") or ""
+
+            system = (
+                "You are a savvy local tour curator who knows the area "
+                "around F1 Grand Prix host cities. Recommend the best "
+                "sights, experiences and food for a visiting fan. Be "
+                "specific (real names, real venues), concise, and tasteful."
+            )
+            user = (
+                f"Recommend 5-6 must-do items for someone attending the "
+                f"{state['gp_name']} in {state['gp_city']}. "
+                f"They have {days_count} days total including the race.\n"
+                f"Special requests: {special or 'none'}\n\n"
+                "Mix iconic sights, a hidden gem, a local food spot, and a "
+                "motorsport-flavored pick. Each line must follow exactly: "
+                "'<emoji> Name (€price) — short note'. Use € for prices "
+                "(approximate is fine). If a request above is dietary or "
+                "accessibility-related, honor it in your picks."
+            )
+
+            structured = llm.with_structured_output(TourRecs)
+            result = structured.invoke(
+                [("system", system), ("user", user)]
+            )
+            recs = [r.strip() for r in result.recommendations if r and r.strip()]
+            if not recs:
+                raise ValueError("LLM returned empty recommendations")
+            used_llm = True
+        except Exception as e:
+            recs = _tour_mock(state)
+            return {
+                "tour": recs,
+                "messages": [_msg("tour", f"LLM failed ({e.__class__.__name__}), used mock recs")],
+            }
+    else:
+        recs = _tour_mock(state)
+
+    label = "Claude" if used_llm else "mock"
     return {
         "tour": recs,
-        "messages": [_msg("tour", f"Curated {len(recs)} recommendations")],
+        "messages": [_msg("tour", f"Curated {len(recs)} recommendations ({label})")],
     }
 
 
