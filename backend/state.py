@@ -1,4 +1,12 @@
-"""TravelPlanState — shared state schema for the F1 travel planning graph."""
+"""TravelPlanState — shared state schema for the F1 travel planning graph.
+
+Reducer note: only `messages` has multiple parallel writers (every agent
+appends its own status lines to it), so it's the only field that needs
+`Annotated[list, operator.add]`. All other list fields are written by
+exactly one node, so LangGraph's default replace-semantics is correct
+for them — and necessary, because during the budget retry loop the same
+node runs again and should replace its previous output, not append.
+"""
 
 from __future__ import annotations
 import operator
@@ -58,13 +66,14 @@ class TravelPlanState(TypedDict):
     special_requests: str
 
     # ── Agent outputs ──
-    # Using Annotated[list, operator.add] so parallel nodes can append
-    # without overwriting each other's results.
-    tickets: Annotated[list[TicketOption], operator.add]
-    transport: Annotated[list[TransportLeg], operator.add]
-    hotel: Annotated[list[HotelOption], operator.add]
-    itinerary: Annotated[list[str], operator.add]     # day-by-day lines
-    tour: Annotated[list[str], operator.add]           # recommendation lines
+    # Single-writer fields: default replace-semantics. This is important
+    # for the retry loop — we want a re-run of hotel/itinerary/tour to
+    # replace the previous attempt, not accumulate on top of it.
+    tickets: list[TicketOption]
+    transport: list[TransportLeg]
+    hotel: list[HotelOption]
+    itinerary: list[str]          # day-by-day lines
+    tour: list[str]                # recommendation lines
     budget_summary: BudgetSummary | None
 
     # ── Control flow ──

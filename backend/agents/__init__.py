@@ -348,9 +348,14 @@ def should_retry_budget(state: TravelPlanState) -> str:
 
 
 def increment_retry(state: TravelPlanState) -> dict:
-    """Increment retry count before re-running hotel search."""
+    """Increment retry count before re-running hotel search.
+
+    No explicit clearing of hotel/itinerary/tour is needed here —
+    those fields use default replace-semantics in state.py, so when
+    hotel_agent / itinerary_agent / tour_agent re-run after this node
+    their new outputs replace the previous attempt automatically.
+    """
     return {
         "retry_count": state.get("retry_count", 0) + 1,
-        "hotel": [],  # clear old hotel results
         "messages": [_msg("concierge", "Over budget — asking hotel agent for cheaper options...")],
     }

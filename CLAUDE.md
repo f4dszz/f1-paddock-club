@@ -62,7 +62,7 @@ See `backend/state.py` for full typed definition. Key fields:
 - Agent outputs: tickets[], transport[], hotel[], itinerary[], tour[], budget_summary
 - Control: budget_ok, retry_count, messages[]
 
-All list fields use `Annotated[list, operator.add]` for safe parallel merging.
+Only `messages` uses `Annotated[list, operator.add]` — it's the one field every agent writes to in parallel. All other list fields (tickets, transport, hotel, itinerary, tour) are single-writer and use LangGraph's default replace-semantics, so the budget retry loop correctly replaces their previous attempt instead of accumulating.
 
 ---
 
