@@ -66,7 +66,7 @@
 | 层 | 选型 |
 |---|---|
 | 编排 | **LangGraph**（状态机 + 并行扇出 + 条件边） |
-| 大模型 | **Claude**，通过 `langchain-anthropic` 接入 |
+| 大模型 | **可插拔** —— 默认 OpenAI，也可切到 Anthropic，通过 `LLM_PROVIDER` 环境变量切换。同时支持任意 OpenAI 兼容代理（设置 `OPENAI_BASE_URL`） |
 | 后端 | **Python 3.12+** + **FastAPI** + **Uvicorn** |
 | 流式推送 | **WebSocket**（`/ws`），把每个智能体的状态实时推给前端 |
 | 前端 | React 原型（`frontend/prototype.jsx`），后续迁移到 Next.js |
@@ -78,7 +78,7 @@
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | **1 — 图 + Mock 数据** | ✅ 已完成 | LangGraph 完整接好，7 个智能体全部返回 mock 数据，CLI 可端到端跑通，FastAPI 的 `/plan` 和 `/ws` 都能用。 |
-| **2 — 真实大模型调用** | 🟡 进行中 | `itinerary_agent` 与 `tour_agent` 已切到 **Claude**，使用 `langchain-anthropic` 的 `with_structured_output`。当 `ANTHROPIC_API_KEY` 未设置或调用失败时，自动回退到 mock 数据。 |
+| **2 — 真实大模型调用** | 🟡 进行中 | `itinerary_agent` 与 `tour_agent` 已切到真实大模型，使用 `with_structured_output` + Pydantic schema。Provider 可切换（默认 OpenAI，可选 Anthropic）。没配 key 或调用失败时自动回退到 mock 数据。 |
 | **3 — 外部数据工具** | ⏳ 待开始 | 接入 SerpAPI 拉机票/酒店、接入门票搜索源。 |
 | **4 — 前端迁移** | ⏳ 待开始 | 把 `prototype.jsx` 迁到 Next.js，对接 `/ws`。 |
 | **5 — 打磨与部署** | ⏳ 待开始 | 错误处理、运行结果持久化、部署上线。 |
@@ -96,10 +96,11 @@ f1-paddock-club/
 │   ├── main.py                # FastAPI：POST /plan、WS /ws
 │   ├── graph.py               # LangGraph 编排器 + CLI 测试
 │   ├── state.py               # TravelPlanState（强类型共享状态）
-│   ├── llm.py                 # Claude 客户端封装（Phase 2 新增）
+│   ├── llm.py                 # 可插拔大模型客户端封装（Phase 2 新增）
 │   ├── agents/__init__.py     # 7 个智能体节点函数
 │   ├── tools/__init__.py      # 外部工具占位（Phase 3+）
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── .env.example           # 列出所有支持的环境变量
 └── frontend/
     └── prototype.jsx          # Paddock Club 主题的 React 原型
 ```
@@ -115,26 +116,44 @@ cd backend
 pip install -r requirements.txt
 ```
 
-### 2.（可选）设置 Anthropic API Key
+### 2.（可选）配置大模型 Provider
 
-不设置 key 也能跑 —— 涉及大模型的两个智能体（`itinerary`、`tour`）会自动回退到 mock 数据。设置之后才会真正调用 Claude。
-
-```bash
-# macOS / Linux
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Windows PowerShell
-$env:ANTHROPIC_API_KEY = "sk-ant-..."
-
-# Windows cmd / git-bash
-set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-可选：覆盖默认模型（默认是 `claude-sonnet-4-5`）。
+不设置 API key 也能跑 —— 涉及大模型的两个智能体（`itinerary`、`tour`）会自动回退到 mock 数据。配上 key 之后才会真正调用模型。推荐用 `.env` 文件来管理：
 
 ```bash
-export ANTHROPIC_MODEL=claude-sonnet-4-6
+cd backend
+cp .env.example .env
+# 然后编辑 .env，把你的 key 填进去
 ```
+
+默认配的是 **OpenAI**，任何 OpenAI key 都能直接用：
+
+```ini
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini          # 可选，这就是默认值
+# OPENAI_BASE_URL=https://...       # 可选，用 OpenAI 兼容代理时填
+```
+
+想用 Claude？切一下 provider：
+
+```ini
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+# ANTHROPIC_MODEL=claude-sonnet-4-5
+# ANTHROPIC_BASE_URL=https://...    # 可选，用 Anthropic 兼容代理时填
+```
+
+想用 OpenAI 兼容的第三方服务（DeepSeek、Moonshot/Kimi、智谱 GLM、阿里通义、本地 vLLM 等）？保持 `LLM_PROVIDER=openai`，把 `OPENAI_BASE_URL` 指过去就行：
+
+```ini
+LLM_PROVIDER=openai
+OPENAI_API_KEY=<那家服务给你的 key>
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+OPENAI_MODEL=deepseek-chat
+```
+
+> 不想用 `.env` 文件？直接 `export` 同名变量也行 —— `llm.py` 两种来源都会读。`.env` 已经在 `.gitignore` 里，不会被 commit。
 
 ### 3. 跑 CLI 测试
 
@@ -153,12 +172,12 @@ python graph.py
   [ticket]    Found 3 ticket options for Italian GP
   [hotel]     Found 2 stays in Monza (5 nights)
   [transport] Found flights New York ↔ Monza
-  [plan]      Created 5-day itinerary (Claude)
-  [tour]      Curated 5 recommendations (Claude)
+  [plan]      Created 5-day itinerary (OpenAI)
+  [tour]      Curated 5 recommendations (OpenAI)
   [budget]    Total €2189 / €2500 — within budget ✓
 ```
 
-末尾的 `(Claude)` / `(mock)` 标签告诉你这一步走的是真实大模型还是 mock 回退。
+末尾的 `(OpenAI)` / `(Anthropic)` / `(mock)` 标签告诉你这一步是哪个 provider 答的，或者是不是回退到了 mock 数据。
 
 ### 4. 启动 API 服务
 
@@ -200,8 +219,8 @@ curl -X POST http://localhost:8000/plan \
 | `ticket_agent` | 比赛、日期、偏好、预算 | 3 个看台票方案 | mock（Phase 3 接真实数据） |
 | `transport_agent` | 出发地、城市、日期、中转 | 机票 + 当地交通 | mock（Phase 3 → SerpAPI） |
 | `hotel_agent` | 城市、日期、剩余预算 | 2–3 个住宿 | mock（Phase 3 → SerpAPI） |
-| `itinerary_agent` | 上面所有结果 + 特殊需求 | 按天行程 | **Claude**（Phase 2） |
-| `tour_agent` | 城市、天数、特殊需求 | 景点 + 美食 | **Claude**（Phase 2） |
+| `itinerary_agent` | 上面所有结果 + 特殊需求 | 按天行程 | **大模型**（Phase 2 — OpenAI / Anthropic） |
+| `tour_agent` | 城市、天数、特殊需求 | 景点 + 美食 | **大模型**（Phase 2 — OpenAI / Anthropic） |
 | `budget_agent` | 全部输出 | 费用明细 + 是否超预算 | 纯逻辑 |
 
 ---

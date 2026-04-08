@@ -10,7 +10,7 @@ Phase 2+: Replace mock with real LLM calls and tool invocations.
 
 from __future__ import annotations
 from state import TravelPlanState
-from llm import get_llm
+from llm import get_llm, provider_label
 
 
 def _msg(agent: str, text: str) -> dict:
@@ -198,7 +198,7 @@ def itinerary_agent(state: TravelPlanState) -> dict:
     else:
         days = _itinerary_mock(state)
 
-    label = "Claude" if used_llm else "mock"
+    label = provider_label() if used_llm else "mock"
     return {
         "itinerary": days,
         "messages": [_msg("plan", f"Created {len(days)}-day itinerary ({label})")],
@@ -277,7 +277,7 @@ def tour_agent(state: TravelPlanState) -> dict:
     else:
         recs = _tour_mock(state)
 
-    label = "Claude" if used_llm else "mock"
+    label = provider_label() if used_llm else "mock"
     return {
         "tour": recs,
         "messages": [_msg("tour", f"Curated {len(recs)} recommendations ({label})")],

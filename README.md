@@ -64,7 +64,7 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` reducers so pa
 | Layer | Choice |
 |---|---|
 | Orchestration | **LangGraph** (state machine + parallel fan-out + conditional edges) |
-| LLM | **Claude** via `langchain-anthropic` |
+| LLM | **Pluggable** — OpenAI (default) or Anthropic, switchable via `LLM_PROVIDER` env var. Also supports any OpenAI-compatible proxy via `OPENAI_BASE_URL`. |
 | Backend | **Python 3.12+** + **FastAPI** + **Uvicorn** |
 | Streaming | **WebSocket** (`/ws`) for real-time agent status |
 | Frontend | React prototype (`frontend/prototype.jsx`) → Next.js (planned) |
@@ -76,7 +76,7 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` reducers so pa
 | Phase | Status | What's in it |
 |---|---|---|
 | **1 — Graph + mock data** | ✅ Done | Full LangGraph wired up, all 7 agents return mock data, CLI test runs end-to-end, FastAPI `/plan` and `/ws` endpoints work. |
-| **2 — Real LLM calls** | 🟡 In progress | `itinerary_agent` and `tour_agent` now call **Claude** via `langchain-anthropic` with `with_structured_output`. Mock data is the automatic fallback when `ANTHROPIC_API_KEY` is unset or the call fails. |
+| **2 — Real LLM calls** | 🟡 In progress | `itinerary_agent` and `tour_agent` now call a real LLM via `with_structured_output` against a Pydantic schema. Provider is selectable (OpenAI default, Anthropic optional). Mock data is the automatic fallback when no key is set or the call fails. |
 | **3 — External data tools** | ⏳ Planned | SerpAPI for flights/hotels, real ticket search. |
 | **4 — Frontend migration** | ⏳ Planned | Move `prototype.jsx` to Next.js, wire to `/ws`. |
 | **5 — Polish + deploy** | ⏳ Planned | Error handling, persistence, deploy. |
@@ -94,10 +94,11 @@ f1-paddock-club/
 │   ├── main.py                # FastAPI: POST /plan, WS /ws
 │   ├── graph.py               # LangGraph orchestrator + CLI test
 │   ├── state.py               # TravelPlanState (typed shared state)
-│   ├── llm.py                 # Claude client wrapper (Phase 2)
+│   ├── llm.py                 # Pluggable LLM client wrapper (Phase 2)
 │   ├── agents/__init__.py     # All 7 agent node functions
 │   ├── tools/__init__.py      # External tool stubs (Phase 3+)
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── .env.example           # Documents all supported env vars
 └── frontend/
     └── prototype.jsx          # Paddock Club themed React prototype
 ```
@@ -113,26 +114,44 @@ cd backend
 pip install -r requirements.txt
 ```
 
-### 2. (Optional) Set your Anthropic API key
+### 2. (Optional) Configure an LLM provider
 
-Without a key, the LLM-powered agents (`itinerary`, `tour`) automatically fall back to mock data. With a key they call Claude.
-
-```bash
-# macOS / Linux
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Windows PowerShell
-$env:ANTHROPIC_API_KEY = "sk-ant-..."
-
-# Windows cmd / git-bash
-set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Optional: override the model (default is `claude-sonnet-4-5`).
+Without an API key, the LLM-powered agents (`itinerary`, `tour`) automatically fall back to mock data. With a key they call a real model. The recommended way to configure this is a `.env` file:
 
 ```bash
-export ANTHROPIC_MODEL=claude-sonnet-4-6
+cd backend
+cp .env.example .env
+# then edit .env and put your key in
 ```
+
+The defaults work with **any OpenAI key**:
+
+```ini
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini          # optional, this is the default
+# OPENAI_BASE_URL=https://...       # optional, for OpenAI-compatible proxies
+```
+
+Want to use Claude instead? Switch the provider:
+
+```ini
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+# ANTHROPIC_MODEL=claude-sonnet-4-5
+# ANTHROPIC_BASE_URL=https://...    # optional, for Anthropic-compatible proxies
+```
+
+Want to use an OpenAI-compatible third-party provider (DeepSeek, Moonshot, GLM, Qwen, local vLLM, ...)? Keep `LLM_PROVIDER=openai` and point `OPENAI_BASE_URL` at the provider's endpoint:
+
+```ini
+LLM_PROVIDER=openai
+OPENAI_API_KEY=<key from that provider>
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+OPENAI_MODEL=deepseek-chat
+```
+
+> Prefer environment variables over a `.env` file? Just `export` the same names — `llm.py` reads both. The `.env` file is gitignored.
 
 ### 3. Run the CLI test
 
@@ -151,12 +170,12 @@ You should see something like:
   [ticket]    Found 3 ticket options for Italian GP
   [hotel]     Found 2 stays in Monza (5 nights)
   [transport] Found flights New York ↔ Monza
-  [plan]      Created 5-day itinerary (Claude)
-  [tour]      Curated 5 recommendations (Claude)
+  [plan]      Created 5-day itinerary (OpenAI)
+  [tour]      Curated 5 recommendations (OpenAI)
   [budget]    Total €2189 / €2500 — within budget ✓
 ```
 
-The `(Claude)` / `(mock)` tag tells you whether the agent hit the real LLM or the fallback.
+The `(OpenAI)` / `(Anthropic)` / `(mock)` tag tells you which provider answered, or that the agent fell back to mock data.
 
 ### 4. Run the API server
 
@@ -198,8 +217,8 @@ Send the same JSON payload, receive a stream of `{type: "message", data: {...}}`
 | `ticket_agent` | gp, date, pref, budget | 3 grandstand options | mock (Phase 3 → real) |
 | `transport_agent` | origin, city, date, stops | flights + local | mock (Phase 3 → SerpAPI) |
 | `hotel_agent` | city, dates, budget left | 2–3 stays | mock (Phase 3 → SerpAPI) |
-| `itinerary_agent` | all prior + special requests | day-by-day lines | **Claude** (Phase 2) |
-| `tour_agent` | city, days, special requests | sights + food | **Claude** (Phase 2) |
+| `itinerary_agent` | all prior + special requests | day-by-day lines | **LLM** (Phase 2 — OpenAI / Anthropic) |
+| `tour_agent` | city, days, special requests | sights + food | **LLM** (Phase 2 — OpenAI / Anthropic) |
 | `budget_agent` | all outputs | cost breakdown + over/under | deterministic |
 
 ---
