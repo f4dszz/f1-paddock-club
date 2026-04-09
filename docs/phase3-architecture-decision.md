@@ -29,7 +29,7 @@ The realistic tool landscape for this project:
 | Flights + hotels structured data | **SerpAPI** (Google Flights engine, Google Hotels engine) | Free 100 searches/month, key already being applied for |
 | Scrape F1 official ticket pages behind Cloudflare / JS | **Firecrawl** — managed service that handles anti-bot, returns LLM-ready markdown | Free 500 pages/month |
 | General web search for tour/attraction info or unknown locations | **Tavily** or **DuckDuckGo** | Tavily: free 1000 queries/month; DuckDuckGo: completely free, no key |
-| Per-GP ticket grandstand + baseline pricing data | Hand-curated `backend/tools/data/f1_tickets_2026.json` | Manual effort, ~2h/season |
+| F1 ticket data (no public API exists) | **Firecrawl** (primary) → DuckDuckGo (fallback) → mock. Results cached with dynamic TTL based on distance-to-race. | Firecrawl free 500/month; DuckDuckGo free |
 
 **Our job is to write _handlers_, not scrapers.** Each file under `backend/tools/` is a thin wrapper that:
 
@@ -153,7 +153,7 @@ New in Phase 3. A LangGraph supervisor graph:
 backend/tools/
 ├── __init__.py
 ├── data/
-│   └── f1_tickets_2026.json    # hand-curated per-GP grandstand data
+│   └── .cache/                 # disk-backed query cache (gitignored)
 ├── search_flights.py           # SerpAPI wrapper, returns TransportLeg[]
 ├── search_hotels.py            # SerpAPI wrapper, rich params (brand, stars, max_price, near, excluded_ids)
 ├── search_tickets.py           # JSON lookup → Firecrawl → DuckDuckGo cascade
@@ -171,7 +171,7 @@ Each step is small enough to commit independently. Any step can be paused withou
 
 1. **Phase 3.0 — Tools skeleton.** Write the tool files in mock mode (real signatures, mock return values — same data as the current agents). No external API keys required yet. Lane 1 agents refactored to call the tools. CLI stays green.
 
-2. **Phase 3.1 — Seed the ticket JSON.** Hand-curate 5-6 marquee GPs (Monaco, Monza, Silverstone, Suzuka, COTA, Las Vegas) from official sites. `search_tickets` reads this file. Other GPs get a placeholder note until the fallback chain is in place.
+2. **Phase 3.1 — Cache layer.** Build `backend/tools/_cache.py` disk-backed cache decorator with callable TTL support. Apply `@cached(ttl=...)` to every tool function. Verify cache HIT/MISS behaviour with mock data. TTLs: flights 3h, hotels 3h, tickets dynamic (3h–1d by distance-to-race), web 1d.
 
 3. **Phase 3.2 — SerpAPI integration.** Once the key is ready, `search_flights` and `search_hotels` call SerpAPI for real. Keep mock fallback in place. Verify with a few live scenarios (same Singapore / Monaco / Italian test cases from Phase 2).
 
@@ -205,7 +205,7 @@ Beyond Phase 3.7, add more specialists on demand (itinerary, tour, ticket) when 
 ### Safe to do without your input
 
 - **(a)** Draft the skeleton of `backend/tools/search_flights.py`, `search_hotels.py`, `search_tickets.py` in mock mode, so Lane 1 compiles against the new structure without any real API key
-- **(b)** Create `backend/tools/data/f1_tickets_2026.json` with its schema and a seed entry for Italian GP (Monza) as an example of the shape
+- **(b)** ~~Create ticket JSON~~ DONE — replaced by `_cache.py` disk cache. No manual data curation needed.
 - **(c)** Sketch the supervisor + Hotel Specialist code as a separate file not yet wired into `main.py`, so you can review the shape before it goes live
 - **(d)** Run another Phase 2 stability test on a different GP (say, Las Vegas) to make sure the recent bug fix holds across more scenarios
 - **(e)** Update `CLAUDE.md` Phase description to reflect the two-lane architecture decision
@@ -224,7 +224,7 @@ Beyond Phase 3.7, add more specialists on demand (itinerary, tour, ticket) when 
 | Topic | Your position | My position | Landed on |
 |---|---|---|---|
 | Use existing tools vs write our own | "Use existing, handlers only" | Same | **Agreed** |
-| F1 ticket data quality | "Must be accurate, otherwise meaningless" | "Curation + Firecrawl fallback, not self-written scrapers" | **Agreed, but with Firecrawl explicitly added to the fallback chain because it's managed scraping-as-a-service, not a raw crawler we maintain** |
+| F1 ticket data quality | "Must be accurate, otherwise meaningless" | "Tools as primary source + disk cache, no manual data files" | **Agreed. Dropped the JSON curation approach entirely. Firecrawl → DuckDuckGo → mock cascade, results cached with dynamic TTL (3h–1d based on distance-to-race).** |
 | Multi-agent collaboration via supervisor | "Yes, think big" | "Yes on pattern, 2-3 specialists first not 7" | **Agreed, rollout order proposed above** |
 | Agents must think for themselves | "Yes, it's the point" | "Yes, ReAct loop + rich tools = real autonomy within scope" | **Agreed** |
 | Implementation pace | "Think big" | "Think big in design, ship small in code" | **Agreed, 8 micro-phases proposed** |

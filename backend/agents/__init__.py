@@ -43,10 +43,8 @@ def parse_input(state: TravelPlanState) -> dict:
 
 
 # ── ticket_agent ─────────────────────────────────────────────────────
-def ticket_agent(state: TravelPlanState) -> dict:
-    """Search for ticket options. Runs before transport/hotel."""
-    # TODO: Replace with real tool call — search_tickets(gp_name, year)
-    tickets = [
+def _ticket_mock(state: TravelPlanState) -> list[dict]:
+    return [
         {"name": "General Admission", "price": 195, "currency": "EUR",
          "section": "Free roaming", "tag": "VALUE",
          "link": "https://tickets.formula1.com"},
@@ -57,33 +55,66 @@ def ticket_agent(state: TravelPlanState) -> dict:
          "section": "Pit lane + podium", "tag": "VIP",
          "link": "https://tickets.formula1.com"},
     ]
+
+
+def ticket_agent(state: TravelPlanState) -> dict:
+    """Search for ticket options. Runs before transport/hotel.
+
+    Phase 3: tries tools.search_tickets first, falls back to mock.
+    """
+    try:
+        from tools.search_tickets import search_tickets
+        tickets = search_tickets(gp_name=state["gp_name"])
+        source = "tools"
+    except Exception:
+        logger.exception("ticket_agent: tool failed, using mock")
+        tickets = _ticket_mock(state)
+        source = "mock"
+
     return {
         "tickets": tickets,
-        "messages": [_msg("ticket", f"Found {len(tickets)} ticket options for {state['gp_name']}")],
+        "messages": [_msg("ticket", f"Found {len(tickets)} ticket options for {state['gp_name']} ({source})")],
     }
 
 
 # ── transport_agent ──────────────────────────────────────────────────
+def _transport_mock(state: TravelPlanState) -> list[dict]:
+    origin = state.get("origin", "NYC")
+    city = state.get("gp_city", "Milan")
+    return [
+        {"tag": "OUT", "summary": f"{origin} -> {city} MXP",
+         "detail": "Direct - 8h20m - Sep 4", "price": 485, "currency": "EUR",
+         "link": "https://www.google.com/travel/flights"},
+        {"tag": "RET", "summary": f"{city} MXP -> {origin}",
+         "detail": "Direct - 9h45m - Sep 10", "price": 520, "currency": "EUR",
+         "link": "https://www.google.com/travel/flights"},
+        {"tag": "LOCAL", "summary": f"{city} <-> Circuit",
+         "detail": "Trenord S7 - 12min", "price": 5, "currency": "EUR",
+         "link": ""},
+    ]
+
+
 def transport_agent(state: TravelPlanState) -> dict:
-    """Search for flights and local transport. Parallel with hotel_agent."""
-    # TODO: Replace with search_flights tool
+    """Search for flights and local transport. Parallel with hotel_agent.
+
+    Phase 3: tries tools.search_flights first, falls back to mock.
+    """
     origin = state.get("origin", "NYC")
     city = state.get("gp_city", "Milan")
     stops = state.get("stops", "")
 
-    transport = [
-        {"tag": "OUT", "summary": f"{origin} → {city} MXP",
-         "detail": "Direct · 8h20m · Sep 4", "price": 485, "currency": "EUR",
-         "link": "https://www.google.com/travel/flights"},
-        {"tag": "RET", "summary": f"{city} MXP → {origin}",
-         "detail": "Direct · 9h45m · Sep 10", "price": 520, "currency": "EUR",
-         "link": "https://www.google.com/travel/flights"},
-        {"tag": "LOCAL", "summary": f"{city} ↔ Circuit",
-         "detail": "Trenord S7 · 12min", "price": 5, "currency": "EUR",
-         "link": ""},
-    ]
+    try:
+        from tools.search_flights import search_flights
+        transport = search_flights(
+            origin=origin, dest=city, date=state.get("gp_date", ""),
+        )
+        source = "tools"
+    except Exception:
+        logger.exception("transport_agent: tool failed, using mock")
+        transport = _transport_mock(state)
+        source = "mock"
 
-    msgs = [_msg("transport", f"Found flights {origin} ↔ {city}")]
+    msgs = [_msg("transport", f"Found flights {origin} <-> {city} ({source})")]
     if stops:
         msgs.append(_msg("transport", f"Multi-stop route noted: {stops}"))
 
@@ -91,43 +122,71 @@ def transport_agent(state: TravelPlanState) -> dict:
 
 
 # ── hotel_agent ──────────────────────────────────────────────────────
-def hotel_agent(state: TravelPlanState) -> dict:
-    """Search for hotels. Parallel with transport_agent."""
-    # TODO: Replace with search_hotels tool
-    retry = state.get("retry_count", 0)
+def _hotel_mock(state: TravelPlanState, budget_retry: bool = False) -> list[dict]:
     city = state.get("gp_city", "Monza")
     days = 3 + state.get("extra_days", 2)
-
-    if retry > 0:
-        # Budget retry — return cheaper options
-        hotel = [
+    if budget_retry:
+        return [
             {"name": f"Budget Hostel {city}", "price_per_night": 55,
              "total_price": 55 * days, "currency": "EUR", "nights": days,
-             "distance": "20min bus", "rating": "7.2★", "tag": "BUDGET",
+             "distance": "20min bus", "rating": "7.2", "tag": "BUDGET",
              "link": "https://www.booking.com"},
             {"name": f"Airbnb {city} Outskirts", "price_per_night": 65,
              "total_price": 65 * days, "currency": "EUR", "nights": days,
-             "distance": "25min train", "rating": "4.3★", "tag": "SAVE",
+             "distance": "25min train", "rating": "4.3", "tag": "SAVE",
              "link": "https://www.airbnb.com"},
         ]
-        return {
-            "hotel": hotel,
-            "messages": [_msg("hotel", f"Found cheaper options (retry #{retry})")],
-        }
-
-    hotel = [
+    return [
         {"name": "Hotel de la Ville", "price_per_night": 135,
          "total_price": 135 * days, "currency": "EUR", "nights": days,
-         "distance": "2km to circuit", "rating": "8.4★", "tag": "NEAR",
+         "distance": "2km to circuit", "rating": "8.4", "tag": "NEAR",
          "link": "https://www.booking.com"},
         {"name": f"Airbnb {city} Central", "price_per_night": 95,
          "total_price": 95 * days, "currency": "EUR", "nights": days,
-         "distance": "15min train", "rating": "4.6★", "tag": "SAVE",
+         "distance": "15min train", "rating": "4.6", "tag": "SAVE",
          "link": "https://www.airbnb.com"},
     ]
+
+
+def hotel_agent(state: TravelPlanState) -> dict:
+    """Search for hotels. Parallel with transport_agent.
+
+    Phase 3: tries tools.search_hotels first, falls back to mock.
+    On budget retry (retry_count > 0), passes a lower max_price hint
+    to the tool so it returns cheaper options.
+    """
+    retry = state.get("retry_count", 0)
+    city = state.get("gp_city", "Monza")
+    days = _trip_days(state)
+
+    try:
+        from tools.search_hotels import search_hotels
+        # On retry, hint the tool to find cheaper options
+        max_price = None
+        if retry > 0:
+            budget_remaining = float(state.get("budget", 2500)) * 0.3  # ~30% for hotel
+            max_price = budget_remaining / days if days > 0 else None
+        hotel = search_hotels(
+            city=city,
+            checkin=state.get("gp_date", ""),
+            checkout="",  # TODO: compute from gp_date + days
+            max_price=max_price,
+        )
+        source = "tools"
+    except Exception:
+        logger.exception("hotel_agent: tool failed, using mock")
+        hotel = _hotel_mock(state, budget_retry=(retry > 0))
+        source = "mock"
+
+    if retry > 0:
+        return {
+            "hotel": hotel,
+            "messages": [_msg("hotel", f"Found cheaper options (retry #{retry}, {source})")],
+        }
+
     return {
         "hotel": hotel,
-        "messages": [_msg("hotel", f"Found {len(hotel)} stays in {city} ({days} nights)")],
+        "messages": [_msg("hotel", f"Found {len(hotel)} stays in {city} ({days} nights, {source})")],
     }
 
 

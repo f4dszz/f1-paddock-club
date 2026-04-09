@@ -24,6 +24,9 @@ Thumbs.db
 # Backend log files
 backend/logs/
 
+# Tool cache files (disk-backed query results)
+backend/tools/.cache/
+
 # Node / frontend (for future Next.js migration)
 node_modules/
 .next/
