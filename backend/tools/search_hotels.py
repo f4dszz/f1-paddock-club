@@ -117,32 +117,60 @@ def _classify_hotel(price: float, rating) -> str:
     return "NEAR"
 
 
-def _try_serpapi_bing_hotels(city: str, checkin: str, api_key: str) -> list[dict]:
+def _try_serpapi_google_maps_hotels(
+    city: str, near: str | None, brand: str | None,
+    stars: int | None, api_key: str,
+) -> list[dict]:
+    """WHY Google Maps as second source for hotels?
+    google_hotels returns booking-oriented data (prices, availability).
+    Google Maps returns LOCATION-oriented data (rating, distance,
+    real photos, verified reviews). Together they give a complete
+    picture. Also, Google Maps works even when google_hotels can't
+    find results for a small city — Maps always has local business data.
+    """
     from serpapi import GoogleSearch
 
+    query = f"hotels in {city}"
+    if brand:
+        query += f" {brand}"
+    if near:
+        query += f" near {near}"
+
     params = {
-        "engine": "bing",
-        "q": f"hotels in {city} {checkin} booking prices",
+        "engine": "google_maps",
+        "q": query,
+        "type": "search",
         "api_key": api_key,
     }
     raw = GoogleSearch(params).get_dict()
 
     results = []
-    for r in (raw.get("organic_results") or [])[:3]:
-        snippet = r.get("snippet", "")
-        if snippet:
-            results.append({
-                "name": r.get("title", "")[:80],
-                "price_per_night": 0,
-                "total_price": 0,
-                "currency": "USD",
-                "nights": 0,
-                "distance": "",
-                "rating": "",
-                "tag": "INFO",
-                "link": r.get("link", ""),
-                "detail": snippet[:150],
-            })
+    for p in (raw.get("local_results") or [])[:6]:
+        price_str = p.get("price", "")
+        # Parse "$84" or "€84" into float
+        price_num = float("".join(c for c in str(price_str) if c.isdigit() or c == ".") or "0")
+
+        rating = p.get("rating", 0)
+        try:
+            star_rating = float(rating)
+        except (ValueError, TypeError):
+            star_rating = 0
+
+        if stars and star_rating < stars:
+            continue
+
+        results.append({
+            "name": p.get("title", "Unknown Hotel"),
+            "price_per_night": price_num,
+            "total_price": 0,  # Will be computed by recompute_budget
+            "currency": "USD",
+            "nights": 0,
+            "distance": p.get("address", ""),
+            "rating": str(rating),
+            "tag": _classify_hotel(price_num, rating),
+            "link": p.get("website", p.get("link", "")),
+        })
+
     return results
 
 
@@ -211,7 +239,9 @@ def search_hotels(
                 city, checkin, checkout, brand, stars, max_price,
                 near, excluded_ids, api_key,
             ),
-            "bing": lambda: _try_serpapi_bing_hotels(city, checkin, api_key),
+            "google_maps": lambda: _try_serpapi_google_maps_hotels(
+                city, near, brand, stars, api_key,
+            ),
         }
 
         results, report = query_parallel(sources, timeout=20)

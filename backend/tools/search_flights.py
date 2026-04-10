@@ -188,6 +188,50 @@ def _try_serpapi_bing(
     return results
 
 
+# ── SerpAPI source: Google Search (price snippets as cross-reference) ─
+
+def _try_serpapi_google_search_flights(
+    origin: str, dest: str, date: str, api_key: str,
+) -> list[dict]:
+    """WHY Google Search as second source for flights?
+    Google Flights engine gives us structured data (airline, price, duration).
+    Google Search gives us organic results with price RANGES ("from $234")
+    and booking site links. These serve as cross-references: if Google
+    Flights says $365 and Google Search says "from $234", the user gets
+    a fuller picture. Also, if google_flights fails, these snippets
+    are enough for the LLM estimation layer to work with.
+    """
+    from serpapi import GoogleSearch
+
+    iata_origin = _resolve_iata(origin)
+    iata_dest = _resolve_iata(dest)
+    iso_date = normalize_date(date)
+
+    params = {
+        "engine": "google",
+        "q": f"flights {iata_origin} to {iata_dest} {iso_date} cheap tickets book",
+        "api_key": api_key,
+    }
+    raw = GoogleSearch(params).get_dict()
+
+    results = []
+    for r in (raw.get("organic_results") or [])[:4]:
+        snippet = r.get("snippet", "")
+        link = r.get("link", "")
+        title = r.get("title", "")
+        if snippet and link:
+            results.append({
+                "tag": "INFO",
+                "summary": title[:80],
+                "detail": snippet[:200],
+                "price": 0,
+                "currency": "USD",
+                "link": link,
+            })
+
+    return results
+
+
 # ── LLM estimation fallback ─────────────────────────────────────────
 
 def _try_llm_estimate(
@@ -270,15 +314,16 @@ def search_flights(
 
     # ── Layer 1: Parallel real sources ───────────────────────────
     if api_key:
-        # WHY no Bing for flights?
-        # Bing's organic search returns web pages (often flight simulator
-        # sites, not actual airlines). Google Flights engine returns
-        # structured airline data — it's the only source that matters here.
-        # Bing IS useful for hotels and tickets where web results contain
-        # pricing info in snippets.
+        # Two complementary sources:
+        # - google_flights: structured airline data (primary)
+        # - google search: price snippets as cross-reference
+        #   (replaces Bing which returned flight simulator noise)
         sources = {
             "google_flights": lambda: _try_serpapi_google_flights(
                 origin, dest, date, return_date, stops, cabin, api_key,
+            ),
+            "google_search": lambda: _try_serpapi_google_search_flights(
+                origin, dest, date, api_key,
             ),
         }
 

@@ -144,10 +144,15 @@ def query_parallel(
                     logger.warning("parallel: %s returned empty results", name)
                     continue
 
-                # Tag each result with its source
+                # Tag each result with its source (only if it's a dict).
+                # WHY this check? Flights/hotels sources return list[dict],
+                # but ticket text sources return list[str] (raw markdown/
+                # snippets). A truly generic parallel framework can't assume
+                # the result shape. Dicts get tagged; strings pass through.
                 for r in results:
-                    r["_source"] = name
-                    r["_degraded"] = False
+                    if isinstance(r, dict):
+                        r["_source"] = name
+                        r["_degraded"] = False
                 all_results.extend(results)
                 report.sources.append(SourceStatus(name=name, ok=True, count=len(results)))
                 logger.info("parallel: %s returned %d results", name, len(results))

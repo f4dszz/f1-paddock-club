@@ -130,24 +130,30 @@ def _try_firecrawl(gp_name: str, year: int, api_key: str) -> list[str]:
     url = _TICKET_URLS.get(gp_name, _DEFAULT_TICKET_URL)
 
     logger.info("Firecrawl: scraping %s for %s", url, gp_name)
-    result = app.scrape_url(url, params={"formats": ["markdown"]})
+    # Firecrawl v2 SDK returns a Document Pydantic model, not a dict.
+    # Access .markdown attribute, not .get("markdown").
+    result = app.scrape(url, formats=["markdown"])
 
-    markdown = result.get("markdown", "")
+    markdown = result.markdown if hasattr(result, "markdown") else ""
     if not markdown:
         return []
 
     return [markdown[:8000]]  # Cap length to fit in LLM context
 
 
-# ── SerpAPI Bing source: web search for ticket info ──────────────────
+# ── SerpAPI Google Search: ticket pricing snippets ───────────────────
 
-def _try_serpapi_bing(gp_name: str, year: int, api_key: str) -> list[str]:
-    """Search Bing for ticket pricing info. Returns snippet texts."""
+def _try_serpapi_google_tickets(gp_name: str, year: int, api_key: str) -> list[str]:
+    """WHY Google Search instead of Bing for tickets?
+    Google Search returns richer snippets for F1 ticket queries:
+    price ranges, grandstand names, official links. Bing was returning
+    generic booking site homepages. Same SerpAPI key, different engine.
+    """
     from serpapi import GoogleSearch
 
     params = {
-        "engine": "bing",
-        "q": f"{gp_name} {year} official tickets grandstand prices",
+        "engine": "google",
+        "q": f"{gp_name} {year} official tickets grandstand prices buy",
         "api_key": api_key,
     }
     raw = GoogleSearch(params).get_dict()
@@ -197,6 +203,11 @@ def _extract_with_llm(
         f"{f' Max price: EUR {max_price}.' if max_price else ''}"
     )
 
+    # WHY two extraction strategies?
+    # with_structured_output uses OpenAI's function calling / JSON mode,
+    # which requires the API to return a 'parsed' field. Some proxies
+    # (like duckcoding) don't relay this. Fallback: ask LLM for raw JSON
+    # text and parse it ourselves. Less reliable but works with any provider.
     try:
         structured = llm.with_structured_output(TicketOptionList)
         result = structured.invoke([
@@ -204,13 +215,33 @@ def _extract_with_llm(
             ("user", prompt),
         ])
         options = result.options if result.options else []
-        for opt in options:
+    except Exception:
+        logger.warning("structured_output failed, trying raw JSON fallback")
+        try:
+            raw_response = llm.invoke([
+                ("system", "You are an F1 ticket data extraction expert. Return ONLY valid JSON, no other text."),
+                ("user", prompt + "\n\nReturn JSON: {\"options\": [{\"name\": str, \"price\": float, \"currency\": \"EUR\", \"section\": str, \"tag\": \"VALUE\"|\"PICK\"|\"VIP\", \"link\": str}]}"),
+            ])
+            import json as _json
+            text = raw_response.content.strip()
+            # Strip markdown code fences if present
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+            parsed = _json.loads(text)
+            options = parsed.get("options", parsed) if isinstance(parsed, dict) else parsed
+            if isinstance(options, list):
+                pass  # good
+            else:
+                options = []
+        except Exception:
+            logger.exception("LLM ticket extraction failed (both methods)")
+            return []
+
+    for opt in options:
+        if isinstance(opt, dict):
             opt["_source"] = source_label
             opt["_degraded"] = False  # Real data, just LLM-extracted
-        return options
-    except Exception:
-        logger.exception("LLM ticket extraction failed")
-        return []
+    return [o for o in options if isinstance(o, dict)]
 
 
 # ── LLM estimation (no real data, pure training knowledge) ───────────
@@ -243,13 +274,30 @@ def _try_llm_estimate(
             ("user", prompt),
         ])
         options = result.options if result.options else []
-        for opt in options:
+    except Exception:
+        logger.warning("structured_output failed for ticket estimate, trying raw JSON")
+        try:
+            raw_response = llm.invoke([
+                ("system", "You are an F1 ticket pricing expert. Return ONLY valid JSON, no other text."),
+                ("user", prompt + "\n\nReturn JSON: {\"options\": [{\"name\": str, \"price\": float, \"currency\": \"EUR\", \"section\": str, \"tag\": \"VALUE\"|\"PICK\"|\"VIP\", \"link\": str}]}"),
+            ])
+            import json as _json
+            text = raw_response.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+            parsed = _json.loads(text)
+            options = parsed.get("options", parsed) if isinstance(parsed, dict) else parsed
+            if not isinstance(options, list):
+                options = []
+        except Exception:
+            logger.exception("LLM ticket estimation failed (both methods)")
+            return []
+
+    for opt in options:
+        if isinstance(opt, dict):
             opt["_source"] = "llm_estimate"
             opt["_degraded"] = True
-        return options
-    except Exception:
-        logger.exception("LLM ticket estimation failed")
-        return []
+    return [o for o in options if isinstance(o, dict)]
 
 
 # ── Main entry point ─────────────────────────────────────────────────
@@ -290,7 +338,7 @@ def search_tickets(
         if firecrawl_key:
             text_sources["firecrawl"] = lambda: _try_firecrawl(gp_name, year, firecrawl_key)
         if api_key:
-            text_sources["bing"] = lambda: _try_serpapi_bing(gp_name, year, api_key)
+            text_sources["google_search"] = lambda: _try_serpapi_google_tickets(gp_name, year, api_key)
 
         text_results, report = query_parallel(text_sources, timeout=25)
 
