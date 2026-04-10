@@ -53,14 +53,21 @@ The system uses two lanes sharing one state and one tools layer:
                     ┌────────────────────────────┐
                     │   Shared Tools Layer       │
                     │                            │
-                    │   search_flights (SerpAPI) │
-                    │   search_hotels  (SerpAPI) │
+                    │   search_flights (SerpAPI  │
+                    │     google_flights +       │
+                    │     google_search parallel)│
+                    │   search_hotels  (SerpAPI  │
+                    │     google_hotels +        │
+                    │     google_maps parallel)  │
                     │   search_tickets (Firecrawl│
-                    │     -> DuckDuckGo -> mock) │
+                    │     + google_search        │
+                    │     parallel -> LLM        │
+                    │     extraction -> mock)    │
                     │   search_web (Tavily/DDG)  │
                     │   recompute_budget (pure fn)│
                     │                            │
                     │   All @cached with TTL     │
+                    │   Parallel multi-source    │
                     │   (3h flights/hotels,      │
                     │    dynamic for tickets,    │
                     │    1d for web search)      │
@@ -79,7 +86,7 @@ Long-term vision: the supervisor may eventually replace Lane 1 for initial plann
 
 - **Backend**: Python 3.12+, FastAPI, LangGraph, LangChain
 - **LLM**: Pluggable via `LLM_PROVIDER` env var — OpenAI (default) or Anthropic. Supports any OpenAI-compatible proxy via `OPENAI_BASE_URL`.
-- **Data tools**: SerpAPI (flights, hotels), Firecrawl (ticket page scraping), Tavily/DuckDuckGo (general search). All results disk-cached with TTL.
+- **Data tools**: SerpAPI — active, real data verified (flights + hotels); Firecrawl — active, real data verified (ticket page scraping); Tavily/DuckDuckGo (general search). All results disk-cached with TTL.
 - **Frontend**: React prototype exists (`frontend/prototype.jsx`), planned migration to Next.js.
 - **Streaming**: FastAPI WebSocket for real-time agent status.
 - **Logging**: File-based (`backend/logs/backend.log`), `LOG_LEVEL` env var controllable.
@@ -150,9 +157,11 @@ f1-paddock-club/
 │   ├── tools/
 │   │   ├── __init__.py             # Re-exports all tool functions
 │   │   ├── _cache.py               # Disk-backed @cached decorator (TTL, callable TTL)
-│   │   ├── search_flights.py       # SerpAPI Google Flights (skeleton, @cached 3h)
-│   │   ├── search_hotels.py        # SerpAPI Google Hotels (skeleton, @cached 3h)
-│   │   ├── search_tickets.py       # Firecrawl -> DuckDuckGo cascade (@cached dynamic)
+│   │   ├── _date_util.py           # Date/weekend helpers shared by flight + hotel tools
+│   │   ├── _parallel.py            # run_parallel() helper for multi-source fan-out
+│   │   ├── search_flights.py       # SerpAPI google_flights + google_search parallel (@cached 3h)
+│   │   ├── search_hotels.py        # SerpAPI google_hotels + google_maps parallel (@cached 3h)
+│   │   ├── search_tickets.py       # Firecrawl + google_search parallel -> LLM extraction (@cached dynamic)
 │   │   ├── search_web.py           # Tavily -> DuckDuckGo general search (@cached 1d)
 │   │   ├── recompute.py            # Budget recomputation (pure function, shared by both lanes)
 │   │   └── .cache/                 # Disk cache files (gitignored)
@@ -175,8 +184,8 @@ f1-paddock-club/
 3. **Phase 3 — External data tools + supervisor** — IN PROGRESS.
    - 3.0 ✅ Tools skeleton (search_flights, search_hotels, search_tickets, search_web, recompute)
    - 3.1 ✅ Disk-backed cache decorator with callable TTL
-   - 3.2 ⏳ SerpAPI integration (waiting for API key)
-   - 3.3 ⏳ Firecrawl integration for tickets (waiting for API key)
+   - 3.2 ✅ SerpAPI integration — search_flights (google_flights + google_search parallel), search_hotels (google_hotels + google_maps parallel). Real data verified: JFK→MXP $365, Monza hotels $116–235/night.
+   - 3.3 ✅ Firecrawl integration for tickets — search_tickets (firecrawl + google_search parallel → LLM extraction). Real data verified: Monza Lateral Parabolic €594.
    - 3.4 ✅ Supervisor agent skeleton (refine.py)
    - 3.5 ⏳ Hotel Specialist (first specialist with state mutation)
    - 3.6 ⏳ Transport + Budget Specialists
@@ -191,11 +200,15 @@ f1-paddock-club/
 ```bash
 cd backend
 pip install -r requirements.txt
+# requirements.txt includes: google-search-results (SerpAPI), firecrawl-py, and all other deps
 
 # Configure LLM provider (copy and edit)
 cp .env.example .env
 # At minimum set: OPENAI_API_KEY=... (or ANTHROPIC_API_KEY with LLM_PROVIDER=anthropic)
-# Optional: SERPAPI_API_KEY, FIRECRAWL_API_KEY, TAVILY_API_KEY
+# For real flight/hotel data:  SERPAPI_API_KEY=...
+# For real ticket data:        FIRECRAWL_API_KEY=...
+# Optional general search:     TAVILY_API_KEY=...
+# Without these keys the agents fall back to mock data gracefully.
 
 # CLI test (Lane 1)
 PYTHONIOENCODING=utf-8 python graph.py
