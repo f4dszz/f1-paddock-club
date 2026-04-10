@@ -151,9 +151,14 @@ def _try_serpapi_google_tickets(gp_name: str, year: int, api_key: str) -> list[s
     """
     from serpapi import GoogleSearch
 
+    # WHY "formula 1" prefix + "tribune" + "EUR"?
+    # - "formula 1" disambiguates from other events at same venue
+    # - "tribune" / "grandstand" are the terms ticket sites actually use
+    # - "EUR" biases toward European pricing pages (where most GPs are)
+    # - Avoids generic words like "Italian" that trigger cultural content
     params = {
         "engine": "google",
-        "q": f"{gp_name} {year} official tickets grandstand prices buy",
+        "q": f"formula 1 {gp_name} {year} tickets tribune grandstand price EUR official buy",
         "api_key": api_key,
     }
     raw = GoogleSearch(params).get_dict()

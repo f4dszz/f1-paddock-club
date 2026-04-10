@@ -207,9 +207,14 @@ def _try_serpapi_google_search_flights(
     iata_dest = _resolve_iata(dest)
     iso_date = normalize_date(date)
 
+    # WHY this specific query formulation?
+    # - "airline tickets" not "flights" → avoids flight simulator noise
+    # - IATA codes → more precise than city names
+    # - "airfare" → strong purchase-intent signal for search engines
+    # - "one way price" → matches how Google shows fare snippets
     params = {
         "engine": "google",
-        "q": f"flights {iata_origin} to {iata_dest} {iso_date} cheap tickets book",
+        "q": f"airline tickets {iata_origin} to {iata_dest} {iso_date} airfare one way price",
         "api_key": api_key,
     }
     raw = GoogleSearch(params).get_dict()
@@ -314,10 +319,11 @@ def search_flights(
 
     # ── Layer 1: Parallel real sources ───────────────────────────
     if api_key:
-        # Two complementary sources:
-        # - google_flights: structured airline data (primary)
-        # - google search: price snippets as cross-reference
-        #   (replaces Bing which returned flight simulator noise)
+        # Two complementary sources (tested: Bing returned locale-dependent
+        # noise — flight simulators or Chinese social media. Not worth it.):
+        # - google_flights: structured airline data (primary, one-level source)
+        # - google_search: price snippets as cross-reference (two-level source)
+        # True redundancy (another one-level source) would need Amadeus API.
         sources = {
             "google_flights": lambda: _try_serpapi_google_flights(
                 origin, dest, date, return_date, stops, cabin, api_key,
