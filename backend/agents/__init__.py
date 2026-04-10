@@ -355,41 +355,23 @@ def tour_agent(state: TravelPlanState) -> dict:
 
 # ── budget_agent ─────────────────────────────────────────────────────
 def budget_agent(state: TravelPlanState) -> dict:
-    """Aggregate costs and check against budget."""
-    # Pick the recommended ticket (index 1 = "PICK")
-    ticket_cost = state["tickets"][1]["price"] if len(state["tickets"]) > 1 else 0
-    transport_cost = sum(t["price"] for t in state.get("transport", []))
-    hotel_cost = min(h["total_price"] for h in state.get("hotel", [])) if state.get("hotel") else 0
-    tour_cost = 44   # estimated from tour items
-    food_cost = 240  # estimated
-    local_cost = 40  # estimated
+    """Aggregate costs and check against budget.
 
-    total = ticket_cost + transport_cost + hotel_cost + tour_cost + food_cost + local_cost
-    budget = state.get("budget", 2500)
-    within = total <= budget
+    Phase 3: delegates to tools.recompute.recompute_budget() which
+    handles real API data (filtering INFO items, picking cheapest
+    per category, multiplying hotel by nights).
+    """
+    from tools.recompute import recompute_budget
 
-    items = [
-        {"name": "Tickets", "amount": ticket_cost},
-        {"name": "Flights", "amount": transport_cost},
-        {"name": "Hotel", "amount": hotel_cost},
-        {"name": "Activities", "amount": tour_cost},
-        {"name": "Food (est.)", "amount": food_cost},
-        {"name": "Local transport", "amount": local_cost},
-    ]
-
-    summary = {
-        "items": items,
-        "total": total,
-        "budget": budget,
-        "currency": "EUR",
-        "within_budget": within,
-        "savings_tip": "" if within else "Consider a cheaper hotel or GA tickets to save money.",
-    }
+    summary = recompute_budget(state)
+    total = summary["total"]
+    budget = summary["budget"]
+    within = summary["within_budget"]
 
     return {
         "budget_summary": summary,
         "budget_ok": within,
-        "messages": [_msg("budget", f"Total €{total:.0f} / €{budget:.0f} — {'within budget ✓' if within else 'OVER BUDGET'}")],
+        "messages": [_msg("budget", f"Total EUR {total:.0f} / EUR {budget:.0f} — {'within budget' if within else 'OVER BUDGET'}")],
     }
 
 

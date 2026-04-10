@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from ._cache import cached
 from ._parallel import query_parallel
+from ._date_util import normalize_date, compute_checkout
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +52,14 @@ def _try_serpapi_google_hotels(
     if near:
         query += f" near {near}"
 
+    checkin_iso = normalize_date(checkin)
+    checkout_iso = normalize_date(checkout) if checkout else compute_checkout(checkin, 5)
+
     params = {
         "engine": "google_hotels",
         "q": query,
-        "check_in_date": checkin,
-        "check_out_date": checkout,
+        "check_in_date": checkin_iso,
+        "check_out_date": checkout_iso,
         "api_key": api_key,
     }
     if stars:

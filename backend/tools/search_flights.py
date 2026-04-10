@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from ._cache import cached
 from ._parallel import query_parallel, DegradationReport
+from ._date_util import normalize_date
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +98,13 @@ def _try_serpapi_google_flights(
         "engine": "google_flights",
         "departure_id": _resolve_iata(origin),
         "arrival_id": _resolve_iata(dest),
-        "outbound_date": date,
+        "outbound_date": normalize_date(date),
         # SerpAPI convention: type=1 is round-trip, type=2 is one-way
         "type": "1" if return_date else "2",
         "api_key": api_key,
     }
     if return_date:
-        params["return_date"] = return_date
+        params["return_date"] = normalize_date(return_date)
     if stops is not None:
         params["stops"] = str(stops)
     if cabin:
@@ -269,11 +270,16 @@ def search_flights(
 
     # ── Layer 1: Parallel real sources ───────────────────────────
     if api_key:
+        # WHY no Bing for flights?
+        # Bing's organic search returns web pages (often flight simulator
+        # sites, not actual airlines). Google Flights engine returns
+        # structured airline data — it's the only source that matters here.
+        # Bing IS useful for hotels and tickets where web results contain
+        # pricing info in snippets.
         sources = {
             "google_flights": lambda: _try_serpapi_google_flights(
                 origin, dest, date, return_date, stops, cabin, api_key,
             ),
-            "bing": lambda: _try_serpapi_bing(origin, dest, date, api_key),
         }
 
         results, report = query_parallel(sources, timeout=20)

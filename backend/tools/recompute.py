@@ -1,13 +1,17 @@
 """Pure-function helpers for budget recomputation and plan validation.
 
-These are NOT cached — they're deterministic computations over the
-current state, not external API calls. They exist as tool functions
-so the refinement agent (Lane 2) can call them after updating one
-part of the plan (e.g., swapping hotels).
+WHY these functions need to be smarter now (Phase 3):
+With mock data, transport had exactly 3 items (OUT + RET + LOCAL) and
+hotel had exactly 2 items. budget_agent could just sum(transport) and
+min(hotel). With real API data, transport might have 6 outbound options,
+3 INFO links from Bing, and no return flight. Hotel might have 5 real
+hotels plus 3 Bing INFO items with price=0.
 
-Usage:
-    from tools.recompute import recompute_budget
-    summary = recompute_budget(state)
+The recompute logic now:
+- Filters out INFO/supplementary items (tag="INFO" or _source="bing" with price=0)
+- Picks the cheapest OUT flight + cheapest RET flight (if any) + LOCAL
+- Picks the cheapest real hotel and multiplies by nights
+- All other agents' costs use sensible defaults
 """
 
 from __future__ import annotations
@@ -17,36 +21,68 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _pick_cheapest(items: list[dict], tag_filter: str) -> float:
+    """Pick the cheapest item matching a tag, ignoring INFO/zero-price items."""
+    candidates = [
+        t for t in items
+        if t.get("tag") == tag_filter
+        and t.get("price", 0) > 0
+    ]
+    if not candidates:
+        return 0
+    return min(c["price"] for c in candidates)
+
+
 def recompute_budget(state: dict[str, Any]) -> dict:
     """Recompute the budget summary from current state fields.
 
-    This is extracted from the existing budget_agent logic so both
-    Lane 1 (budget_agent node) and Lane 2 (refinement agent tool)
-    can use the same calculation.
+    Handles both mock data (simple sums) and real API data (needs
+    filtering and picking logic).
 
-    Args:
-        state: A dict with at least tickets, transport, hotel, budget keys.
-
-    Returns:
-        A BudgetSummary-shaped dict:
-        {"items": [...], "total": float, "budget": float,
-         "currency": "EUR", "within_budget": bool, "savings_tip": str}
+    Returns a BudgetSummary-shaped dict.
     """
-    # Pick the recommended ticket (index 1 = "PICK" tag by convention)
+    # ── Tickets: pick the PICK-tagged option, or cheapest ────────
     tickets = state.get("tickets") or []
-    ticket_cost = tickets[1]["price"] if len(tickets) > 1 else 0
+    real_tickets = [t for t in tickets if t.get("tag") != "INFO" and t.get("price", 0) > 0]
+    if real_tickets:
+        pick = next((t for t in real_tickets if t.get("tag") == "PICK"), None)
+        ticket_cost = pick["price"] if pick else min(t["price"] for t in real_tickets)
+    else:
+        ticket_cost = 0
 
-    transport_cost = sum(t["price"] for t in (state.get("transport") or []))
+    # ── Transport: cheapest OUT + cheapest RET + sum of LOCAL ────
+    transport = state.get("transport") or []
+    out_cost = _pick_cheapest(transport, "OUT")
+    ret_cost = _pick_cheapest(transport, "RET")
+    local_cost = sum(
+        t.get("price", 0) for t in transport
+        if t.get("tag") == "LOCAL" and t.get("price", 0) > 0
+    )
+    transport_cost = out_cost + ret_cost + local_cost
 
+    # ── Hotel: cheapest real hotel × nights ──────────────────────
     hotel_list = state.get("hotel") or []
-    hotel_cost = min(h["total_price"] for h in hotel_list) if hotel_list else 0
+    real_hotels = [
+        h for h in hotel_list
+        if h.get("tag") != "INFO" and h.get("price_per_night", 0) > 0
+    ]
+    if real_hotels:
+        cheapest = min(real_hotels, key=lambda h: h["price_per_night"])
+        nights = cheapest.get("nights", 1) or 1
+        # If nights is 1 (per-night from API), use trip days instead
+        trip_days = 3 + int(state.get("extra_days", 0) or 0)
+        if nights <= 1:
+            nights = trip_days
+        hotel_cost = cheapest["price_per_night"] * nights
+    else:
+        hotel_cost = 0
 
-    # Estimated costs for items we don't have real data for yet
-    tour_cost = 44    # placeholder from mock era
-    food_cost = 240   # placeholder
-    local_cost = 40   # placeholder
+    # ── Estimated costs ──────────────────────────────────────────
+    tour_cost = 44
+    food_cost = 240
+    misc_local = 40
 
-    total = ticket_cost + transport_cost + hotel_cost + tour_cost + food_cost + local_cost
+    total = ticket_cost + transport_cost + hotel_cost + tour_cost + food_cost + misc_local
     budget = float(state.get("budget", 2500))
     within = total <= budget
 
@@ -56,7 +92,7 @@ def recompute_budget(state: dict[str, Any]) -> dict:
         {"name": "Hotel", "amount": hotel_cost},
         {"name": "Activities", "amount": tour_cost},
         {"name": "Food (est.)", "amount": food_cost},
-        {"name": "Local transport", "amount": local_cost},
+        {"name": "Local transport", "amount": misc_local},
     ]
 
     return {
