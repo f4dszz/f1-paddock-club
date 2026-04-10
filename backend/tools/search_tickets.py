@@ -1,38 +1,38 @@
-"""Search for F1 ticket options via Firecrawl → DuckDuckGo cascade.
+"""Search for F1 ticket options via Firecrawl + SerpAPI + LLM estimation.
 
-Unlike flights/hotels (which have SerpAPI), F1 tickets have NO clean
-public API. Our strategy:
+Data flow:
+    1. Parallel: Firecrawl (scrape official page) + SerpAPI Bing (web search)
+    2. If results → LLM extracts structured TicketOption[] from combined text
+    3. If parallel fails → LLM estimation from training data
+    4. If LLM fails → raise (agent falls back to mock)
 
-1. Try Firecrawl to scrape the GP's official ticket page → LLM extracts
-   structured TicketOption[] from the markdown.
-2. If Firecrawl fails or is unconfigured, fall back to DuckDuckGo web
-   search → LLM extracts from search snippets.
-3. If everything fails, raise so the agent falls back to mock.
+WHY is tickets different from flights/hotels?
+Flights and hotels have structured SerpAPI engines (google_flights,
+google_hotels) that return machine-readable data. Tickets DON'T —
+there's no "google_tickets" engine. So our strategy is:
+    - Firecrawl: scrape the official ticket page → get raw markdown
+    - SerpAPI Bing: search for ticket info → get snippets
+    - Feed BOTH into the LLM as context → extract structured data
 
-TTL is dynamic: varies by how close the race is (see _ticket_ttl).
+This is a "retrieve then extract" pattern (light RAG without a vector DB).
 
-Usage:
-    from tools.search_tickets import search_tickets
-    options = search_tickets("Italian GP", 2026, pref="mid")
+TTL: Dynamic based on distance-to-race (see _ticket_ttl).
 """
 
 from __future__ import annotations
 import logging
 import os
-from datetime import datetime, date
+from datetime import date
+from pydantic import BaseModel, Field
 
 from ._cache import cached
+from ._parallel import query_parallel
 
 logger = logging.getLogger(__name__)
 
-# ── Known GP race dates for 2026 (ISO format) ───────────────────
-# Source: FIA / formula1.com provisional calendar.
-# Used by _ticket_ttl to compute distance-to-race.
-# If a GP isn't here, we use a default TTL.
-#
-# This is NOT a ground-truth data file — it's a lookup table that
-# helps the CACHE decide how long to keep results. It doesn't
-# contain ticket prices or any user-facing data.
+
+# ── Race date lookup (for dynamic TTL, NOT user-facing data) ─────────
+
 _RACE_DATES_2026: dict[str, str] = {
     "Bahrain GP": "2026-03-08",
     "Saudi Arabian GP": "2026-03-22",
@@ -60,42 +60,199 @@ _RACE_DATES_2026: dict[str, str] = {
     "Abu Dhabi GP": "2026-12-06",
 }
 
+# ── Known official ticket URLs per GP ────────────────────────────────
+
+_TICKET_URLS: dict[str, str] = {
+    "Italian GP": "https://www.monzanet.it/en/f1-grand-prix/",
+    "British GP": "https://www.silverstone.co.uk/events/formula-1-british-grand-prix",
+    "Monaco GP": "https://www.formula1.com/en/racing/2026/monaco/tickets",
+    "Singapore GP": "https://www.singaporegp.sg/en/tickets",
+    "United States GP": "https://www.formula1.com/en/racing/2026/united-states/tickets",
+    "Las Vegas GP": "https://www.formula1.com/en/racing/2026/las-vegas/tickets",
+}
+# Default fallback URL for GPs not in the map
+_DEFAULT_TICKET_URL = "https://tickets.formula1.com/en"
+
 
 def _ticket_ttl(gp_name: str, year: int = 2026, **kwargs) -> int:
-    """Dynamic TTL based on distance to race day.
-
-    Closer to race = more volatile inventory = shorter cache.
-
-       > 180 days away → 1 day   (far future, stable)
-      60–180 days away → 1 day   (mid-season, still stable)
-      14–60 days away  → 3 hours (approaching, prices moving)
-       < 14 days away  → 3 hours (race week, very volatile)
-
-    The callable signature matches search_tickets's parameters so it
-    can be passed directly to @cached(ttl=_ticket_ttl).
-    """
+    """Dynamic TTL: closer to race = shorter cache."""
     date_str = _RACE_DATES_2026.get(gp_name)
     if not date_str:
-        # Unknown GP — use a conservative middle-ground TTL.
-        return 12 * 3600  # 12 hours
-
+        return 12 * 3600
     try:
         race_date = date.fromisoformat(date_str)
     except ValueError:
         return 12 * 3600
 
     days_until = (race_date - date.today()).days
+    if days_until < 0:    return 24 * 3600
+    if days_until < 14:   return 3 * 3600
+    if days_until < 60:   return 3 * 3600
+    if days_until < 180:  return 24 * 3600
+    return 24 * 3600
 
-    if days_until < 0:
-        return 24 * 3600      # race already happened, cache 1 day
-    if days_until < 14:
-        return 3 * 3600       # race week — 3 hours
-    if days_until < 60:
-        return 3 * 3600       # approaching — 3 hours
-    if days_until < 180:
-        return 24 * 3600      # mid-range — 1 day
-    return 24 * 3600          # far future — 1 day
 
+# ── Pydantic schema for LLM extraction ──────────────────────────────
+
+class TicketOptionList(BaseModel):
+    """WHY a schema for extraction, not just asking for JSON?
+    with_structured_output guarantees the LLM returns exactly this
+    shape — no missing fields, no wrong types. Without it, the LLM
+    might return {"tickets": [...]} one time and [{"name": ...}] the
+    next. The schema is the contract.
+    """
+    options: list[dict] = Field(
+        description=(
+            "List of 3 ticket options. Each dict: "
+            "name (grandstand name), price (float in EUR), currency ('EUR'), "
+            "section (where in circuit), tag (VALUE/PICK/VIP), "
+            "link (official booking URL)."
+        )
+    )
+
+
+# ── Firecrawl source: scrape official ticket page ────────────────────
+
+def _try_firecrawl(gp_name: str, year: int, api_key: str) -> list[str]:
+    """Scrape the official ticket page and return raw markdown text.
+
+    WHY return raw text instead of structured data?
+    Because the HTML structure is different for every GP's website.
+    Rather than writing 24 different parsers, we let the LLM handle
+    extraction from markdown. Firecrawl does the hard part (JS render,
+    anti-bot) and gives us clean text.
+
+    Returns list of markdown strings (one per page scraped).
+    """
+    from firecrawl import FirecrawlApp
+
+    app = FirecrawlApp(api_key=api_key)
+    url = _TICKET_URLS.get(gp_name, _DEFAULT_TICKET_URL)
+
+    logger.info("Firecrawl: scraping %s for %s", url, gp_name)
+    result = app.scrape_url(url, params={"formats": ["markdown"]})
+
+    markdown = result.get("markdown", "")
+    if not markdown:
+        return []
+
+    return [markdown[:8000]]  # Cap length to fit in LLM context
+
+
+# ── SerpAPI Bing source: web search for ticket info ──────────────────
+
+def _try_serpapi_bing(gp_name: str, year: int, api_key: str) -> list[str]:
+    """Search Bing for ticket pricing info. Returns snippet texts."""
+    from serpapi import GoogleSearch
+
+    params = {
+        "engine": "bing",
+        "q": f"{gp_name} {year} official tickets grandstand prices",
+        "api_key": api_key,
+    }
+    raw = GoogleSearch(params).get_dict()
+
+    snippets = []
+    for r in (raw.get("organic_results") or [])[:5]:
+        title = r.get("title", "")
+        snippet = r.get("snippet", "")
+        link = r.get("link", "")
+        if snippet:
+            snippets.append(f"{title}: {snippet} ({link})")
+
+    return snippets
+
+
+# ── LLM extraction: turn raw text into structured TicketOption[] ─────
+
+def _extract_with_llm(
+    gp_name: str, year: int, raw_texts: list[str],
+    pref: str | None, max_price: float | None,
+    source_label: str,
+) -> list[dict]:
+    """WHY a separate extraction function?
+    Both Firecrawl (markdown) and Bing (snippets) produce raw text.
+    The LLM's job is the same in both cases: read text → output
+    structured TicketOption[]. Centralizing this avoids duplicating
+    the prompt and schema logic.
+    """
+    try:
+        from llm import get_llm
+        llm = get_llm(temperature=0.2, max_tokens=800)
+        if llm is None:
+            return []
+    except Exception:
+        return []
+
+    context = "\n\n---\n\n".join(raw_texts)
+
+    prompt = (
+        f"Based on the following information about {gp_name} {year} tickets:\n\n"
+        f"{context}\n\n"
+        f"Extract exactly 3 grandstand/ticket options: one VALUE (cheapest), "
+        f"one PICK (recommended mid-range), one VIP (premium). "
+        f"Use real grandstand names from the text if available. "
+        f"Prices in EUR. Include the official booking URL from the text."
+        f"{f' Preference: {pref}.' if pref else ''}"
+        f"{f' Max price: EUR {max_price}.' if max_price else ''}"
+    )
+
+    try:
+        structured = llm.with_structured_output(TicketOptionList)
+        result = structured.invoke([
+            ("system", "You are an F1 ticket data extraction expert. Extract structured ticket info from the provided text."),
+            ("user", prompt),
+        ])
+        options = result.options if result.options else []
+        for opt in options:
+            opt["_source"] = source_label
+            opt["_degraded"] = False  # Real data, just LLM-extracted
+        return options
+    except Exception:
+        logger.exception("LLM ticket extraction failed")
+        return []
+
+
+# ── LLM estimation (no real data, pure training knowledge) ───────────
+
+def _try_llm_estimate(
+    gp_name: str, year: int,
+    pref: str | None, max_price: float | None,
+) -> list[dict]:
+    try:
+        from llm import get_llm
+        llm = get_llm(temperature=0.3, max_tokens=800)
+        if llm is None:
+            return []
+    except Exception:
+        return []
+
+    prompt = (
+        f"Estimate 3 realistic ticket options for the {gp_name} {year}. "
+        f"Use real grandstand names for that circuit. Prices in EUR. "
+        f"One VALUE (cheapest/GA), one PICK (mid-range), one VIP (premium). "
+        f"Include the most likely official booking URL."
+        f"{f' Preference: {pref}.' if pref else ''}"
+        f"{f' Max price: EUR {max_price}.' if max_price else ''}"
+    )
+
+    try:
+        structured = llm.with_structured_output(TicketOptionList)
+        result = structured.invoke([
+            ("system", "You are an F1 ticket pricing expert. Return realistic estimates."),
+            ("user", prompt),
+        ])
+        options = result.options if result.options else []
+        for opt in options:
+            opt["_source"] = "llm_estimate"
+            opt["_degraded"] = True
+        return options
+    except Exception:
+        logger.exception("LLM ticket estimation failed")
+        return []
+
+
+# ── Main entry point ─────────────────────────────────────────────────
 
 @cached(ttl=_ticket_ttl)
 def search_tickets(
@@ -103,77 +260,68 @@ def search_tickets(
     year: int = 2026,
     pref: str | None = None,
     max_price: float | None = None,
-) -> list[dict]:
-    """Search for F1 ticket options for a given Grand Prix.
+) -> tuple[list[dict], str]:
+    """Search for F1 ticket options. Returns (results, degradation_summary).
 
-    Args:
-        gp_name: e.g. "Italian GP", "Monaco GP"
-        year: Season year
-        pref: Stand preference hint ("ga" | "mid" | "vip" | None)
-        max_price: Maximum per-ticket price in EUR. None = no limit.
-
-    Returns:
-        List of dicts matching the TicketOption shape:
-        [{"name": str, "price": float, "currency": str,
-          "section": str, "tag": str, "link": str}]
-
-    Raises:
-        Exception on failure — caller should fall back to mock.
+    WHY is the flow different from flights/hotels?
+    Flights/hotels have structured API engines that return machine data.
+    Tickets require a TWO-STEP process:
+      Step 1: Gather raw text (Firecrawl scrape + Bing search, parallel)
+      Step 2: LLM extracts structured TicketOption[] from that text
+    This is essentially "light RAG" — retrieve text, then generate
+    structured output from it — without needing a vector database.
     """
-    # ── Strategy 1: Firecrawl (scrape official ticket page) ──────
+    api_key = os.environ.get("SERPAPI_API_KEY")
     firecrawl_key = os.environ.get("FIRECRAWL_API_KEY")
-    if firecrawl_key:
-        try:
-            result = _try_firecrawl(gp_name, year, firecrawl_key)
-            if result:
-                logger.info("search_tickets: Firecrawl returned %d options", len(result))
-                return result
-        except Exception:
-            logger.exception("search_tickets: Firecrawl failed, trying DuckDuckGo")
 
-    # ── Strategy 2: DuckDuckGo search snippets ───────────────────
-    try:
-        result = _try_duckduckgo(gp_name, year)
-        if result:
-            logger.info("search_tickets: DuckDuckGo returned %d options", len(result))
-            return result
-    except Exception:
-        logger.exception("search_tickets: DuckDuckGo also failed")
+    # ── Layer 1: Parallel text gathering ─────────────────────────
+    # WHY gather text first, then extract?
+    # Because Firecrawl returns markdown and Bing returns snippets.
+    # Both are raw text. We merge them into one context and let
+    # ONE LLM call extract from the combined picture — this gives
+    # better results than extracting from each source separately.
 
-    # ── All strategies exhausted ─────────────────────────────────
-    raise RuntimeError(
-        f"No ticket data source available for {gp_name} {year}"
-    )
+    raw_texts: list[str] = []
+    sources_used: list[str] = []
+    sources_failed: list[str] = []
 
+    if firecrawl_key or api_key:
+        text_sources = {}
+        if firecrawl_key:
+            text_sources["firecrawl"] = lambda: _try_firecrawl(gp_name, year, firecrawl_key)
+        if api_key:
+            text_sources["bing"] = lambda: _try_serpapi_bing(gp_name, year, api_key)
 
-def _try_firecrawl(gp_name: str, year: int, api_key: str) -> list[dict]:
-    """Scrape the GP's official ticket page via Firecrawl and extract
-    structured data with the LLM.
+        text_results, report = query_parallel(text_sources, timeout=25)
 
-    TODO (Phase 3.3): implement once Firecrawl key is ready.
-    """
-    # from firecrawl import FirecrawlApp
-    # app = FirecrawlApp(api_key=api_key)
-    # url = _official_ticket_url(gp_name)  # map GP name → official URL
-    # page = app.scrape_url(url, params={"formats": ["markdown"]})
-    # markdown = page.get("markdown", "")
-    #
-    # Then call LLM with:
-    #   "Extract ticket options from this page: {markdown}"
-    #   with_structured_output(list[TicketOption])
-    return []  # empty → triggers DuckDuckGo fallback
+        # text_results is list[str] (markdown chunks and snippet strings)
+        for item in text_results:
+            if isinstance(item, str):
+                raw_texts.append(item)
+            elif isinstance(item, dict):
+                # Shouldn't happen but handle gracefully
+                raw_texts.append(str(item))
 
+        sources_used = report.succeeded
+        sources_failed = report.failed
 
-def _try_duckduckgo(gp_name: str, year: int) -> list[dict]:
-    """Search DuckDuckGo for ticket info and let LLM extract from snippets.
+    # ── Layer 1b: LLM extraction from gathered text ──────────────
+    if raw_texts:
+        source_label = "+".join(sources_used)
+        extracted = _extract_with_llm(gp_name, year, raw_texts, pref, max_price, source_label)
+        if extracted:
+            degradation_msg = ""
+            if sources_failed:
+                degradation_msg = f" (partial: {', '.join(sources_failed)} failed)"
+            return extracted, f"sources: {source_label}{degradation_msg}"
 
-    TODO (Phase 3.3): implement with langchain-community DuckDuckGoSearchRun.
-    """
-    # from langchain_community.tools import DuckDuckGoSearchRun
-    # search = DuckDuckGoSearchRun()
-    # snippets = search.run(f"{gp_name} {year} official tickets grandstand prices")
-    #
-    # Then call LLM with:
-    #   "Based on these search results, extract 3 ticket options: {snippets}"
-    #   with_structured_output(list[TicketOption])
-    return []  # empty → triggers raise in search_tickets
+        logger.warning("search_tickets: LLM extraction from real data returned nothing")
+
+    # ── Layer 2: LLM estimation (training data only) ─────────────
+    logger.info("search_tickets: trying LLM estimation fallback")
+    estimated = _try_llm_estimate(gp_name, year, pref, max_price)
+    if estimated:
+        return estimated, "source: llm_estimate (real ticket data unavailable)"
+
+    # ── Layer 3: Everything failed ───────────────────────────────
+    raise RuntimeError(f"All ticket data sources exhausted for {gp_name} {year}")

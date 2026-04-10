@@ -60,20 +60,20 @@ def _ticket_mock(state: TravelPlanState) -> list[dict]:
 def ticket_agent(state: TravelPlanState) -> dict:
     """Search for ticket options. Runs before transport/hotel.
 
-    Phase 3: tries tools.search_tickets first, falls back to mock.
+    Phase 3: tries tools.search_tickets first (parallel Firecrawl +
+    Bing → LLM extract → LLM estimate), falls back to mock.
     """
     try:
         from tools.search_tickets import search_tickets
-        tickets = search_tickets(gp_name=state["gp_name"])
-        source = "tools"
+        tickets, source_summary = search_tickets(gp_name=state["gp_name"])
     except Exception:
-        logger.exception("ticket_agent: tool failed, using mock")
+        logger.exception("ticket_agent: all tools failed, using mock")
         tickets = _ticket_mock(state)
-        source = "mock"
+        source_summary = "source: mock (all data sources failed)"
 
     return {
         "tickets": tickets,
-        "messages": [_msg("ticket", f"Found {len(tickets)} ticket options for {state['gp_name']} ({source})")],
+        "messages": [_msg("ticket", f"Found {len(tickets)} ticket options for {state['gp_name']} ({source_summary})")],
     }
 
 
@@ -105,16 +105,15 @@ def transport_agent(state: TravelPlanState) -> dict:
 
     try:
         from tools.search_flights import search_flights
-        transport = search_flights(
+        transport, source_summary = search_flights(
             origin=origin, dest=city, date=state.get("gp_date", ""),
         )
-        source = "tools"
     except Exception:
-        logger.exception("transport_agent: tool failed, using mock")
+        logger.exception("transport_agent: all tools failed, using mock")
         transport = _transport_mock(state)
-        source = "mock"
+        source_summary = "source: mock (all data sources failed)"
 
-    msgs = [_msg("transport", f"Found flights {origin} <-> {city} ({source})")]
+    msgs = [_msg("transport", f"Found flights {origin} <-> {city} ({source_summary})")]
     if stops:
         msgs.append(_msg("transport", f"Multi-stop route noted: {stops}"))
 
@@ -161,32 +160,30 @@ def hotel_agent(state: TravelPlanState) -> dict:
 
     try:
         from tools.search_hotels import search_hotels
-        # On retry, hint the tool to find cheaper options
         max_price = None
         if retry > 0:
-            budget_remaining = float(state.get("budget", 2500)) * 0.3  # ~30% for hotel
+            budget_remaining = float(state.get("budget", 2500)) * 0.3
             max_price = budget_remaining / days if days > 0 else None
-        hotel = search_hotels(
+        hotel, source_summary = search_hotels(
             city=city,
             checkin=state.get("gp_date", ""),
             checkout="",  # TODO: compute from gp_date + days
             max_price=max_price,
         )
-        source = "tools"
     except Exception:
-        logger.exception("hotel_agent: tool failed, using mock")
+        logger.exception("hotel_agent: all tools failed, using mock")
         hotel = _hotel_mock(state, budget_retry=(retry > 0))
-        source = "mock"
+        source_summary = "source: mock (all data sources failed)"
 
     if retry > 0:
         return {
             "hotel": hotel,
-            "messages": [_msg("hotel", f"Found cheaper options (retry #{retry}, {source})")],
+            "messages": [_msg("hotel", f"Found cheaper options (retry #{retry}, {source_summary})")],
         }
 
     return {
         "hotel": hotel,
-        "messages": [_msg("hotel", f"Found {len(hotel)} stays in {city} ({days} nights, {source})")],
+        "messages": [_msg("hotel", f"Found {len(hotel)} stays in {city} ({days} nights, {source_summary})")],
     }
 
 

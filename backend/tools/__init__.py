@@ -14,6 +14,7 @@ from .search_tickets import search_tickets
 from .search_web import search_web
 from .recompute import recompute_budget
 from ._cache import clear_cache
+from ._parallel import query_parallel, DegradationReport
 
 __all__ = [
     "search_flights",
@@ -22,4 +23,6 @@ __all__ = [
     "search_web",
     "recompute_budget",
     "clear_cache",
+    "query_parallel",
+    "DegradationReport",
 ]

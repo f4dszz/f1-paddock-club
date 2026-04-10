@@ -1,24 +1,189 @@
-"""Search for hotel options via SerpAPI Google Hotels engine.
+"""Search for hotel options via SerpAPI Google Hotels (+ Bing parallel).
 
-Phase 3.0: skeleton — raises NotImplementedError so the calling agent
-falls back to its own mock. Fill in the TODO once SerpAPI key is ready.
+Same data flow pattern as search_flights:
+    1. Parallel: google_hotels + bing (both via SerpAPI)
+    2. LLM estimation fallback
+    3. Raise → agent mock
 
-TTL: 3 hours — hotel prices shift but not minute-by-minute.
+WHY google_hotels engine specifically?
+SerpAPI's google_hotels engine returns structured data: property name,
+price, rating, GPS coords, amenities, images. This is MUCH richer
+than scraping a booking page. For Chinese routes, Bing supplements
+with local OTA results that Google Hotels might miss.
 
-Usage:
-    from tools.search_hotels import search_hotels
-    options = search_hotels("Monza", "2026-09-04", "2026-09-09")
+TTL: 3 hours.
 """
 
 from __future__ import annotations
 import logging
 import os
+from pydantic import BaseModel, Field
 
 from ._cache import cached
+from ._parallel import query_parallel
 
 logger = logging.getLogger(__name__)
 
 _TTL = 3 * 3600  # 3 hours
+
+
+class HotelEstimate(BaseModel):
+    hotels: list[dict] = Field(
+        description=(
+            "List of hotel options. Each dict: name, price_per_night (float), "
+            "total_price (float), currency (EUR), nights (int), distance (str), "
+            "rating (str like '8.5'), tag (NEAR/SAVE/BUDGET/LUXURY), "
+            "link (booking URL)."
+        )
+    )
+
+
+def _try_serpapi_google_hotels(
+    city: str, checkin: str, checkout: str,
+    brand: str | None, stars: int | None, max_price: float | None,
+    near: str | None, excluded_ids: list[str] | None, api_key: str,
+) -> list[dict]:
+    from serpapi import GoogleSearch
+
+    query = f"hotels in {city}"
+    if brand:
+        query += f" {brand}"
+    if near:
+        query += f" near {near}"
+
+    params = {
+        "engine": "google_hotels",
+        "q": query,
+        "check_in_date": checkin,
+        "check_out_date": checkout,
+        "api_key": api_key,
+    }
+    if stars:
+        params["hotel_class"] = str(stars)
+
+    raw = GoogleSearch(params).get_dict()
+    properties = raw.get("properties", [])
+
+    results = []
+    excluded = set(excluded_ids or [])
+
+    for p in properties[:8]:
+        hotel_id = p.get("name", "")
+        if hotel_id in excluded:
+            continue
+
+        rate = p.get("rate_per_night", {})
+        price_str = rate.get("lowest", "0")
+        # Parse "$123" or "€123" into float
+        price_per_night = float("".join(c for c in price_str if c.isdigit() or c == ".") or "0")
+
+        nights = p.get("total_rate", {}).get("nights", 1) or 1
+        total = price_per_night * nights
+
+        if max_price and total > max_price:
+            continue
+
+        results.append({
+            "name": p.get("name", "Unknown Hotel"),
+            "price_per_night": price_per_night,
+            "total_price": total,
+            "currency": "USD",
+            "nights": nights,
+            "distance": p.get("nearby_places", [{}])[0].get("name", "") if p.get("nearby_places") else "",
+            "rating": str(p.get("overall_rating", "")),
+            "tag": _classify_hotel(price_per_night, p.get("overall_rating", 0)),
+            "link": p.get("link", "https://www.booking.com"),
+        })
+
+    return results[:5]
+
+
+def _classify_hotel(price: float, rating) -> str:
+    """Assign a display tag based on price/rating heuristics."""
+    try:
+        r = float(rating)
+    except (ValueError, TypeError):
+        r = 0
+    if price < 80:
+        return "BUDGET"
+    if price > 250:
+        return "LUXURY"
+    if r >= 8.5:
+        return "TOP"
+    return "NEAR"
+
+
+def _try_serpapi_bing_hotels(city: str, checkin: str, api_key: str) -> list[dict]:
+    from serpapi import GoogleSearch
+
+    params = {
+        "engine": "bing",
+        "q": f"hotels in {city} {checkin} booking prices",
+        "api_key": api_key,
+    }
+    raw = GoogleSearch(params).get_dict()
+
+    results = []
+    for r in (raw.get("organic_results") or [])[:3]:
+        snippet = r.get("snippet", "")
+        if snippet:
+            results.append({
+                "name": r.get("title", "")[:80],
+                "price_per_night": 0,
+                "total_price": 0,
+                "currency": "USD",
+                "nights": 0,
+                "distance": "",
+                "rating": "",
+                "tag": "INFO",
+                "link": r.get("link", ""),
+                "detail": snippet[:150],
+            })
+    return results
+
+
+def _try_llm_estimate(
+    city: str, checkin: str, checkout: str,
+    brand: str | None, stars: int | None, max_price: float | None,
+) -> list[dict]:
+    try:
+        from llm import get_llm
+        llm = get_llm(temperature=0.3, max_tokens=800)
+        if llm is None:
+            return []
+    except Exception:
+        return []
+
+    constraints = []
+    if brand:
+        constraints.append(f"Brand preference: {brand}")
+    if stars:
+        constraints.append(f"Minimum {stars} stars")
+    if max_price:
+        constraints.append(f"Max total price: ${max_price}")
+
+    prompt = (
+        f"Estimate 2-3 realistic hotel options in {city} "
+        f"for check-in {checkin}, check-out {checkout}. "
+        f"Use real hotel names from that city. "
+        f"{'Constraints: ' + '; '.join(constraints) if constraints else ''}"
+    )
+
+    try:
+        structured = llm.with_structured_output(HotelEstimate)
+        result = structured.invoke([
+            ("system", "You are a hotel pricing expert. Return realistic estimates with real property names."),
+            ("user", prompt),
+        ])
+
+        hotels = result.hotels if result.hotels else []
+        for h in hotels:
+            h["_source"] = "llm_estimate"
+            h["_degraded"] = True
+        return hotels
+    except Exception:
+        logger.exception("LLM hotel estimation failed")
+        return []
 
 
 @cached(ttl=_TTL)
@@ -31,51 +196,36 @@ def search_hotels(
     max_price: float | None = None,
     near: str | None = None,
     excluded_ids: list[str] | None = None,
-) -> list[dict]:
-    """Search for hotels and return a list of HotelOption-shaped dicts.
-
-    Args:
-        city: City name (e.g. "Monza")
-        checkin / checkout: Date strings, ISO format preferred
-        brand: Filter by brand name (e.g. "Marriott", "Hilton"). None = any.
-        stars: Minimum star rating (1-5). None = any.
-        max_price: Maximum total price in EUR. None = no limit.
-        near: Landmark or address to prefer proximity to (e.g. "Autodromo").
-        excluded_ids: Hotel IDs to skip (for "show me different ones" refinement).
-
-    Returns:
-        List of dicts matching the HotelOption shape:
-        [{"name": str, "price_per_night": float, "total_price": float,
-          "currency": str, "nights": int, "distance": str,
-          "rating": str, "tag": str, "link": str}]
-
-    Raises:
-        NotImplementedError: when SERPAPI_API_KEY not set.
-    """
+) -> tuple[list[dict], str]:
+    """Search for hotels. Returns (results, degradation_summary)."""
     api_key = os.environ.get("SERPAPI_API_KEY")
-    if not api_key:
-        raise NotImplementedError(
-            "SERPAPI_API_KEY not set — hotel search unavailable, "
-            "agent should fall back to mock data"
-        )
 
-    # ── TODO (Phase 3.2): real SerpAPI call ──────────────────────
-    #
-    # from serpapi import GoogleSearch
-    # params = {
-    #     "engine": "google_hotels",
-    #     "q": f"hotels in {city}" + (f" {brand}" if brand else ""),
-    #     "check_in_date": checkin,
-    #     "check_out_date": checkout,
-    #     "min_rating": stars * 2 if stars else None,  # Google uses 1-10
-    #     "max_price": max_price,
-    #     "api_key": api_key,
-    # }
-    # raw = GoogleSearch(params).get_dict()
-    #
-    # Then normalize raw["properties"] into our HotelOption shape.
-    # Filter out any hotel whose id is in excluded_ids.
-    # If `near` is set, sort by distance to that landmark.
-    # ─────────────────────────────────────────────────────────────
+    # ── Layer 1: Parallel real sources ───────────────────────────
+    if api_key:
+        sources = {
+            "google_hotels": lambda: _try_serpapi_google_hotels(
+                city, checkin, checkout, brand, stars, max_price,
+                near, excluded_ids, api_key,
+            ),
+            "bing": lambda: _try_serpapi_bing_hotels(city, checkin, api_key),
+        }
 
-    raise NotImplementedError("SerpAPI hotel search not yet wired")
+        results, report = query_parallel(sources, timeout=20)
+
+        if results:
+            logger.info("search_hotels: parallel success — %s", report.summary())
+            degradation_msg = ""
+            if report.any_failed:
+                degradation_msg = f" (partial: {', '.join(report.failed)} failed)"
+            return results, f"sources: {', '.join(report.succeeded)}{degradation_msg}"
+
+        logger.warning("search_hotels: all parallel sources failed — %s", report.summary())
+
+    # ── Layer 2: LLM estimation ──────────────────────────────────
+    logger.info("search_hotels: trying LLM estimation fallback")
+    llm_results = _try_llm_estimate(city, checkin, checkout, brand, stars, max_price)
+    if llm_results:
+        return llm_results, "source: llm_estimate (real-time data unavailable)"
+
+    # ── Layer 3: Everything failed ───────────────────────────────
+    raise RuntimeError(f"All hotel data sources exhausted for {city}")
