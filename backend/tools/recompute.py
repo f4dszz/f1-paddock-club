@@ -42,7 +42,10 @@ def recompute_budget(state: dict[str, Any]) -> dict:
     Returns a BudgetSummary-shaped dict.
     """
     # ── Tickets: pick the PICK-tagged option, or cheapest ────────
-    tickets = state.get("tickets") or []
+    # LESSON: state lists may contain mixed types (dicts from APIs +
+    # strings from text sources) due to _parallel.py passing through
+    # non-dict items. Filter to dicts only before processing.
+    tickets = [t for t in (state.get("tickets") or []) if isinstance(t, dict)]
     real_tickets = [t for t in tickets if t.get("tag") != "INFO" and t.get("price", 0) > 0]
     if real_tickets:
         pick = next((t for t in real_tickets if t.get("tag") == "PICK"), None)
@@ -51,7 +54,7 @@ def recompute_budget(state: dict[str, Any]) -> dict:
         ticket_cost = 0
 
     # ── Transport: cheapest OUT + cheapest RET + sum of LOCAL ────
-    transport = state.get("transport") or []
+    transport = [t for t in (state.get("transport") or []) if isinstance(t, dict)]
     out_cost = _pick_cheapest(transport, "OUT")
     ret_cost = _pick_cheapest(transport, "RET")
     local_cost = sum(
@@ -61,7 +64,7 @@ def recompute_budget(state: dict[str, Any]) -> dict:
     transport_cost = out_cost + ret_cost + local_cost
 
     # ── Hotel: cheapest real hotel × nights ──────────────────────
-    hotel_list = state.get("hotel") or []
+    hotel_list = [h for h in (state.get("hotel") or []) if isinstance(h, dict)]
     real_hotels = [
         h for h in hotel_list
         if h.get("tag") != "INFO" and h.get("price_per_night", 0) > 0
