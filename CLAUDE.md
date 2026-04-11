@@ -149,7 +149,7 @@ f1-paddock-club/
 ├── backend/
 │   ├── main.py                     # FastAPI: POST /plan, WS /ws
 │   ├── graph.py                    # Lane 1: LangGraph orchestrator + CLI test
-│   ├── refine.py                   # Lane 2: Supervisor agent (ReAct) for refinement
+│   ├── refine.py                   # Lane 2: Supervisor agent (dual-mode: planning + refinement)
 │   ├── state.py                    # TravelPlanState (typed shared state)
 │   ├── llm.py                      # Pluggable LLM client (OpenAI/Anthropic + .env)
 │   ├── logging_config.py           # File logger setup (logs/)
@@ -172,7 +172,8 @@ f1-paddock-club/
 ├── frontend/
 │   └── prototype.jsx               # Paddock Club themed React prototype
 └── docs/
-    └── phase3-architecture-decision.md  # Full architecture discussion + rollout plan
+    ├── phase3-architecture-decision.md  # Full architecture discussion + rollout plan
+    └── architecture-lessons.md          # 18 design lessons (teaching reference)
 ```
 
 ---
@@ -187,11 +188,30 @@ f1-paddock-club/
    - 3.2 ✅ SerpAPI integration — search_flights (google_flights + google_search parallel), search_hotels (google_hotels + google_maps parallel). Real data verified: JFK→MXP $365, Monza hotels $116–235/night.
    - 3.3 ✅ Firecrawl integration for tickets — search_tickets (firecrawl + google_search parallel → LLM extraction). Real data verified: Monza Lateral Parabolic €594.
    - 3.4 ✅ Supervisor agent skeleton (refine.py)
-   - 3.5 ⏳ Hotel Specialist (first specialist with state mutation)
-   - 3.6 ⏳ Transport + Budget Specialists
+   - 3.5 ✅ Supervisor dual-mode (planning from natural language + refinement with state mutation). State mutation via post-loop ToolMessage scanning. Budget auto-recompute. Tested: hotel refinement changed state, planning mode generated full plan from empty state.
+   - 3.6 ⏳ Supervisor hardening (see "Specialist vs Supervisor" note below)
    - 3.7 ⏳ /ws WebSocket chat routing (Lane 1 for first msg, Lane 2 for subsequent)
-4. **Phase 4 — Frontend migration** — Move prototype to Next.js, connect WebSocket to backend.
+4. **Phase 4 — Frontend migration** — Move prototype to Next.js, connect WebSocket to backend. Chat input box as first-class entry point alongside GP grid + form.
 5. **Phase 5 — Polish + deploy** — Security baseline, error handling, persistence, deploy.
+
+### Specialist vs Supervisor — Open Design Question (Phase 3.6)
+
+The original plan called for specialist sub-agents (Hotel Specialist, Transport Specialist, Budget Specialist) under the supervisor. After completing Phase 3.5, an honest reassessment:
+
+**The supervisor already does what specialists were supposed to do.** When a user says "I want Marriott hotels near the circuit", the supervisor directly calls `search_hotels_tool(brand="Marriott", near="circuit")` — it doesn't need a Hotel Specialist as an intermediary. The tools' rich parameter signatures (brand, stars, max_price, near, excluded_ids) already give the supervisor enough fine-grained control.
+
+**When specialists WOULD be needed:**
+- When the supervisor's tool list exceeds ~15-20 tools (context overload → worse routing decisions)
+- When a domain needs multi-step reasoning that's too complex for a single prompt (e.g., "find the cheapest multi-stop route through 3 European GPs with stopover visa considerations")
+- When different domains need different LLM models/temperatures (routing = smart model, data extraction = cheap model)
+
+**Current decision:** Phase 3.6 focuses on supervisor hardening instead of adding specialists:
+- Budget tradeoff suggestions when over budget
+- Multi-turn conversation memory
+- Edge cases: "change GP entirely", "start over", timeout handling
+- Specialists deferred to Phase 5 when validated by real usage patterns
+
+This is a reversible decision. The architecture supports adding specialists later (tools are already separated, supervisor prompt has clear mode sections). But adding them now would be premature abstraction — optimizing for complexity that doesn't yet exist.
 
 ---
 
