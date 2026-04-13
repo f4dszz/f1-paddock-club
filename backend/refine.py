@@ -16,6 +16,13 @@ targeted changes"). Splitting into two agents would mean maintaining
 two copies of tool bindings, error handling, and test coverage for
 zero benefit. The mode switch is a prompt-level concern, not a code-level one.
 
+Phase 3.6 addition — State-aware tool factory:
+Tools are now created per-invocation as closures that capture the current
+state. When the supervisor omits a parameter (city, date, origin), the
+tool auto-fills from state instead of searching with empty values or
+asking the user. This is a CODE-LEVEL guardrail against the known issue
+where the supervisor ignores the prompt and asks for already-known info.
+
 Usage:
     # Mode 1: Chat-first (no form, user types freely)
     state, reply = refine_plan({}, "Plan my trip to Monza from Shanghai, $3000, 5 days")
@@ -37,30 +44,17 @@ from langgraph.prebuilt import create_react_agent
 
 from llm import get_llm
 
-# LESSON — Eager imports for refine.py, not lazy.
-# In agents/__init__.py we use lazy imports (inside try blocks) because
-# agents must work even if tools aren't installed (fallback to mock).
-# Here the supervisor CAN'T work without tools — no tools = no supervisor.
-# So we import eagerly at module level, avoiding the deadlock that happens
-# when lazy imports run inside ThreadPoolExecutor threads (Python's
-# _ModuleLock doesn't handle concurrent first-imports gracefully).
 from tools.search_hotels import search_hotels as _raw_search_hotels
 from tools.search_flights import search_flights as _raw_search_flights
 from tools.search_tickets import search_tickets as _raw_search_tickets
 from tools.recompute import recompute_budget as _raw_recompute_budget
+from tools._trip_dates import compute_trip_dates
 
 logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # SECTION 1: Supervisor Prompt
-#
-# LESSON — Dual-mode prompt design:
-# Instead of if/else in Python code, we put the mode switch IN the prompt.
-# The LLM reads the "Current plan" section and sees either real data
-# (refinement mode) or "No plan yet" (planning mode). It adjusts its
-# behavior accordingly. This is called "context-driven behavior" — the
-# same agent, same tools, different behavior based on context.
 # ═══════════════════════════════════════════════════════════════════════
 
 SUPERVISOR_PROMPT = """\
@@ -109,149 +103,176 @@ They want to make changes. Your job:
 1. Understand EXACTLY what the user wants to change.
 2. Call ONLY the tools needed for that specific change.
    If the user only wants to change hotels, do NOT touch flights or tickets.
-3. Use the "Tool parameters" section below for city, dates, origin etc.
-   Do NOT ask the user to repeat information that's already in the plan.
-4. Present the changes clearly: what was before, what's new, budget impact.
+3. Present the changes clearly: what was before, what's new, budget impact.
 
-IMPORTANT: You have ALL the context you need in the Current plan section.
-Use the city, date, origin, and budget from the existing plan when
-calling tools. The user should never need to re-state basic trip info.
+CRITICAL RULES for refinement:
+- All trip parameters (city, dates, origin, budget) are ALREADY KNOWN.
+  They are listed in the "Tool parameters" section below.
+- The tools will AUTOMATICALLY use these parameters if you don't override them.
+  You do NOT need to pass city/date/origin unless the user wants to CHANGE them.
+- NEVER ask the user for GP name, city, date, origin, or budget —
+  these are already in the plan. Asking for known information is a bug.
+- ONLY ask clarifying questions about the user's NEW request
+  (e.g., "Do you want 4-star or 5-star Marriott?" is OK).
 """
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# SECTION 2: Tool Wrappers
+# SECTION 2: State-Aware Tool Factory
 #
-# LESSON — Why wrappers around the raw tool functions?
-# 1. LangChain's @tool decorator needs specific signatures (no **kwargs,
-#    no complex types like list[str]|None). Wrappers simplify the interface.
-# 2. Wrappers catch exceptions and return error STRINGS instead of raising.
-#    This is critical: if a tool raises inside the ReAct loop, the loop
-#    crashes. If it returns an error string, the supervisor can REASON
-#    about the failure and suggest alternatives.
-# 3. Raw tools return tuple[list[dict], str] (results, summary). Wrappers
-#    serialize to JSON string for the LLM to read.
+# WHY create tools per-invocation instead of at module level?
+#
+# Problem: the supervisor sometimes ignores the prompt and calls
+# search_hotels_tool(city="") or search_flights_tool(origin="", dest="").
+# With module-level tools, empty params → bad search → bad results.
+#
+# Solution: tools created inside refine_plan() capture the current state
+# via closure. Any empty parameter is auto-filled from state. The
+# supervisor CAN override (user says "search hotels in Rome instead")
+# but DEFAULTS are always correct.
+#
+# This is a CODE-LEVEL guardrail — it works even when the LLM ignores
+# the prompt instruction. Belt AND suspenders.
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
-def search_hotels_tool(
-    city: str,
-    checkin: str = "",
-    checkout: str = "",
-    brand: str = "",
-    stars: int = 0,
-    max_price: float = 0,
-    near: str = "",
-) -> str:
-    """Search for hotel options near an F1 circuit or city.
-    Use this when: user wants different hotels, specific brand (Marriott/Hilton),
-    price range, star rating, or location preference.
-    Returns JSON array of hotel options with name, price, rating, distance."""
-    try:
-        kwargs: dict[str, Any] = {"city": city, "checkin": checkin, "checkout": checkout}
-        if brand:
-            kwargs["brand"] = brand
-        if stars > 0:
-            kwargs["stars"] = stars
-        if max_price > 0:
-            kwargs["max_price"] = max_price
-        if near:
-            kwargs["near"] = near
-        results, _summary = _raw_search_hotels(**kwargs)
-        return json.dumps(results, ensure_ascii=False)
-    except Exception as e:
-        logger.exception("search_hotels_tool failed")
-        return f"Hotel search failed: {e}. Try adjusting criteria or suggest the user check booking.com directly."
+def _build_tools(state: dict) -> list:
+    """Create state-aware tool instances for this invocation.
 
+    Each tool auto-fills missing parameters from state, so the
+    supervisor never needs to re-specify known trip info.
+    """
+    # Pre-compute dates once for all tools
+    dates = compute_trip_dates(
+        state.get("gp_date", ""),
+        state.get("extra_days", 0),
+    )
 
-@tool
-def search_flights_tool(
-    origin: str,
-    dest: str,
-    date: str,
-    return_date: str = "",
-    stops: int = -1,
-    cabin: str = "",
-) -> str:
-    """Search for flight options between two cities.
-    Use this when: user wants different flights, direct only, different dates, cabin class.
-    Returns JSON array of flight options with airline, price, duration, stops."""
-    try:
-        kwargs: dict[str, Any] = {"origin": origin, "dest": dest, "date": date}
-        if return_date:
-            kwargs["return_date"] = return_date
-        if stops >= 0:
-            kwargs["stops"] = stops
-        if cabin:
-            kwargs["cabin"] = cabin
-        results, _summary = _raw_search_flights(**kwargs)
-        return json.dumps(results, ensure_ascii=False)
-    except Exception as e:
-        logger.exception("search_flights_tool failed")
-        return f"Flight search failed: {e}. Try adjusting criteria."
+    # State defaults — what the tools fall back to
+    _city = state.get("gp_city", "")
+    _origin = state.get("origin", "")
+    _gp_name = state.get("gp_name", "")
+    _checkin = dates["hotel_checkin"]
+    _checkout = dates["hotel_checkout"]
+    _outbound = dates["outbound_date"]
+    _return = dates["return_date"]
 
+    @tool
+    def search_hotels_tool(
+        city: str = "",
+        checkin: str = "",
+        checkout: str = "",
+        brand: str = "",
+        stars: int = 0,
+        max_price: float = 0,
+        near: str = "",
+    ) -> str:
+        """Search for hotel options near an F1 circuit or city.
+        Use this when: user wants different hotels, specific brand (Marriott/Hilton),
+        price range, star rating, or location preference.
+        Parameters auto-fill from the current plan — only pass values you want to CHANGE.
+        Returns JSON array of hotel options with name, price, rating, distance."""
+        try:
+            kwargs: dict[str, Any] = {
+                "city": city or _city,
+                "checkin": checkin or _checkin,
+                "checkout": checkout or _checkout,
+            }
+            if brand:
+                kwargs["brand"] = brand
+            if stars > 0:
+                kwargs["stars"] = stars
+            if max_price > 0:
+                kwargs["max_price"] = max_price
+            if near:
+                kwargs["near"] = near
+            logger.info("search_hotels_tool called: %s", {k: v for k, v in kwargs.items() if v})
+            results, _summary = _raw_search_hotels(**kwargs)
+            return json.dumps(results, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("search_hotels_tool failed")
+            return f"Hotel search failed: {e}. Try adjusting criteria or suggest the user check booking.com directly."
 
-@tool
-def search_tickets_tool(
-    gp_name: str,
-    year: int = 2026,
-    pref: str = "",
-    max_price: float = 0,
-) -> str:
-    """Search for F1 ticket/grandstand options for a specific Grand Prix.
-    Use this when: user wants to see ticket options, change grandstand, adjust ticket budget.
-    Returns JSON array with grandstand name, price, section, booking link."""
-    try:
-        kwargs: dict[str, Any] = {"gp_name": gp_name, "year": year}
-        if pref:
-            kwargs["pref"] = pref
-        if max_price > 0:
-            kwargs["max_price"] = max_price
-        results, _summary = _raw_search_tickets(**kwargs)
-        return json.dumps(results, ensure_ascii=False)
-    except Exception as e:
-        logger.exception("search_tickets_tool failed")
-        return f"Ticket search failed: {e}. Try checking tickets.formula1.com directly."
+    @tool
+    def search_flights_tool(
+        origin: str = "",
+        dest: str = "",
+        date: str = "",
+        return_date: str = "",
+        stops: int = -1,
+        cabin: str = "",
+    ) -> str:
+        """Search for flight options between two cities.
+        Use this when: user wants different flights, direct only, different dates, cabin class.
+        Parameters auto-fill from the current plan — only pass values you want to CHANGE.
+        Returns JSON array of flight options with airline, price, duration, stops."""
+        try:
+            kwargs: dict[str, Any] = {
+                "origin": origin or _origin,
+                "dest": dest or _city,
+                "date": date or _outbound,
+            }
+            effective_return = return_date or _return
+            if effective_return:
+                kwargs["return_date"] = effective_return
+            if stops >= 0:
+                kwargs["stops"] = stops
+            if cabin:
+                kwargs["cabin"] = cabin
+            logger.info("search_flights_tool called: %s", {k: v for k, v in kwargs.items() if v})
+            results, _summary = _raw_search_flights(**kwargs)
+            return json.dumps(results, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("search_flights_tool failed")
+            return f"Flight search failed: {e}. Try adjusting criteria."
 
+    @tool
+    def search_tickets_tool(
+        gp_name: str = "",
+        year: int = 2026,
+        pref: str = "",
+        max_price: float = 0,
+    ) -> str:
+        """Search for F1 ticket/grandstand options for a specific Grand Prix.
+        Use this when: user wants to see ticket options, change grandstand, adjust ticket budget.
+        Parameters auto-fill from the current plan — only pass values you want to CHANGE.
+        Returns JSON array with grandstand name, price, section, booking link."""
+        try:
+            kwargs: dict[str, Any] = {"gp_name": gp_name or _gp_name, "year": year}
+            if pref:
+                kwargs["pref"] = pref
+            if max_price > 0:
+                kwargs["max_price"] = max_price
+            logger.info("search_tickets_tool called: %s", kwargs)
+            results, _summary = _raw_search_tickets(**kwargs)
+            return json.dumps(results, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("search_tickets_tool failed")
+            return f"Ticket search failed: {e}. Try checking tickets.formula1.com directly."
 
-@tool
-def recompute_budget_tool(state_json: str) -> str:
-    """Recompute the total budget after any change to hotels, flights, or tickets.
-    ALWAYS call this after making changes to verify the plan is within budget.
-    Pass the FULL current state as a JSON string."""
-    try:
-        state = json.loads(state_json)
-        summary = _raw_recompute_budget(state)
-        return json.dumps(summary, ensure_ascii=False)
-    except Exception as e:
-        logger.exception("recompute_budget_tool failed")
-        return f"Budget recomputation failed: {e}"
+    @tool
+    def recompute_budget_tool(state_json: str) -> str:
+        """Recompute the total budget after any change to hotels, flights, or tickets.
+        ALWAYS call this after making changes to verify the plan is within budget.
+        Pass the FULL current state as a JSON string."""
+        try:
+            s = json.loads(state_json)
+            summary = _raw_recompute_budget(s)
+            return json.dumps(summary, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("recompute_budget_tool failed")
+            return f"Budget recomputation failed: {e}"
 
-
-SUPERVISOR_TOOLS = [
-    search_hotels_tool,
-    search_flights_tool,
-    search_tickets_tool,
-    recompute_budget_tool,
-]
+    return [search_hotels_tool, search_flights_tool, search_tickets_tool, recompute_budget_tool]
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # SECTION 3: State Mutation — Post-Loop Update Application
 #
-# LESSON — Why apply updates AFTER the loop, not DURING?
-#
-# In a ReAct loop, the LLM might call a tool, see the result, decide
-# "that's wrong, let me try again with different parameters", and call
-# the same tool again. If we mutated state inside the tool, the first
-# (wrong) result would already be in state. By waiting until the loop
-# finishes, we only apply the FINAL successful result for each tool.
-#
-# The mapping is DECLARATIVE (a dict, not if/elif) so adding a new
-# tool + state field = adding one line, not one code branch.
+# Applies tool results to state AFTER the ReAct loop finishes, so only
+# the FINAL successful result for each tool is kept (not intermediate
+# retries). The mapping is declarative — adding a new tool = one line.
 # ═══════════════════════════════════════════════════════════════════════
 
-# Maps tool function names → state dict keys they should update
 _TOOL_STATE_MAP: dict[str, str] = {
     "search_hotels_tool": "hotel",
     "search_flights_tool": "transport",
@@ -264,21 +285,10 @@ def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
 
     Iterates messages in REVERSE order so we find the LAST successful
     call for each tool (in case the supervisor retried with different params).
-
-    Returns a dict of {field_name: True} for fields that were updated,
-    so the caller knows what changed.
-
-    LESSON — Why reverse order?
-    If the supervisor called search_hotels twice (first with wrong params,
-    then with correct params), the messages look like:
-      [... ToolMsg(hotels_wrong) ... ToolMsg(hotels_correct) ...]
-    Iterating in reverse, we hit hotels_correct first, apply it, and
-    skip hotels_wrong because the field is already marked as updated.
     """
     updated: dict[str, bool] = {}
 
     for msg in reversed(messages):
-        # ToolMessage has .name (tool function name) and .content (result string)
         if not isinstance(msg, ToolMessage):
             continue
 
@@ -288,13 +298,13 @@ def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
 
         field = _TOOL_STATE_MAP[tool_name]
         if field in updated:
-            continue  # Already got a newer result for this field
+            continue
 
         content = msg.content
         if not content or content.startswith(("Hotel search failed",
                                                "Flight search failed",
                                                "Ticket search failed")):
-            continue  # Tool returned an error message, skip
+            continue
 
         try:
             data = json.loads(content)
@@ -303,9 +313,8 @@ def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
                 updated[field] = True
                 logger.info("state updated: %s ← %d items from %s", field, len(data), tool_name)
         except (json.JSONDecodeError, TypeError):
-            continue  # Not valid JSON, skip
+            continue
 
-    # If any data field changed, recompute budget
     if updated:
         try:
             state["budget_summary"] = _raw_recompute_budget(state)
@@ -323,22 +332,11 @@ def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _format_state(state: dict) -> str:
-    """Compact human-readable summary of the current plan for the prompt.
-
-    LESSON — Why a text summary, not raw JSON?
-    1. Raw JSON of the full state is 2000+ tokens. Text summary is ~300.
-       Smaller prompt = faster response + lower cost.
-    2. The LLM doesn't need to see _source, _degraded, or other meta fields.
-       It needs: what GP, what hotels, what price. Summary strips the noise.
-    3. If state is empty, we explicitly say "No plan yet" so the supervisor
-       switches to planning mode based on what it reads, not on a flag.
-    """
-    # Check if any plan data exists
+    """Compact human-readable summary of the current plan for the prompt."""
     has_data = any(state.get(f) for f in ("tickets", "transport", "hotel"))
 
     if not has_data:
         lines = ["No plan exists yet."]
-        # Include any known parameters
         if state.get("gp_name"):
             lines.append(f"GP: {state['gp_name']} in {state.get('gp_city', '?')} ({state.get('gp_date', '?')})")
         if state.get("origin"):
@@ -347,11 +345,15 @@ def _format_state(state: dict) -> str:
             lines.append(f"Budget: EUR {state['budget']}")
         return "\n".join(lines)
 
+    # Pre-compute trip dates for display
+    dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+
     lines = []
     lines.append(f"GP: {state.get('gp_name', '?')} in {state.get('gp_city', '?')} ({state.get('gp_date', '?')})")
     lines.append(f"Origin: {state.get('origin', '?')}")
     lines.append(f"Budget: EUR {state.get('budget', '?')}")
     lines.append(f"Extra days: {state.get('extra_days', 0)}")
+    lines.append(f"Trip: {dates['outbound_date']} to {dates['return_date']} ({dates['trip_nights']} nights)")
     if state.get("special_requests"):
         lines.append(f"Special requests: {state['special_requests']}")
 
@@ -360,40 +362,40 @@ def _format_state(state: dict) -> str:
         for t in state["tickets"]:
             if t.get("tag") == "INFO":
                 continue
-            lines.append(f"  - [{t.get('tag', '')}] {t.get('name', '')} EUR {t.get('price', '?')}")
+            cur = t.get("currency", "EUR")
+            lines.append(f"  - [{t.get('tag', '')}] {t.get('name', '')} {cur} {t.get('price', '?')}")
 
     if state.get("transport"):
         lines.append("\nFlights:")
         for t in state["transport"]:
             if t.get("tag") == "INFO":
                 continue
-            lines.append(f"  - [{t.get('tag', '')}] {t.get('summary', '')} EUR {t.get('price', '?')}")
+            cur = t.get("currency", "USD")
+            lines.append(f"  - [{t.get('tag', '')}] {t.get('summary', '')} {cur} {t.get('price', '?')}")
 
     if state.get("hotel"):
         lines.append("\nHotels:")
         for h in state["hotel"]:
             if h.get("tag") == "INFO":
                 continue
-            lines.append(f"  - [{h.get('tag', '')}] {h.get('name', '')} EUR {h.get('price_per_night', '?')}/night")
+            cur = h.get("currency", "USD")
+            lines.append(f"  - [{h.get('tag', '')}] {h.get('name', '')} {cur} {h.get('price_per_night', '?')}/night")
 
     bs = state.get("budget_summary") or {}
     if bs:
         lines.append(f"\nBudget: EUR {bs.get('total', '?')} / EUR {bs.get('budget', '?')} "
                       f"({'within budget' if bs.get('within_budget') else 'OVER BUDGET'})")
 
-    # LESSON — "Tool-ready parameters" section.
-    # The LLM needs to know what values to pass when calling tools.
-    # Showing "GP: Italian GP in Monza (Sep 6)" is human-readable but
-    # the LLM might not realize it should pass city="Monza", checkin="Sep 6"
-    # to search_hotels_tool. We spell it out explicitly.
-    lines.append("\n--- Tool parameters (use these when calling tools) ---")
+    lines.append("\n--- Tool parameters (auto-filled, override only to change) ---")
     lines.append(f"gp_name: {state.get('gp_name', '?')}")
     lines.append(f"city: {state.get('gp_city', '?')}")
-    lines.append(f"date: {state.get('gp_date', '?')}")
     lines.append(f"origin: {state.get('origin', '?')}")
+    lines.append(f"outbound_date: {dates['outbound_date']}")
+    lines.append(f"return_date: {dates['return_date']}")
+    lines.append(f"hotel_checkin: {dates['hotel_checkin']}")
+    lines.append(f"hotel_checkout: {dates['hotel_checkout']}")
+    lines.append(f"trip_nights: {dates['trip_nights']}")
     lines.append(f"budget: {state.get('budget', '?')}")
-    days = 3 + int(state.get("extra_days", 0) or 0)
-    lines.append(f"trip_days: {days}")
 
     return "\n".join(lines)
 
@@ -406,14 +408,6 @@ def refine_plan(state: dict, user_message: str) -> tuple[dict, str]:
     """Universal entry point for chat-based interaction.
 
     Handles both initial planning (empty state) and refinement (existing plan).
-
-    LESSON — Why return (state, reply) instead of just mutating state in place?
-    Because the caller might want to:
-    1. Compare old state vs new state (for undo/redo)
-    2. Decide whether to accept the changes
-    3. Run tests with deterministic input/output
-    Returning a new state (even though we mutate the dict) makes the
-    data flow explicit. The reply string is for the user-facing UI.
 
     Args:
         state: Current TravelPlanState dict. Can be empty ({}) for initial planning,
@@ -439,10 +433,14 @@ def refine_plan(state: dict, user_message: str) -> tuple[dict, str]:
         state_summary=state_summary,
     )
 
+    # ── Create state-aware tools ─────────────────────────────────
+    # Tools auto-fill parameters from state — the key P0-3 guardrail.
+    tools = _build_tools(state)
+
     # ── Create and invoke supervisor ─────────────────────────────
     supervisor = create_react_agent(
         model=llm,
-        tools=SUPERVISOR_TOOLS,
+        tools=tools,
         prompt=prompt,
     )
 
@@ -468,9 +466,6 @@ def refine_plan(state: dict, user_message: str) -> tuple[dict, str]:
         reply = "I processed your request but couldn't generate a response. Please try rephrasing."
 
     # ── Apply state mutations from tool results ──────────────────
-    # LESSON: This is where state actually changes. Everything above
-    # was pure (read state, call LLM, get messages). Only HERE do we
-    # write to state, and only based on what the supervisor decided.
     updated_fields = _apply_tool_updates(state, messages)
 
     if updated_fields:
