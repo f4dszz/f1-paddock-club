@@ -86,7 +86,7 @@ Long-term vision: the supervisor may eventually replace Lane 1 for initial plann
 
 - **Backend**: Python 3.12+, FastAPI, LangGraph, LangChain
 - **LLM**: Pluggable via `LLM_PROVIDER` env var — OpenAI (default) or Anthropic. Supports any OpenAI-compatible proxy via `OPENAI_BASE_URL`.
-- **Data tools**: SerpAPI — active, real data verified (flights + hotels); Firecrawl — active, real data verified (ticket page scraping); Tavily/DuckDuckGo (general search). All results disk-cached with TTL.
+- **Data tools**: SerpAPI — active, real data verified (flights + hotels); Firecrawl — active, real data verified (ticket page scraping); Tavily/DuckDuckGo — **stubbed** (search_web.py skeleton only, not wired). All active tools disk-cached with TTL.
 - **Frontend**: React prototype exists (`frontend/prototype.jsx`), planned migration to Next.js.
 - **Streaming**: FastAPI WebSocket for real-time agent status.
 - **Logging**: File-based (`backend/logs/backend.log`), `LOG_LEVEL` env var controllable.
@@ -108,7 +108,7 @@ Only `messages` uses `Annotated[list, operator.add]` — it's the one field ever
 
 | Agent | Input | Output | Data Source (Phase 3) | Selection |
 |-------|-------|--------|-----------------------|-----------|
-| ticket | gp, date, pref, budget | 3 grandstand options | Firecrawl -> DuckDuckGo -> LLM estimate -> mock | Single |
+| ticket | gp, date, pref, budget | 3 grandstand options | Firecrawl -> google_search -> LLM extraction -> LLM estimate -> mock | Single |
 | transport | origin, city, date, stops | Flights + local | SerpAPI Google Flights -> LLM estimate -> mock | Multi |
 | hotel | city, dates, budget remaining | 2-3 stays | SerpAPI Google Hotels -> LLM estimate -> mock | Single |
 | itinerary | all prior results | Day-by-day schedule | LLM (with_structured_output) -> mock | Display only |
@@ -164,7 +164,7 @@ f1-paddock-club/
 │   │   ├── search_flights.py       # SerpAPI google_flights + google_search parallel (@cached 3h)
 │   │   ├── search_hotels.py        # SerpAPI google_hotels + google_maps parallel (@cached 3h)
 │   │   ├── search_tickets.py       # Firecrawl + google_search parallel -> LLM extraction (@cached dynamic)
-│   │   ├── search_web.py           # Tavily -> DuckDuckGo general search (@cached 1d)
+│   │   ├── search_web.py           # Tavily -> DuckDuckGo general search — STUBBED (@cached 1d)
 │   │   ├── recompute.py            # Budget recomputation (pure function, shared by both lanes)
 │   │   └── .cache/                 # Disk cache files (gitignored)
 │   ├── logs/                       # Log files (gitignored)
@@ -208,13 +208,21 @@ The original plan called for specialist sub-agents (Hotel Specialist, Transport 
 - When a domain needs multi-step reasoning that's too complex for a single prompt (e.g., "find the cheapest multi-stop route through 3 European GPs with stopover visa considerations")
 - When different domains need different LLM models/temperatures (routing = smart model, data extraction = cheap model)
 
-**Current decision:** Phase 3.6 focuses on supervisor hardening instead of adding specialists:
-- Budget tradeoff suggestions when over budget
-- Multi-turn conversation memory
-- Edge cases: "change GP entirely", "start over", timeout handling
+**Current decision:** Phase 3.6 focused on supervisor hardening instead of adding specialists.
+
+What was actually implemented in 3.6:
+- Multi-currency budget (EUR/USD/CNY) — _currency.py + recompute.py
+- Trip date computation — _trip_dates.py (outbound/return/checkin/checkout from gp_date)
+- State-aware tool factory — supervisor auto-fills parameters from existing plan (code-level guardrail)
+- Round-trip flight handling — ROUNDTRIP tag + recompute support
+
+What was NOT implemented (deferred):
+- Multi-turn conversation memory (supervisor creates fresh agent per call, no chat history across turns)
+- Budget tradeoff suggestions (supervisor reports over-budget but doesn't proactively suggest swaps)
+- "Change GP entirely" / "start over" via chat intent (only via type=plan on /ws)
 - Specialists deferred to Phase 5 when validated by real usage patterns
 
-This is a reversible decision. The architecture supports adding specialists later (tools are already separated, supervisor prompt has clear mode sections). But adding them now would be premature abstraction — optimizing for complexity that doesn't yet exist.
+This is a reversible decision. The architecture supports adding these later.
 
 ---
 
