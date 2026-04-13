@@ -279,15 +279,30 @@ def _try_llm_estimate(
             ("system", "You are an airline pricing expert. Return realistic estimates."),
             ("user", prompt),
         ])
-
         legs = result.legs if result.legs else []
-        for leg in legs:
+    except Exception:
+        logger.warning("structured_output failed for flight estimate, trying raw JSON")
+        try:
+            raw_response = llm.invoke([
+                ("system", "You are an airline pricing expert. Return ONLY valid JSON, no other text."),
+                ("user", prompt + "\n\nReturn JSON: {\"legs\": [{\"tag\": \"OUT\"|\"RET\"|\"LOCAL\", \"summary\": str, \"detail\": str, \"price\": float, \"currency\": \"USD\"|\"EUR\", \"link\": str}]}")
+            ])
+            text = raw_response.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+            parsed = json.loads(text)
+            legs = parsed.get("legs", parsed) if isinstance(parsed, dict) else parsed
+            if not isinstance(legs, list):
+                legs = []
+        except Exception:
+            logger.exception("LLM flight estimation failed (both methods)")
+            return []
+
+    for leg in legs:
+        if isinstance(leg, dict):
             leg["_source"] = "llm_estimate"
             leg["_degraded"] = True
-        return legs
-    except Exception:
-        logger.exception("LLM flight estimation failed")
-        return []
+    return [leg for leg in legs if isinstance(leg, dict)]
 
 
 # ── Main entry point ─────────────────────────────────────────────────

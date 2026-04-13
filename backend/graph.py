@@ -23,6 +23,7 @@ Graph structure:
 """
 
 import logging
+import sys
 
 from langgraph.graph import StateGraph, START, END
 
@@ -45,6 +46,16 @@ from agents import (
 setup_logging()
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_console_output() -> None:
+    """Avoid demo crashes on terminals that cannot encode Unicode glyphs."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(errors="replace")
+        except Exception:
+            continue
 
 
 def build_graph() -> StateGraph:
@@ -161,6 +172,8 @@ def plan_trip(user_input: dict) -> dict:
 
 if __name__ == "__main__":
     import json
+
+    _configure_console_output()
 
     result = plan_trip({
         "gp_name": "Italian GP",

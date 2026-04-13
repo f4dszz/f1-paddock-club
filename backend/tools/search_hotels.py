@@ -15,8 +15,10 @@ TTL: 3 hours.
 """
 
 from __future__ import annotations
+import json
 import logging
 import os
+import re
 from pydantic import BaseModel, Field
 
 from ._cache import cached
@@ -26,6 +28,61 @@ from ._date_util import normalize_date, compute_checkout
 logger = logging.getLogger(__name__)
 
 _TTL = 3 * 3600  # 3 hours
+
+_HOTEL_LOCATION_ALIASES: dict[str, set[str]] = {
+    "monza": {"monza", "milan", "brianza"},
+    "monaco": {"monaco", "monte", "carlo", "nice"},
+    "silverstone": {"silverstone", "northampton", "towcester", "milton", "keynes"},
+    "spa": {"spa", "stavelot", "francorchamps", "liege", "liège", "brussels"},
+    "imola": {"imola", "bologna"},
+    "zandvoort": {"zandvoort", "amsterdam", "haarlem"},
+    "interlagos": {"interlagos", "sao", "paulo"},
+    "las vegas": {"las", "vegas"},
+    "abu dhabi": {"abu", "dhabi", "yas"},
+    "miami": {"miami", "gardens"},
+    "suzuka": {"suzuka", "nagoya"},
+}
+
+
+def _location_tokens(city: str, near: str | None = None) -> set[str]:
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", city.lower())
+        if len(token) >= 3
+    }
+    tokens |= _HOTEL_LOCATION_ALIASES.get(city.lower(), set())
+    if near:
+        tokens |= {
+            token
+            for token in re.findall(r"[a-z0-9]+", near.lower())
+            if len(token) >= 4 and token not in {"hotel", "hotels", "circuit"}
+        }
+    return tokens
+
+
+def _filter_location_relevant_hotels(results: list[dict], city: str, near: str | None = None) -> list[dict]:
+    tokens = _location_tokens(city, near)
+    if not tokens:
+        return results
+
+    filtered: list[dict] = []
+    for item in results:
+        text = " ".join(
+            str(item.get(key, ""))
+            for key in ("name", "distance", "link")
+        ).lower()
+        if any(token in text for token in tokens):
+            filtered.append(item)
+
+    if filtered or not results:
+        return filtered
+
+    logger.warning(
+        "search_hotels: filtered out %d location-mismatched results for city=%s",
+        len(results),
+        city,
+    )
+    return []
 
 
 class HotelEstimate(BaseModel):
@@ -207,15 +264,30 @@ def _try_llm_estimate(
             ("system", "You are a hotel pricing expert. Return realistic estimates with real property names."),
             ("user", prompt),
         ])
-
         hotels = result.hotels if result.hotels else []
-        for h in hotels:
-            h["_source"] = "llm_estimate"
-            h["_degraded"] = True
-        return hotels
     except Exception:
-        logger.exception("LLM hotel estimation failed")
-        return []
+        logger.warning("structured_output failed for hotel estimate, trying raw JSON")
+        try:
+            raw_response = llm.invoke([
+                ("system", "You are a hotel pricing expert. Return ONLY valid JSON, no other text."),
+                ("user", prompt + "\n\nReturn JSON: {\"hotels\": [{\"name\": str, \"price_per_night\": float, \"total_price\": float, \"currency\": \"USD\"|\"EUR\", \"nights\": int, \"distance\": str, \"rating\": str, \"tag\": str, \"link\": str}]}")
+            ])
+            text = raw_response.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+            parsed = json.loads(text)
+            hotels = parsed.get("hotels", parsed) if isinstance(parsed, dict) else parsed
+            if not isinstance(hotels, list):
+                hotels = []
+        except Exception:
+            logger.exception("LLM hotel estimation failed (both methods)")
+            return []
+
+    for hotel in hotels:
+        if isinstance(hotel, dict):
+            hotel["_source"] = "llm_estimate"
+            hotel["_degraded"] = True
+    return [hotel for hotel in hotels if isinstance(hotel, dict)]
 
 
 @cached(ttl=_TTL)
@@ -245,6 +317,8 @@ def search_hotels(
         }
 
         results, report = query_parallel(sources, timeout=20)
+        results = [item for item in results if isinstance(item, dict)]
+        results = _filter_location_relevant_hotels(results, city, near)
 
         if results:
             logger.info("search_hotels: parallel success — %s", report.summary())
