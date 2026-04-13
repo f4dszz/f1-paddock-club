@@ -128,7 +128,7 @@ def plan_trip(user_input: dict) -> dict:
         # User input
         "gp_name": user_input.get("gp_name", "Italian GP"),
         "gp_city": user_input.get("gp_city", "Monza"),
-        "gp_date": user_input.get("gp_date", "Sep 7"),
+        "gp_date": user_input.get("gp_date", "Sep 6"),
         "origin": user_input.get("origin", "New York"),
         "budget": float(user_input.get("budget", 2500)),
         "stand_pref": user_input.get("stand_pref", "any"),
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     result = plan_trip({
         "gp_name": "Italian GP",
         "gp_city": "Monza",
-        "gp_date": "Sep 7",
+        "gp_date": "Sep 6",
         "origin": "New York",
         "budget": 2500,
         "stand_pref": "mid",

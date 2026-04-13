@@ -34,7 +34,7 @@ app.add_middleware(
 class TripRequest(BaseModel):
     gp_name: str = "Italian GP"
     gp_city: str = "Monza"
-    gp_date: str = "Sep 7"
+    gp_date: str = "Sep 6"
     origin: str = "New York"
     budget: float = 2500
     stand_pref: str = "any"

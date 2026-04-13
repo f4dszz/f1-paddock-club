@@ -34,13 +34,13 @@ def compute_trip_dates(gp_date: str, extra_days: int = 0) -> dict:
             trip_nights:    int — total nights (outbound to return)
 
     Example:
-        >>> compute_trip_dates("Sep 7", extra_days=2)
+        >>> compute_trip_dates("Sep 6", extra_days=2)
         {
-            'race_date': '2026-09-07',
-            'outbound_date': '2026-09-05',   # Friday
-            'return_date': '2026-09-10',     # Wednesday
-            'hotel_checkin': '2026-09-05',
-            'hotel_checkout': '2026-09-10',
+            'race_date': '2026-09-06',
+            'outbound_date': '2026-09-04',   # Friday
+            'return_date': '2026-09-09',     # Wednesday
+            'hotel_checkin': '2026-09-04',
+            'hotel_checkout': '2026-09-09',
             'trip_nights': 5,
         }
     """
