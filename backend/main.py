@@ -114,6 +114,12 @@ async def websocket_session(ws: WebSocket):
             msg_type = msg.get("type", "")
             msg_data = msg.get("data", {})
 
+            # Backward compat: raw TripRequest without {type, data} envelope.
+            # Detect by checking for gp_name (a TripRequest field) without type.
+            if not msg_type and msg.get("gp_name"):
+                msg_type = "plan"
+                msg_data = msg
+
             if msg_type == "plan":
                 # ── Lane 1: Full planning pipeline ──────────────
                 await _handle_plan(ws, msg_data, session_state)
