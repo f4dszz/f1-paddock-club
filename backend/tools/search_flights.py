@@ -91,16 +91,23 @@ def _try_serpapi_google_flights(
     Each SerpAPI engine has different parameter names and response
     shapes. Isolating them means changing Google Flights parsing
     doesn't risk breaking Bing parsing. Single Responsibility.
+
+    When return_date is provided, searches round-trip (type=1).
+    google_flights returns round-trip prices in this mode — the price
+    per flight_group covers BOTH directions. We tag these as ROUNDTRIP
+    so recompute_budget handles them correctly (total flight cost, not
+    OUT + RET separately).
     """
     from serpapi import GoogleSearch
+
+    is_roundtrip = bool(return_date)
 
     params = {
         "engine": "google_flights",
         "departure_id": _resolve_iata(origin),
         "arrival_id": _resolve_iata(dest),
         "outbound_date": normalize_date(date),
-        # SerpAPI convention: type=1 is round-trip, type=2 is one-way
-        "type": "1" if return_date else "2",
+        "type": "1" if is_roundtrip else "2",
         "api_key": api_key,
     }
     if return_date:
@@ -113,12 +120,10 @@ def _try_serpapi_google_flights(
 
     raw = GoogleSearch(params).get_dict()
 
-    # WHY: Google Flights returns best_flights + other_flights.
-    # We take best_flights first (Google's ranking), then supplement
-    # with other_flights up to a reasonable limit.
     results = []
+    tag = "ROUNDTRIP" if is_roundtrip else "OUT"
+
     for flight_group in (raw.get("best_flights") or []) + (raw.get("other_flights") or []):
-        # Each flight_group has: flights (legs), total_duration, price, etc.
         flights_in_group = flight_group.get("flights", [])
         if not flights_in_group:
             continue
@@ -129,19 +134,20 @@ def _try_serpapi_google_flights(
         duration = flight_group.get("total_duration", 0)
         price = flight_group.get("price", 0)
 
+        detail_date = f"{date} → {return_date}" if is_roundtrip else date
         results.append({
-            "tag": "OUT",
+            "tag": tag,
             "summary": f"{first_leg.get('departure_airport', {}).get('id', origin)} -> "
                        f"{last_leg.get('arrival_airport', {}).get('id', dest)}",
             "detail": f"{'Direct' if num_stops == 0 else f'{num_stops} stop(s)'} - "
-                      f"{duration // 60}h{duration % 60:02d}m - {date}",
+                      f"{duration // 60}h{duration % 60:02d}m - {detail_date}",
             "price": float(price),
             "currency": "USD",
             "link": "https://www.google.com/travel/flights",
             "airline": first_leg.get("airline", ""),
         })
 
-    return results[:6]  # Cap at 6 to keep response manageable
+    return results[:6]
 
 
 # ── SerpAPI source: Bing search engine (补充信息，中文友好) ────────────

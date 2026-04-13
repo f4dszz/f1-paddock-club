@@ -15,6 +15,8 @@ from .search_web import search_web
 from .recompute import recompute_budget
 from ._cache import clear_cache
 from ._parallel import query_parallel, DegradationReport
+from ._trip_dates import compute_trip_dates
+from ._currency import to_eur, convert
 
 __all__ = [
     "search_flights",
@@ -25,4 +27,7 @@ __all__ = [
     "clear_cache",
     "query_parallel",
     "DegradationReport",
+    "compute_trip_dates",
+    "to_eur",
+    "convert",
 ]

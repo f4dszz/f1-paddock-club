@@ -105,8 +105,12 @@ def transport_agent(state: TravelPlanState) -> dict:
 
     try:
         from tools.search_flights import search_flights
+        from tools._trip_dates import compute_trip_dates
+        dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
         transport, source_summary = search_flights(
-            origin=origin, dest=city, date=state.get("gp_date", ""),
+            origin=origin, dest=city,
+            date=dates["outbound_date"],
+            return_date=dates["return_date"],
         )
     except Exception:
         logger.exception("transport_agent: all tools failed, using mock")
@@ -160,14 +164,16 @@ def hotel_agent(state: TravelPlanState) -> dict:
 
     try:
         from tools.search_hotels import search_hotels
+        from tools._trip_dates import compute_trip_dates
+        dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
         max_price = None
         if retry > 0:
             budget_remaining = float(state.get("budget", 2500)) * 0.3
             max_price = budget_remaining / days if days > 0 else None
         hotel, source_summary = search_hotels(
             city=city,
-            checkin=state.get("gp_date", ""),
-            checkout="",  # TODO: compute from gp_date + days
+            checkin=dates["hotel_checkin"],
+            checkout=dates["hotel_checkout"],
             max_price=max_price,
         )
     except Exception:
