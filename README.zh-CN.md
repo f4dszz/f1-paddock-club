@@ -57,7 +57,7 @@
        └────────────────────────────┘
 ```
 
-共享状态 `TravelPlanState` 在所有 list 字段上使用 `Annotated[list, operator.add]` reducer，这样并行节点可以同时往同一个列表里追加内容，不会互相覆盖。
+共享状态 `TravelPlanState` 仅在 `messages` 字段上使用 `Annotated[list, operator.add]` reducer（这是唯一被并行节点同时写入的字段）。其他字段（`tickets`、`transport`、`hotel` 等）使用 LangGraph 默认的替换语义——每个字段只有一个智能体写入，不会冲突。
 
 ---
 
@@ -73,15 +73,22 @@
 
 ---
 
-## 当前进度（Phase 2 进行中）
+## 当前进度（Phase 3 已完成）
 
 | 阶段 | 状态 | 内容 |
 |---|---|---|
-| **1 — 图 + Mock 数据** | ✅ 已完成 | LangGraph 完整接好，7 个智能体全部返回 mock 数据，CLI 可端到端跑通，FastAPI 的 `/plan` 和 `/ws` 都能用。 |
-| **2 — 真实大模型调用** | 🟡 进行中 | `itinerary_agent` 与 `tour_agent` 已切到真实大模型，使用 `with_structured_output` + Pydantic schema。Provider 可切换（默认 OpenAI，可选 Anthropic）。没配 key 或调用失败时自动回退到 mock 数据。 |
-| **3 — 外部数据工具** | ⏳ 待开始 | 接入 SerpAPI 拉机票/酒店、接入门票搜索源。 |
-| **4 — 前端迁移** | ⏳ 待开始 | 把 `prototype.jsx` 迁到 Next.js，对接 `/ws`。 |
-| **5 — 打磨与部署** | ⏳ 待开始 | 错误处理、运行结果持久化、部署上线。 |
+| **1 — 图 + Mock 数据** | ✅ 已完成 | LangGraph 完整接好，7 个智能体返回 mock 数据，CLI 端到端跑通，FastAPI 端点可用。 |
+| **2 — 真实大模型调用** | ✅ 已完成 | `itinerary_agent` 与 `tour_agent` 调用真实大模型（`with_structured_output`）。Provider 可切换（OpenAI/Anthropic）。无 key 时自动回退 mock。 |
+| **3 — 外部数据 + Supervisor** | ✅ 已完成 | SerpAPI（机票/酒店）、Firecrawl（门票抓取）、Supervisor 对话式调整、`/ws` 双通道路由、多币种预算（EUR/USD/CNY）、行程日期计算。详见下方。 |
+| **4 — 前端** | ⏳ 下一步 | 把 `prototype.jsx` 接上 `/ws`，后续迁移到 Next.js。 |
+| **5 — 打磨与部署** | ⏳ 待定 | 安全基线、错误处理、持久化、部署。 |
+
+### Phase 3 —— 具体做了什么
+
+- **工具层**（`backend/tools/`）：`search_flights`（SerpAPI google_flights + google_search 并行）、`search_hotels`（SerpAPI google_hotels + google_maps 并行）、`search_tickets`（Firecrawl 抓取 + google_search + LLM 提取）。全部三层降级：真实 API → LLM 估算 → mock。磁盘缓存 + TTL。
+- **Supervisor 智能体**（`backend/refine.py`）：双模式——从自然语言规划 + 对已有计划做精细化调整。State-aware 工具工厂自动从已有计划上下文填充参数。
+- **`/ws` 双通道路由**：`type=plan` → Lane 1（完整并行 DAG），`type=chat` → Lane 2（Supervisor 调整）。连接级会话状态维持。
+- **预算精度**：多币种转换（EUR/USD/CNY）、正确的行程日期计算（出发/返回/入住/退房）、往返机票处理。
 
 ---
 
@@ -98,7 +105,8 @@ f1-paddock-club/
 │   ├── state.py               # TravelPlanState（强类型共享状态）
 │   ├── llm.py                 # 可插拔大模型客户端封装（Phase 2 新增）
 │   ├── agents/__init__.py     # 7 个智能体节点函数
-│   ├── tools/__init__.py      # 外部工具占位（Phase 3+）
+│   ├── refine.py              # Lane 2：Supervisor 智能体（双模式规划 + 调整）
+│   ├── tools/                 # 外部数据工具（SerpAPI、Firecrawl、缓存、币种、日期）
 │   ├── logging_config.py      # 文件日志配置（写到 logs/）
 │   ├── requirements.txt
 │   └── .env.example           # 列出所有支持的环境变量
@@ -196,7 +204,7 @@ curl -X POST http://localhost:8000/plan \
   -d '{
     "gp_name": "Italian GP",
     "gp_city": "Monza",
-    "gp_date": "Sep 7",
+    "gp_date": "Sep 6",
     "origin": "New York",
     "budget": 2500,
     "stand_pref": "mid",
@@ -206,9 +214,29 @@ curl -X POST http://localhost:8000/plan \
   }'
 ```
 
-#### WebSocket `/ws`
+#### WebSocket `/ws` —— 双通道会话
 
-发送同样的 JSON，服务端会随着每个智能体完成推送 `{type: "message", data: {...}}`，最后再推一个 `{type: "result", data: {...}}` 和 `{type: "done"}`。
+WebSocket 支持多轮会话，分两条通道：
+
+**新建计划（Lane 1 —— 完整并行流水线）：**
+```json
+{"type": "plan", "data": {"gp_name": "Italian GP", "gp_city": "Monza", "gp_date": "Sep 6", "origin": "New York", "budget": 2500, "extra_days": 2}}
+```
+
+**调整计划（Lane 2 —— Supervisor 智能体）：**
+```json
+{"type": "chat", "data": "我想住万豪，靠近赛道"}
+```
+
+服务端返回：
+- `{"type": "message", "data": {"agent": "...", "text": "..."}}` —— 状态更新
+- `{"type": "result", "data": {...}}` —— 完整状态快照（每条通道完成后）
+- `{"type": "reply", "data": "..."}` —— Supervisor 的文字回复（仅 Lane 2）
+- `{"type": "done"}` —— 当前请求完成
+
+> **向后兼容**：直接发送 raw TripRequest JSON（不带 `{type, data}` 包装）会被自动识别并路由到 Lane 1。
+
+> **注意**：首条消息用 `type=chat`（而非 `type=plan`）会走 Supervisor 的规划模式，只产出门票/机票/酒店/预算，**不包含**行程和观光推荐（3/5 sections）。要获得完整的 5/5 计划，请先用 `type=plan`。
 
 ### 日志
 
@@ -227,20 +255,19 @@ tail -f backend/logs/backend.log   # 实时跟踪
 | 智能体 | 输入 | 输出 | Mock 还是大模型？ |
 |---|---|---|---|
 | `parse_input` | 用户表单 | 标准化的 state | 纯逻辑 |
-| `ticket_agent` | 比赛、日期、偏好、预算 | 3 个看台票方案 | mock（Phase 3 接真实数据） |
-| `transport_agent` | 出发地、城市、日期、中转 | 机票 + 当地交通 | mock（Phase 3 → SerpAPI） |
-| `hotel_agent` | 城市、日期、剩余预算 | 2–3 个住宿 | mock（Phase 3 → SerpAPI） |
-| `itinerary_agent` | 上面所有结果 + 特殊需求 | 按天行程 | **大模型**（Phase 2 — OpenAI / Anthropic） |
-| `tour_agent` | 城市、天数、特殊需求 | 景点 + 美食 | **大模型**（Phase 2 — OpenAI / Anthropic） |
+| `ticket_agent` | 比赛、日期、偏好、预算 | 3 个看台票方案 | **Firecrawl + LLM 提取** → LLM 估算 → mock |
+| `transport_agent` | 出发地、城市、日期、中转 | 机票 + 当地交通 | **SerpAPI google_flights** → LLM 估算 → mock |
+| `hotel_agent` | 城市、日期、剩余预算 | 2–3 个住宿 | **SerpAPI google_hotels + maps** → LLM 估算 → mock |
+| `itinerary_agent` | 上面所有结果 + 特殊需求 | 按天行程 | **大模型**（OpenAI / Anthropic）→ mock |
+| `tour_agent` | 城市、天数、特殊需求 | 景点 + 美食 | **大模型**（OpenAI / Anthropic）→ mock |
 | `budget_agent` | 全部输出 | 费用明细 + 是否超预算 | 纯逻辑 |
 
 ---
 
 ## 后续路线图
 
-- **Phase 3** —— 把 `tools/` 接到 SerpAPI（机票、酒店）和门票搜索源，逐步替换 `ticket`/`transport`/`hotel` 的 mock。
-- **Phase 4** —— 把 React 原型迁到 Next.js，前端通过 `/ws` 实时驱动「规划中」界面。
-- **Phase 5** —— 完善错误处理、运行结果持久化、部署上线。
+- **Phase 4（下一步）** —— 把 `frontend/prototype.jsx` 接上 `/ws`，后续迁移到 Next.js 实时规划界面。
+- **Phase 5** —— 安全基线、错误处理、运行结果持久化、部署上线。
 
 ---
 

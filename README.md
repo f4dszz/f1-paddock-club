@@ -55,7 +55,7 @@ The whole flow is a single [LangGraph](https://github.com/langchain-ai/langgraph
        └───────────────────────────┘
 ```
 
-The shared `TravelPlanState` uses `Annotated[list, operator.add]` reducers so parallel agents can append to the same list without overwriting each other.
+The shared `TravelPlanState` uses `Annotated[list, operator.add]` on the `messages` field (the only field written by parallel agents). All other fields (`tickets`, `transport`, `hotel`, etc.) use LangGraph's default replace semantics — each is written by a single agent, so no merge conflicts.
 
 ---
 
@@ -71,15 +71,22 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` reducers so pa
 
 ---
 
-## Current State (Phase 2 in progress)
+## Current State (Phase 3 complete)
 
 | Phase | Status | What's in it |
 |---|---|---|
-| **1 — Graph + mock data** | ✅ Done | Full LangGraph wired up, all 7 agents return mock data, CLI test runs end-to-end, FastAPI `/plan` and `/ws` endpoints work. |
-| **2 — Real LLM calls** | 🟡 In progress | `itinerary_agent` and `tour_agent` now call a real LLM via `with_structured_output` against a Pydantic schema. Provider is selectable (OpenAI default, Anthropic optional). Mock data is the automatic fallback when no key is set or the call fails. |
-| **3 — External data tools** | ⏳ Planned | SerpAPI for flights/hotels, real ticket search. |
-| **4 — Frontend migration** | ⏳ Planned | Move `prototype.jsx` to Next.js, wire to `/ws`. |
-| **5 — Polish + deploy** | ⏳ Planned | Error handling, persistence, deploy. |
+| **1 — Graph + mock data** | ✅ Done | Full LangGraph wired up, all 7 agents return mock data, CLI test runs end-to-end, FastAPI endpoints work. |
+| **2 — Real LLM calls** | ✅ Done | `itinerary_agent` and `tour_agent` call real LLM via `with_structured_output`. Provider selectable (OpenAI/Anthropic). Mock fallback when no key. |
+| **3 — External data + supervisor** | ✅ Done | SerpAPI (flights/hotels), Firecrawl (tickets), supervisor agent for chat refinement, `/ws` dual-lane routing, currency conversion (EUR/USD/CNY), trip date computation. See details below. |
+| **4 — Frontend** | ⏳ Next | Connect `prototype.jsx` to `/ws`, then migrate to Next.js. |
+| **5 — Polish + deploy** | ⏳ Planned | Security baseline, error handling, persistence, deploy. |
+
+### Phase 3 — what was built
+
+- **Tools layer** (`backend/tools/`): `search_flights` (SerpAPI google_flights + google_search), `search_hotels` (SerpAPI google_hotels + google_maps), `search_tickets` (Firecrawl scraping + google_search + LLM extraction). All with 3-layer fallback: real APIs → LLM estimation → agent mock. Disk-cached with TTL.
+- **Supervisor agent** (`backend/refine.py`): Dual-mode — planning from natural language + refinement of existing plans. State-aware tool factory auto-fills parameters from existing plan context.
+- **`/ws` dual-lane routing**: `type=plan` → Lane 1 (full parallel DAG), `type=chat` → Lane 2 (supervisor refinement). Session state maintained per connection.
+- **Budget accuracy**: Multi-currency conversion (EUR/USD/CNY), correct trip date computation (outbound/return/checkin/checkout), round-trip flight handling.
 
 ---
 
@@ -96,7 +103,8 @@ f1-paddock-club/
 │   ├── state.py               # TravelPlanState (typed shared state)
 │   ├── llm.py                 # Pluggable LLM client wrapper (Phase 2)
 │   ├── agents/__init__.py     # All 7 agent node functions
-│   ├── tools/__init__.py      # External tool stubs (Phase 3+)
+│   ├── refine.py              # Lane 2: Supervisor agent (dual-mode planning + refinement)
+│   ├── tools/                 # External data tools (SerpAPI, Firecrawl, cache, currency, dates)
 │   ├── logging_config.py      # File logger setup (writes to logs/)
 │   ├── requirements.txt
 │   └── .env.example           # Documents all supported env vars
@@ -194,7 +202,7 @@ curl -X POST http://localhost:8000/plan \
   -d '{
     "gp_name": "Italian GP",
     "gp_city": "Monza",
-    "gp_date": "Sep 7",
+    "gp_date": "Sep 6",
     "origin": "New York",
     "budget": 2500,
     "stand_pref": "mid",
@@ -204,9 +212,29 @@ curl -X POST http://localhost:8000/plan \
   }'
 ```
 
-#### WebSocket `/ws`
+#### WebSocket `/ws` — dual-lane session
 
-Send the same JSON payload, receive a stream of `{type: "message", data: {...}}` frames as agents complete, then a final `{type: "result", data: {...}}` and `{type: "done"}`.
+The WebSocket supports multi-message sessions with two lanes:
+
+**Start a new plan (Lane 1 — full parallel pipeline):**
+```json
+{"type": "plan", "data": {"gp_name": "Italian GP", "gp_city": "Monza", "gp_date": "Sep 6", "origin": "New York", "budget": 2500, "extra_days": 2}}
+```
+
+**Refine the plan (Lane 2 — supervisor agent):**
+```json
+{"type": "chat", "data": "I want Marriott hotels near the circuit"}
+```
+
+Server responses:
+- `{"type": "message", "data": {"agent": "...", "text": "..."}}` — status updates
+- `{"type": "result", "data": {...}}` — full state snapshot (after each lane completes)
+- `{"type": "reply", "data": "..."}` — supervisor's text reply (Lane 2 only)
+- `{"type": "done"}` — current request finished
+
+> **Backward compat:** raw TripRequest JSON (without `{type, data}` envelope) is auto-detected and routed to Lane 1.
+
+> **Note:** `type=chat` as the first message uses the supervisor's planning mode, which produces tickets/flights/hotels/budget but **not** itinerary or tour (3/5 sections). For a complete 5/5 plan, use `type=plan` first.
 
 ### Logs
 
@@ -225,20 +253,19 @@ Bump verbosity with `LOG_LEVEL=DEBUG` in your `.env` (or `export`) to see LLM in
 | Agent | Input | Output | Mock or LLM? |
 |---|---|---|---|
 | `parse_input` | user form | normalized state | deterministic |
-| `ticket_agent` | gp, date, pref, budget | 3 grandstand options | mock (Phase 3 → real) |
-| `transport_agent` | origin, city, date, stops | flights + local | mock (Phase 3 → SerpAPI) |
-| `hotel_agent` | city, dates, budget left | 2–3 stays | mock (Phase 3 → SerpAPI) |
-| `itinerary_agent` | all prior + special requests | day-by-day lines | **LLM** (Phase 2 — OpenAI / Anthropic) |
-| `tour_agent` | city, days, special requests | sights + food | **LLM** (Phase 2 — OpenAI / Anthropic) |
+| `ticket_agent` | gp, date, pref, budget | 3 grandstand options | **Firecrawl + LLM extraction** → LLM estimate → mock |
+| `transport_agent` | origin, city, date, stops | flights + local | **SerpAPI google_flights** → LLM estimate → mock |
+| `hotel_agent` | city, dates, budget left | 2–3 stays | **SerpAPI google_hotels + maps** → LLM estimate → mock |
+| `itinerary_agent` | all prior + special requests | day-by-day lines | **LLM** (OpenAI / Anthropic) → mock |
+| `tour_agent` | city, days, special requests | sights + food | **LLM** (OpenAI / Anthropic) → mock |
 | `budget_agent` | all outputs | cost breakdown + over/under | deterministic |
 
 ---
 
 ## Roadmap
 
-- **Phase 3** — wire `tools/` to SerpAPI (flights, hotels) and a ticket search source; replace `ticket`/`transport`/`hotel` mocks.
-- **Phase 4** — port the React prototype to Next.js, drive the planning view from `/ws` streaming.
-- **Phase 5** — error handling, run persistence, deploy.
+- **Phase 4 (next)** — connect `frontend/prototype.jsx` to `/ws`, then migrate to Next.js with real-time planning UI.
+- **Phase 5** — security baseline, error handling, run persistence, deploy.
 
 ---
 

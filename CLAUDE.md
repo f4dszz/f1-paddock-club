@@ -147,7 +147,7 @@ f1-paddock-club/
 ├── README.zh-CN.md                 # Chinese README
 ├── .gitignore
 ├── backend/
-│   ├── main.py                     # FastAPI: POST /plan, WS /ws
+│   ├── main.py                     # FastAPI: POST /plan, WS /ws (dual-lane session routing)
 │   ├── graph.py                    # Lane 1: LangGraph orchestrator + CLI test
 │   ├── refine.py                   # Lane 2: Supervisor agent (dual-mode: planning + refinement)
 │   ├── state.py                    # TravelPlanState (typed shared state)
@@ -157,7 +157,9 @@ f1-paddock-club/
 │   ├── tools/
 │   │   ├── __init__.py             # Re-exports all tool functions
 │   │   ├── _cache.py               # Disk-backed @cached decorator (TTL, callable TTL)
-│   │   ├── _date_util.py           # Date/weekend helpers shared by flight + hotel tools
+│   │   ├── _currency.py             # EUR/USD/CNY conversion for budget computation
+│   │   ├── _date_util.py           # Date normalization (any format → ISO)
+│   │   ├── _trip_dates.py          # Trip date computation (gp_date + extra_days → all boundaries)
 │   │   ├── _parallel.py            # run_parallel() helper for multi-source fan-out
 │   │   ├── search_flights.py       # SerpAPI google_flights + google_search parallel (@cached 3h)
 │   │   ├── search_hotels.py        # SerpAPI google_hotels + google_maps parallel (@cached 3h)
@@ -182,15 +184,16 @@ f1-paddock-club/
 
 1. **Phase 1 — Graph + mock data** — DONE. LangGraph wired, all agents return mock, CLI test works, FastAPI endpoints work.
 2. **Phase 2 — Real LLM calls** — DONE. itinerary + tour agents call real LLM (OpenAI/Anthropic) via `with_structured_output`. Pluggable provider. .env support. File logging. Tested with Singapore/Monaco/Italian GP. Bug fix: retry list accumulation.
-3. **Phase 3 — External data tools + supervisor** — IN PROGRESS.
+3. **Phase 3 — External data tools + supervisor** — DONE.
    - 3.0 ✅ Tools skeleton (search_flights, search_hotels, search_tickets, search_web, recompute)
    - 3.1 ✅ Disk-backed cache decorator with callable TTL
    - 3.2 ✅ SerpAPI integration — search_flights (google_flights + google_search parallel), search_hotels (google_hotels + google_maps parallel). Real data verified: JFK→MXP $365, Monza hotels $116–235/night.
    - 3.3 ✅ Firecrawl integration for tickets — search_tickets (firecrawl + google_search parallel → LLM extraction). Real data verified: Monza Lateral Parabolic €594.
    - 3.4 ✅ Supervisor agent skeleton (refine.py)
-   - 3.5 ✅ Supervisor dual-mode (planning from natural language + refinement with state mutation). State mutation via post-loop ToolMessage scanning. Budget auto-recompute. Tested: hotel refinement changed state, planning mode generated full plan from empty state.
-   - 3.6 ⏳ Supervisor hardening (see "Specialist vs Supervisor" note below)
-   - 3.7 ⏳ /ws WebSocket chat routing (Lane 1 for first msg, Lane 2 for subsequent)
+   - 3.5 ✅ Supervisor dual-mode (planning from natural language + refinement with state mutation). State mutation via post-loop ToolMessage scanning. Budget auto-recompute.
+   - 3.6 ✅ Supervisor hardening — multi-currency budget (EUR/USD/CNY via _currency.py), trip date computation (_trip_dates.py for outbound/return/checkin/checkout), state-aware tool factory (closure-based auto-fill prevents supervisor from asking for known info). Specialists deferred (see note below).
+   - 3.7 ✅ /ws WebSocket dual-lane routing — type=plan → Lane 1, type=chat → Lane 2, session state per connection, backward-compat shim for raw TripRequest.
+   - Note: search_web.py (Tavily/DuckDuckGo) remains stubbed — tour_agent uses LLM only. Not blocking.
 4. **Phase 4 — Frontend migration** — Move prototype to Next.js, connect WebSocket to backend. Chat input box as first-class entry point alongside GP grid + form.
 5. **Phase 5 — Polish + deploy** — Security baseline, error handling, persistence, deploy.
 
