@@ -25,8 +25,8 @@ const THINK = {
 };
 
 // ── Backend connection config ───────────────────────────────────────
-const API_BASE = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000/ws";
+const API_BASE = "";
+const WS_URL = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
 // ── Transform backend data into card format ────────────────────────
 function transformResults(data) {
@@ -236,8 +236,33 @@ function ThinkPanel({zoneKeys,onAllDone}){
 // ── Country flag lookup ─────────────────────────────────────────────
 const FLAGS={"Australia":"\u{1F1E6}\u{1F1FA}","China":"\u{1F1E8}\u{1F1F3}","Japan":"\u{1F1EF}\u{1F1F5}","USA":"\u{1F1FA}\u{1F1F8}","Canada":"\u{1F1E8}\u{1F1E6}","Monaco":"\u{1F1F2}\u{1F1E8}","Spain":"\u{1F1EA}\u{1F1F8}","Austria":"\u{1F1E6}\u{1F1F9}","UK":"\u{1F1EC}\u{1F1E7}","Belgium":"\u{1F1E7}\u{1F1EA}","Hungary":"\u{1F1ED}\u{1F1FA}","Netherlands":"\u{1F1F3}\u{1F1F1}","Italy":"\u{1F1EE}\u{1F1F9}","Azerbaijan":"\u{1F1E6}\u{1F1FF}","Singapore":"\u{1F1F8}\u{1F1EC}","Mexico":"\u{1F1F2}\u{1F1FD}","Brazil":"\u{1F1E7}\u{1F1F7}","Qatar":"\u{1F1F6}\u{1F1E6}","UAE":"\u{1F1E6}\u{1F1EA}"};
 const HERO_COLORS=["#059669","#DC2626","#1E40AF","#EC4899","#7C3AED","#F59E0B","#06B6D4","#F97316"];
-// Generic track SVGs — one per GP would be ideal, but these cover the demo
-const TRACKS=["M40,75 L35,30 Q38,15 50,12 Q62,10 68,25 L72,50 Q75,65 65,75 Q55,80 40,75Z","M35,30 Q45,15 60,20 L70,35 Q75,50 65,60 L50,70 Q35,75 30,60 L35,30Z","M25,45 Q30,20 50,15 Q70,12 80,30 Q85,45 78,60 Q65,75 45,78 Q25,70 25,45Z","M25,50 Q30,20 50,15 Q65,12 75,25 L80,45 Q82,60 70,70 Q55,78 40,75 Q25,65 25,50Z","M30,35 L65,20 Q80,25 75,40 L60,50 Q55,55 60,65 L40,75 Q25,70 25,55 L30,35Z","M30,30 L70,25 Q82,30 80,45 L75,60 Q70,72 55,75 L35,70 Q22,65 25,45Z"];
+// GP short display names for cards
+const SHORT_NAMES={"Australian GP":"Australia","Chinese GP":"China","Japanese GP":"Japan","Miami GP":"Miami","Canadian GP":"Canada","Monaco GP":"Monaco","Barcelona-Catalunya GP":"Barcelona","Austrian GP":"Austria","British GP":"Britain","Belgian GP":"Belgium","Hungarian GP":"Hungary","Dutch GP":"Netherlands","Italian GP":"Monza","Spanish GP":"Madrid","Azerbaijan GP":"Baku","Singapore GP":"Singapore","United States GP":"USA","Mexico City GP":"Mexico","Brazilian GP":"Brazil","Las Vegas GP":"Las Vegas","Qatar GP":"Qatar","Abu Dhabi GP":"Abu Dhabi"};
+// Simplified but recognizable circuit outlines per GP
+const TRACK_MAP={
+  "Australian GP":"M30,60 L25,35 Q28,20 40,15 L55,12 Q70,10 75,20 L78,40 Q80,55 72,65 L60,72 Q50,78 40,75 L30,60Z",
+  "Chinese GP":"M25,50 L30,25 Q35,15 50,12 L65,15 Q75,20 78,35 L75,50 Q72,60 65,65 L55,55 Q50,50 45,55 L35,65 Q28,60 25,50Z",
+  "Japanese GP":"M25,45 Q35,20 50,25 Q60,30 55,45 Q50,55 60,60 Q70,65 65,75 Q50,80 35,70 Q25,60 25,45Z",
+  "Miami GP":"M30,35 L65,20 Q80,25 75,40 L60,50 Q55,55 60,65 L40,75 Q25,70 25,55 L30,35Z",
+  "Canadian GP":"M20,45 L25,20 Q30,12 45,15 L55,20 Q65,25 60,40 L65,50 Q70,60 60,70 L40,75 Q25,72 20,60 L20,45Z",
+  "Monaco GP":"M35,30 Q45,15 60,20 L70,35 Q75,50 65,60 L50,70 Q35,75 30,60 L35,30Z",
+  "Barcelona-Catalunya GP":"M25,55 L30,30 Q35,18 50,15 L65,18 Q75,22 78,35 L72,50 Q68,62 55,65 L45,60 Q38,58 35,62 L28,68 Q22,65 25,55Z",
+  "Austrian GP":"M35,70 L30,45 Q32,30 45,20 L60,15 Q72,18 70,30 L65,55 Q62,68 50,72 L35,70Z",
+  "British GP":"M25,45 Q30,20 50,15 Q70,12 80,30 Q85,45 78,60 Q65,75 45,78 Q25,70 25,45Z",
+  "Belgian GP":"M25,35 L35,15 Q45,10 55,18 L65,35 Q70,50 60,60 L50,70 Q40,78 30,70 L22,50 Q20,42 25,35Z",
+  "Hungarian GP":"M30,65 L25,40 Q28,25 40,18 L60,15 Q72,18 75,30 L72,50 Q70,62 60,68 L40,72 Q32,70 30,65Z",
+  "Dutch GP":"M30,55 L35,30 Q40,18 55,15 Q68,14 72,25 L70,45 Q68,58 58,62 Q48,65 40,60 L30,55Z",
+  "Italian GP":"M40,75 L35,30 Q38,15 50,12 Q62,10 68,25 L72,50 Q75,65 65,75 Q55,80 40,75Z",
+  "Spanish GP":"M25,50 L35,25 Q42,15 55,12 L70,15 Q80,20 78,35 L72,55 Q68,68 55,72 L40,70 Q28,65 25,50Z",
+  "Azerbaijan GP":"M30,75 L25,50 L28,30 L40,20 Q50,15 60,20 L72,30 L75,50 L70,70 Q60,78 45,78 L30,75Z",
+  "Singapore GP":"M30,35 Q40,18 55,20 Q70,22 78,35 Q82,50 75,62 Q65,72 50,75 Q35,72 28,58 Q25,45 30,35Z",
+  "United States GP":"M25,50 Q30,20 50,15 Q65,12 75,25 L80,45 Q82,60 70,70 Q55,78 40,75 Q25,65 25,50Z",
+  "Mexico City GP":"M30,65 L25,40 Q28,22 45,15 L60,12 Q75,15 78,30 L75,55 Q72,68 58,72 L38,70 Q30,68 30,65Z",
+  "Brazilian GP":"M70,25 Q78,35 75,50 L65,65 Q55,75 40,72 L30,55 Q25,40 35,28 Q50,18 70,25Z",
+  "Las Vegas GP":"M30,30 L70,25 Q82,30 80,45 L75,60 Q70,72 55,75 L35,70 Q22,65 25,45 L30,30Z",
+  "Qatar GP":"M30,60 L28,35 Q32,18 50,12 L65,15 Q78,20 75,35 L70,55 Q65,70 50,72 L35,68 Q28,65 30,60Z",
+  "Abu Dhabi GP":"M28,55 L32,30 Q38,15 55,12 L68,15 Q80,20 78,35 L72,55 Q68,70 52,75 L38,72 Q25,68 28,55Z",
+};
 
 function TrackSVG({d,color,size=44}){
   return <svg width={size} height={size} viewBox="0 0 100 90"><path d={d} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" opacity={0.6} style={{strokeDasharray:300,strokeDashoffset:300,animation:"drawTrack 1.5s ease-out forwards"}}/></svg>;
@@ -248,7 +273,7 @@ export default function App(){
   const[gpList,setGpList]=useState([]);
   const[gp,setGp]=useState(null);
   const[phase,setPhase]=useState("welcome");
-  const[form,setForm]=useState({origin:"",budget:"2500",stand:"any",extraDays:2,special:"",stops:""});
+  const[form,setForm]=useState({origin:"",budget:"2500",stand:"any",extraDays:2,special:"",stops:"",departDate:"",returnDate:""});
   const[zSt,setZSt]=useState({});
   const[conPos,setConPos]=useState(CONC_HOME);
   const[speaking,setSpeaking]=useState(false);
@@ -261,15 +286,35 @@ export default function App(){
   const[chatLoading,setChatLoading]=useState(false);
   const[pipeIdx,setPipeIdx]=useState(-1);
   const[selections,setSelections]=useState({});
+  const[debugLog,setDebugLog]=useState([]);
   const cancelRef=useRef(false);
   const scrollRef=useRef(null);
   const resolveRef=useRef(null);
   const wsRef=useRef(null);
 
+  const pushDebug=useCallback((label, data) => {
+    const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const line = data === undefined ? `${stamp} ${label}` : `${stamp} ${label} ${typeof data === "string" ? data : JSON.stringify(data)}`;
+    console.log("[demo-debug]", line);
+    setDebugLog(prev => [...prev.slice(-19), line]);
+  }, []);
+
   // Fetch GP calendar from backend on mount
   useEffect(()=>{
-    fetch(`${API_BASE}/api/calendar`).then(r=>r.json()).then(setGpList).catch(()=>{});
-  },[]);
+    pushDebug("calendar.fetch.start", `${window.location.origin}/api/calendar`);
+    fetch(`${API_BASE}/api/calendar`)
+      .then(r=>{
+        pushDebug("calendar.fetch.response", { status:r.status, ok:r.ok });
+        return r.json();
+      })
+      .then(data=>{
+        pushDebug("calendar.fetch.success", { count:data?.length || 0 });
+        setGpList(data);
+      })
+      .catch(err=>{
+        pushDebug("calendar.fetch.error", String(err));
+      });
+  },[pushDebug]);
 
   useEffect(()=>{if(scrollRef.current)setTimeout(()=>{scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},80);},[results,thinkBatch,chatMsgs]);
 
@@ -286,125 +331,120 @@ export default function App(){
     if(resolveRef.current){resolveRef.current();resolveRef.current=null;}
   },[]);
 
-  // ── WebSocket-driven planning run ────────────────────────────────
-  const run=async()=>{
-    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});
-    setChatMsgs([{from:"c",text:"Welcome, VIP! Connecting to your team..."}]);
-    setPhase("running");setSpeaking(true);
+  // ── Shared ws message handler (used by both plan and chat) ────────
+  const handleWsMsg=useCallback((evt)=>{
+    const msg=JSON.parse(evt.data);
+    pushDebug("ws.message", msg.type);
+    if(msg.type==="message"){
+      const agent=msg.data?.agent||"concierge";
+      const text=msg.data?.text||"";
+      setChatMsgs(prev=>[...prev,{from:"c",text:`[${agent}] ${text}`}]);
+      setSpeaking(true);
+      const agentToZone={ticket:"ticket",transport:"transport",hotel:"hotel",plan:"plan",tour:"tour",budget:"tour"};
+      const zone=agentToZone[agent];
+      if(zone){
+        setZSt(prev=>({...prev,[zone]:"active"}));
+        setTimeout(()=>setZSt(prev=>({...prev,[zone]:"done"})),800);
+      }
+    }
+    if(msg.type==="result"){
+      const d=msg.data;
+      const transformed=transformResults(d);
+      RESULTS=transformed;
+      setLiveResults(transformed);
+      setBudgetSummary(d.budget_summary);
+      setResults(Object.keys(transformed));
+    }
+    if(msg.type==="reply"){
+      setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
+    }
+    if(msg.type==="done"){
+      setConPos(CONC_HOME);setSpeaking(true);setPhase("done");setPipeIdx(-1);
+      setChatMsgs(prev=>[...prev,{from:"c",text:"All done! Review your plan below and adjust anything in chat."}]);
+      setTimeout(()=>setSpeaking(false),400);
+      setChatLoading(false);
+    }
+    if(msg.type==="error"){
+      setChatMsgs(prev=>[...prev,{from:"c",text:`Error: ${msg.data}`}]);
+      setPhase(prev=>prev==="running"?"done":prev);
+      setSpeaking(false);setChatLoading(false);
+    }
+  },[pushDebug]);
 
-    // Open WebSocket
+  // ── Connect WebSocket (persistent, survives re-renders) ──────────
+  const connectWs=useCallback(()=>{
+    if(wsRef.current&&wsRef.current.readyState<=1) return wsRef.current;
+    pushDebug("ws.connect.start", WS_URL);
     const ws=new WebSocket(WS_URL);
     wsRef.current=ws;
-    let pipelineStep=0;
-
+    ws.onmessage=handleWsMsg;
     ws.onopen=()=>{
-      ws.send(JSON.stringify({type:"plan",data:{
-        gp_name:gp.gp_name, gp_city:gp.city, gp_date:gp.race_date,
-        origin:form.origin||"New York", budget:+(form.budget||2500),
-        stand_pref:form.stand, extra_days:form.extraDays,
-        stops:form.stops, special_requests:form.special,
-      }}));
+      pushDebug("ws.open", WS_URL);
     };
-
-    ws.onmessage=(evt)=>{
-      const msg=JSON.parse(evt.data);
-      if(msg.type==="message"){
-        const agent=msg.data?.agent||"concierge";
-        const text=msg.data?.text||"";
-        setChatMsgs(prev=>[...prev,{from:"c",text:`[${agent}] ${text}`}]);
-        setSpeaking(true);
-        // Drive zone animation based on agent name
-        const agentToZone={ticket:"ticket",transport:"transport",hotel:"hotel",plan:"plan",tour:"tour",budget:"tour"};
-        const zone=agentToZone[agent];
-        if(zone){
-          setZSt(prev=>({...prev,[zone]:"active"}));
-          setTimeout(()=>setZSt(prev=>({...prev,[zone]:"done"})),800);
-        }
-        // Advance pipeline progress bar
-        if(agent==="ticket"&&pipelineStep<1){pipelineStep=0;setPipeIdx(0);}
-        if((agent==="transport"||agent==="hotel")&&pipelineStep<2){pipelineStep=1;setPipeIdx(1);}
-        if((agent==="plan"||agent==="tour")&&pipelineStep<3){pipelineStep=2;setPipeIdx(2);}
-      }
-      if(msg.type==="result"){
-        const d=msg.data;
-        const transformed=transformResults(d);
-        RESULTS=transformed;
-        setLiveResults(transformed);
-        setBudgetSummary(d.budget_summary);
-        setResults(Object.keys(transformed));
-      }
-      if(msg.type==="done"){
-        setConPos(CONC_HOME);setSpeaking(true);setPhase("done");setPipeIdx(-1);
-        const bs=budgetSummary;
-        // Budget message will use latest state
-        setChatMsgs(prev=>[...prev,{from:"c",text:"All done! Review your plan below and adjust anything in chat."}]);
-        setTimeout(()=>setSpeaking(false),400);
-      }
-      if(msg.type==="error"){
-        setChatMsgs(prev=>[...prev,{from:"c",text:`Error: ${msg.data}`}]);
-        setPhase("done");setSpeaking(false);
-      }
-    };
-
     ws.onerror=()=>{
-      setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Is the backend running on localhost:8000?"}]);
-      setPhase("done");setSpeaking(false);
+      pushDebug("ws.error", WS_URL);
+      setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Backend or WebSocket proxy is unreachable."}]);
+      setPhase(prev=>prev==="running"?"done":prev);setSpeaking(false);
     };
+    ws.onclose=(evt)=>{
+      pushDebug("ws.close", { code:evt.code, reason:evt.reason || "", wasClean:evt.wasClean });
+      wsRef.current=null;
+    };
+    return ws;
+  },[handleWsMsg, pushDebug]);
+
+  // ── WebSocket-driven planning run ────────────────────────────────
+  const run=()=>{
+    pushDebug("plan.run.click", {
+      gp_name: gp?.gp_name || null,
+      gp_city: gp?.city || null,
+      gp_date: gp?.race_date || null,
+      origin: form.origin || "New York",
+      budget: +(form.budget || 2500),
+      extra_days: form.extraDays,
+    });
+    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});
+    setChatMsgs([{from:"c",text:"Welcome, VIP! Connecting to your team..."}]);
+    setPhase("running");setSpeaking(true);setPipeIdx(0);
+
+    const ws=connectWs();
+    const planPayload=JSON.stringify({type:"plan",data:{
+      gp_name:gp.gp_name, gp_city:gp.city, gp_date:gp.race_date,
+      origin:form.origin||"New York", budget:+(form.budget||2500),
+      stand_pref:form.stand, extra_days:form.extraDays,
+      stops:form.stops, special_requests:form.special,
+    }});
+
+    if(ws.readyState===WebSocket.OPEN){
+      pushDebug("plan.run.send.immediate", "OPEN");
+      ws.send(planPayload);
+    } else {
+      pushDebug("plan.run.wait_open", ws.readyState);
+      ws.addEventListener("open",()=>{
+        pushDebug("plan.run.send.onopen", "OPEN");
+        ws.send(planPayload);
+      },{once:true});
+    }
   };
 
-  const reset=()=>{cancelRef.current=true;resolveRef.current=null;if(wsRef.current)wsRef.current.close();wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setChatMsgs([]);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);};
+  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setChatMsgs([]);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);};
   const backToSelect=()=>{reset();setScreen("select");setGp(null);};
 
   // ── WebSocket-driven chat ────────────────────────────────────────
+  const wsAlive=()=>wsRef.current&&wsRef.current.readyState===WebSocket.OPEN;
+
   const handleChat=()=>{
     const t=chatInput.trim();if(!t)return;
-    setChatInput("");setChatLoading(true);
-    setChatMsgs(prev=>[...prev,{from:"u",text:t}]);
-
-    const ws=wsRef.current;
-    if(!ws||ws.readyState!==WebSocket.OPEN){
-      // Reconnect if ws closed
-      const newWs=new WebSocket(WS_URL);
-      wsRef.current=newWs;
-      newWs.onopen=()=>{newWs.send(JSON.stringify({type:"chat",data:t}));};
-      newWs.onmessage=(evt)=>{
-        const msg=JSON.parse(evt.data);
-        if(msg.type==="reply"){
-          setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
-        }
-        if(msg.type==="result"){
-          const transformed=transformResults(msg.data);
-          RESULTS=transformed;
-          setLiveResults(transformed);
-          setBudgetSummary(msg.data.budget_summary);
-          setResults(Object.keys(transformed));
-        }
-        if(msg.type==="done")setChatLoading(false);
-        if(msg.type==="error"){setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);setChatLoading(false);}
-      };
+    if(!wsAlive()){
+      pushDebug("chat.blocked.no_ws");
+      setChatMsgs(prev=>[...prev,{from:"c",text:"Connection lost. Please restart planning to continue."}]);
       return;
     }
-    ws.send(JSON.stringify({type:"chat",data:t}));
-    // Response handled by existing ws.onmessage — but we need chat-specific handling
-    const origHandler=ws.onmessage;
-    ws.onmessage=(evt)=>{
-      const msg=JSON.parse(evt.data);
-      if(msg.type==="reply"){
-        setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
-      }
-      if(msg.type==="result"){
-        const transformed=transformResults(msg.data);
-        RESULTS=transformed;
-        setLiveResults(transformed);
-        setBudgetSummary(msg.data.budget_summary);
-        setResults(Object.keys(transformed));
-      }
-      if(msg.type==="done"){setChatLoading(false);ws.onmessage=origHandler;}
-      if(msg.type==="message"){
-        setChatMsgs(prev=>[...prev,{from:"c",text:msg.data?.text||""}]);
-      }
-      if(msg.type==="error"){setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);setChatLoading(false);ws.onmessage=origHandler;}
-    };
+    pushDebug("chat.send", t);
+    setChatInput("");setChatLoading(true);
+    setChatMsgs(prev=>[...prev,{from:"u",text:t}]);
+    wsRef.current.send(JSON.stringify({type:"chat",data:t}));
+    // Response handled by shared handleWsMsg via ws.onmessage
   };
 
   if(screen==="select") return(
@@ -421,19 +461,29 @@ export default function App(){
         {(gpList.length?gpList:[]).map((g,i)=>{
           const flag=FLAGS[g.country]||"\u{1F3C1}";
           const hero=HERO_COLORS[i%HERO_COLORS.length];
-          const track=TRACKS[i%TRACKS.length];
+          const track=TRACK_MAP[g.gp_name]||TRACK_MAP["Italian GP"];
+          const shortName=SHORT_NAMES[g.gp_name]||g.city;
           const dateStr=g.race_date?new Date(g.race_date+"T00:00:00").toLocaleDateString("en",{month:"short",day:"numeric"}):"TBD";
           return(
-            <div key={g.gp_name} onClick={()=>{setGp({...g,hero,track});setScreen("paddock");setPhase("welcome");}} style={{
-              padding:"12px 8px",borderRadius:10,cursor:"pointer",background:g.is_past?"#0a0a0a":"#111",border:`1px solid ${g.is_past?"#1a1a1a":"#222"}`,
+            <div key={g.gp_name} onClick={()=>{pushDebug("card.click", { gp:g.gp_name, is_past:g.is_past }); if(!g.is_past){
+              setGp({...g,hero,track});setScreen("paddock");setPhase("welcome");
+              // Auto-compute travel dates: arrive Friday of race week, depart day after extra days
+              if(g.race_date){
+                const rd=new Date(g.race_date+"T00:00:00");
+                const dep=new Date(rd); dep.setDate(rd.getDate()-2); // Friday
+                const ret=new Date(rd); ret.setDate(rd.getDate()+1+form.extraDays); // day after race + extra
+                setForm(f=>({...f, departDate:dep.toISOString().slice(0,10), returnDate:ret.toISOString().slice(0,10)}));
+              }
+            }}} style={{
+              padding:"12px 8px",borderRadius:10,cursor:g.is_past?"not-allowed":"pointer",background:g.is_past?"#0a0a0a":"#111",border:`1px solid ${g.is_past?"#1a1a1a":"#222"}`,
               display:"flex",flexDirection:"column",alignItems:"center",gap:4,transition:"all .2s",
-              opacity:g.is_past?0.5:1,
+              opacity:g.is_past?0.4:1,
             }} onMouseEnter={e=>{if(!g.is_past){e.currentTarget.style.borderColor=hero;e.currentTarget.style.transform="translateY(-2px)";}}}
                onMouseLeave={e=>{e.currentTarget.style.borderColor=g.is_past?"#1a1a1a":"#222";e.currentTarget.style.transform="translateY(0)";}}>
-              <TrackSVG d={track} color={hero} size={44}/>
+              <TrackSVG d={track} color={g.is_past?"#333":hero} size={44}/>
               <span style={{fontSize:16}}>{flag}</span>
-              <div style={{fontSize:10,fontWeight:600,color:g.is_past?"#555":"#ccc",textAlign:"center"}}>{g.city}</div>
-              <div style={{fontSize:8,color:g.is_past?"#333":"#555"}}>{dateStr}{g.is_past?" (past)":""}</div>
+              <div style={{fontSize:10,fontWeight:600,color:g.is_past?"#444":"#ccc",textAlign:"center"}}>{shortName}</div>
+              <div style={{fontSize:8,color:g.is_past?"#333":"#555"}}>{g.is_past?"Concluded":dateStr}</div>
             </div>
           );
         })}
@@ -451,8 +501,8 @@ export default function App(){
         <div onClick={backToSelect} style={{cursor:"pointer",color:"#555",fontSize:14}}>←</div>
         {gp&&<TrackSVG d={gp.track||TRACKS[0]} color={gp.hero||"#059669"} size={28}/>}
         <div style={{flex:1}}>
-          <div style={{fontSize:13,fontWeight:700}}>{gp?`${FLAGS[gp.country]||""} ${gp.gp_name}`:"Paddock Club"}</div>
-          {gp&&<div style={{fontSize:9,color:"#555"}}>{gp.city} · {gp.race_date?new Date(gp.race_date+"T00:00:00").toLocaleDateString("en",{month:"short",day:"numeric"}):"TBD"}</div>}
+          <div style={{fontSize:13,fontWeight:700}}>{gp?`${FLAGS[gp.country]||""} ${SHORT_NAMES[gp.gp_name]||gp.city}`:"Paddock Club"}</div>
+          {gp&&<div style={{fontSize:9,color:"#555"}}>{gp.gp_name} · {gp.race_date?new Date(gp.race_date+"T00:00:00").toLocaleDateString("en",{month:"short",day:"numeric"}):"TBD"}</div>}
         </div>
         {phase==="running"&&<div style={{display:"flex",gap:3,alignItems:"center"}}>{PIPELINE.map((_,i)=><div key={i} style={{width:16,height:3,borderRadius:2,background:i<=pipeIdx?"#E10600":"#222",transition:"all .3s"}}/>)}</div>}
         {phase!=="welcome"&&<button onClick={reset} style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#555",fontSize:8,cursor:"pointer"}}>RESET</button>}
@@ -478,7 +528,7 @@ export default function App(){
 
             <div style={{background:"#111",border:"1px solid #222",borderRadius:10,padding:"12px",marginBottom:10}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                {[{l:"Flying from",k:"origin",p:"e.g. New York",t:"text"},{l:"Budget (€)",k:"budget",p:"2500",t:"number"}].map(f=>(
+                {[{l:"Flying from",k:"origin",p:"e.g. New York",t:"text"},{l:"Budget (EUR)",k:"budget",p:"2500",t:"number"}].map(f=>(
                   <div key={f.k}>
                     <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>{f.l}</label>
                     <input value={form[f.k]} onChange={e=>setForm({...form,[f.k]:e.target.value})} placeholder={f.p} type={f.t}
@@ -486,6 +536,22 @@ export default function App(){
                       onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
                   </div>
                 ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+                <div>
+                  <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Suggested depart</label>
+                  <input type="date" value={form.departDate} readOnly
+                    title="Derived automatically from the GP race weekend"
+                    style={{width:"100%",padding:"5px 9px",borderRadius:5,border:"1px solid #222",background:"#0f0f0f",color:"#999",fontSize:10,outline:"none",fontFamily:"inherit",boxSizing:"border-box",colorScheme:"dark",cursor:"default"}}
+                  />
+                </div>
+                <div>
+                  <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Suggested return</label>
+                  <input type="date" value={form.returnDate} readOnly
+                    title="Derived from race day plus extra days"
+                    style={{width:"100%",padding:"5px 9px",borderRadius:5,border:"1px solid #222",background:"#0f0f0f",color:"#999",fontSize:10,outline:"none",fontFamily:"inherit",boxSizing:"border-box",colorScheme:"dark",cursor:"default"}}
+                  />
+                </div>
               </div>
               <div style={{marginBottom:6}}>
                 <label style={{fontSize:8,color:"#555",display:"block",marginBottom:3}}>Grandstand</label>
@@ -496,8 +562,13 @@ export default function App(){
                 </div>
               </div>
               <div style={{marginBottom:6}}>
-                <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Extra days: {form.extraDays}</label>
-                <input type="range" min="0" max="5" value={form.extraDays} onChange={e=>setForm({...form,extraDays:+e.target.value})} style={{width:"100%",accentColor:"#E10600"}}/>
+                <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Extra days after race: {form.extraDays}</label>
+                <input type="range" min="0" max="5" value={form.extraDays} onChange={e=>{
+                  const ed=+e.target.value;
+                  const newForm={...form,extraDays:ed};
+                  if(gp?.race_date){const rd=new Date(gp.race_date+"T00:00:00");const ret=new Date(rd);ret.setDate(rd.getDate()+1+ed);newForm.returnDate=ret.toISOString().slice(0,10);}
+                  setForm(newForm);
+                }} style={{width:"100%",accentColor:"#E10600"}}/>
               </div>
               <div>
                 <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Stops along the way <span style={{color:"#333"}}>(optional)</span></label>
@@ -512,6 +583,9 @@ export default function App(){
                   placeholder="Wheelchair access, vegetarian, Michelin restaurant, want pit walk experience..."
                   style={{width:"100%",padding:"6px 9px",borderRadius:5,border:"1px solid #222",background:"#0a0a0a",color:"#eee",fontSize:10.5,outline:"none",fontFamily:"inherit",boxSizing:"border-box",resize:"none",height:40,lineHeight:1.5}}
                   onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
+              </div>
+              <div style={{fontSize:8,color:"#555",lineHeight:1.5,marginTop:6}}>
+                These free-text fields shape the first plan. After the first result is ready, use the refine chat below to adjust hotels, flights, or budget.
               </div>
             </div>
             <button onClick={run} style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:"#E10600",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.03em"}}>START PLANNING</button>
@@ -561,15 +635,24 @@ export default function App(){
         ))}
       </div>
 
-      {phase!=="welcome"&&(
+      {phase==="done"&&(
         <div style={{padding:"6px 14px 10px",borderTop:"1px solid #1a1a1a",flexShrink:0,display:"flex",gap:6}}>
           <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChat();}}}
-            placeholder="Adjust your plan... (e.g. cheaper hotels, direct flights only)" disabled={chatLoading}
+            placeholder="Refine this plan... (e.g. cheaper hotels, direct flights only)" disabled={chatLoading}
             style={{flex:1,padding:"7px 10px",borderRadius:7,border:"1px solid #222",background:"#111",color:"#eee",fontSize:11,outline:"none",fontFamily:"inherit",opacity:chatLoading?0.5:1}}
             onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
           <button onClick={handleChat} disabled={!chatInput.trim()||chatLoading} style={{padding:"7px 12px",borderRadius:7,border:"none",background:chatInput.trim()&&!chatLoading?"#E10600":"#222",color:chatInput.trim()&&!chatLoading?"#fff":"#555",fontSize:10,fontWeight:600,cursor:chatInput.trim()&&!chatLoading?"pointer":"not-allowed"}}>{chatLoading?"...":"GO"}</button>
         </div>
       )}
+
+      <div style={{padding:"6px 14px 10px",borderTop:"1px solid #141414",background:"#0b0b0b",flexShrink:0}}>
+        <div style={{fontSize:8,color:"#555",marginBottom:4}}>Debug trace</div>
+        <div style={{maxHeight:88,overflowY:"auto",fontSize:8,color:"#777",fontFamily:"ui-monospace, SFMono-Regular, Consolas, monospace",lineHeight:1.5}}>
+          {debugLog.length
+            ? debugLog.map((line,i)=><div key={i}>{line}</div>)
+            : <div>No events yet.</div>}
+        </div>
+      </div>
 
       <style>{`
         @keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
