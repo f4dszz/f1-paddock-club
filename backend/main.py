@@ -33,6 +33,7 @@ from logging_config import setup_logging
 from graph import plan_trip
 from refine import refine_plan
 from _session import create_session, append_turn, clear_history, get_history
+from tools._race_calendar import all_races, upcoming_races, is_past
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -72,6 +73,28 @@ def _state_snapshot(state: dict) -> dict:
     }
 
 
+# ── GET /api/calendar — GP list for frontend ────────────────────────
+
+@app.get("/api/calendar")
+async def get_calendar():
+    """Return the 2026 race calendar for the GP selection grid."""
+    from datetime import date
+    today = date.today()
+    races = all_races()
+    return [
+        {
+            "gp_name": r["gp_name"],
+            "city": r["city"],
+            "country": r["country"],
+            "race_date": r["race_date"],
+            "round": r["round"],
+            "sprint": r.get("sprint", False),
+            "is_past": is_past(r["gp_name"], today),
+        }
+        for r in races
+    ]
+
+
 # ── POST /plan (unchanged, backward compatible) ────────────────────
 
 @app.post("/plan")
@@ -84,6 +107,8 @@ async def plan(req: TripRequest):
 
 
 # ── WebSocket /ws (two-lane session routing) ────────────────────────
+
+MAX_WS_MESSAGE_SIZE = 16 * 1024  # 16KB max per ws message
 
 @app.websocket("/ws")
 async def websocket_session(ws: WebSocket):
@@ -106,6 +131,12 @@ async def websocket_session(ws: WebSocket):
     try:
         while True:
             raw = await ws.receive_text()
+
+            # Minimal safety: reject oversized messages
+            if len(raw) > MAX_WS_MESSAGE_SIZE:
+                await ws.send_json({"type": "error", "data": "Message too large"})
+                continue
+
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:

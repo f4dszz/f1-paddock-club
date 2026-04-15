@@ -24,35 +24,61 @@ const THINK = {
   tour:["Local gems...","F1 specials...","Restaurants...","Ready"],
 };
 
-const RESULTS = {
-  ticket:{ mode:"single", bookLabel:"Book tickets", bookIcon:"🎫", items:[
-    {tag:"VALUE",main:"General Admission",sub:"Free roaming",price:"€195",pv:195,link:"https://tickets.formula1.com"},
-    {tag:"PICK",main:"Tribuna 25",sub:"Braking zone view",price:"€380",pv:380,link:"https://tickets.formula1.com"},
-    {tag:"VIP",main:"Main Grandstand",sub:"Pit lane + podium",price:"€620",pv:620,link:"https://tickets.formula1.com"},
-  ]},
-  transport:{ mode:"multi", bookLabel:"Book flights", bookIcon:"✈", items:[
-    {tag:"OUT",main:"NYC → Milan MXP",sub:"Direct · 8h20m · Sep 4",price:"€485",pv:485,link:"https://www.google.com/travel/flights"},
-    {tag:"RET",main:"Milan → NYC",sub:"Direct · 9h45m · Sep 10",price:"€520",pv:520,link:"https://www.google.com/travel/flights"},
-    {tag:"LOCAL",main:"Milan ↔ Circuit",sub:"12min train · no booking needed",price:"€5",pv:5},
-  ]},
-  hotel:{ mode:"single", bookLabel:"Book hotel", bookIcon:"🏨", items:[
-    {tag:"NEAR",main:"Hotel de la Ville",sub:"2km · 8.4★ · 5 nights",price:"€675",pv:675,link:"https://www.booking.com"},
-    {tag:"SAVE",main:"Airbnb Milan Central",sub:"15min train · 4.6★ · 5 nights",price:"€475",pv:475,link:"https://www.airbnb.com"},
-  ]},
-  plan:{ mode:"none", items:[
-    {tag:"FRI",main:"Arrive + settle",sub:"Explore old town",price:""},
-    {tag:"SAT",main:"FP3 + Qualifying",sub:"Parco di Monza",price:""},
-    {tag:"SUN",main:"Race Day",sub:"Post-race track walk",price:""},
-    {tag:"MON",main:"Milan day",sub:"Duomo + Galleria",price:""},
-    {tag:"TUE",main:"Lake Como",sub:"Bellagio + boats",price:""},
-  ]},
-  tour:{ mode:"multi", bookLabel:"Book activities", bookIcon:"🗺", items:[
-    {tag:"F1",main:"Circuit Museum",sub:"Inside the track",price:"€15",pv:15,link:"https://www.monzanet.it"},
-    {tag:"ICON",main:"Duomo Rooftop",sub:"Panoramic views",price:"€14",pv:14,link:"https://www.duomomilano.it"},
-    {tag:"FOOD",main:"Luini Panzerotti",sub:"Legendary street food",price:"€3",pv:3},
-    {tag:"LAKE",main:"Como Boat Tour",sub:"Villa Balbianello",price:"€12",pv:12,link:"https://www.lakecomo.is"},
-  ]},
-};
+// ── Backend connection config ───────────────────────────────────────
+const API_BASE = "http://localhost:8000";
+const WS_URL = "ws://localhost:8000/ws";
+
+// ── Transform backend data into card format ────────────────────────
+function transformResults(data) {
+  const r = {};
+  if (data.tickets?.length) {
+    r.ticket = { mode:"single", bookLabel:"Book tickets", bookIcon:"🎫", items:
+      data.tickets.filter(t=>t.tag!=="INFO").map(t=>({
+        tag:t.tag||"PICK", main:t.name||"Ticket", sub:t.section||"",
+        price:`${t.currency||"EUR"} ${t.price}`, pv:t.price||0, link:t.link||"",
+      }))
+    };
+  }
+  if (data.transport?.length) {
+    r.transport = { mode:"multi", bookLabel:"Book flights", bookIcon:"✈", items:
+      data.transport.filter(t=>t.tag!=="INFO").map(t=>({
+        tag:t.tag||"OUT", main:t.summary||"Flight", sub:t.detail||"",
+        price:`${t.currency||"USD"} ${t.price}`, pv:t.price||0, link:t.link||"",
+      }))
+    };
+  }
+  if (data.hotel?.length) {
+    r.hotel = { mode:"single", bookLabel:"Book hotel", bookIcon:"🏨", items:
+      data.hotel.filter(h=>h.tag!=="INFO").map(h=>({
+        tag:h.tag||"NEAR", main:h.name||"Hotel",
+        sub:`${h.distance||""} · ${h.rating||""}★ · ${h.nights||"?"}n`,
+        price:`${h.currency||"USD"} ${h.price_per_night}/n`, pv:h.price_per_night||0, link:h.link||"",
+      }))
+    };
+  }
+  if (data.itinerary?.length) {
+    r.plan = { mode:"none", items:
+      data.itinerary.map((line,i)=>{
+        const m = line.match(/^Day\s*\d+\s*\((\w+)\):\s*(.+)/i);
+        return { tag:m?m[1].substring(0,3).toUpperCase():`D${i+1}`, main:m?m[2]:line, sub:"", price:"" };
+      })
+    };
+  }
+  if (data.tour?.length) {
+    r.tour = { mode:"multi", bookLabel:"Book activities", bookIcon:"🗺", items:
+      data.tour.map(line=>{
+        const m = line.match(/^(.+?)\s*\(([^)]+)\)\s*[—–-]\s*(.+)/);
+        return m
+          ? { tag:"REC", main:m[1].replace(/^[^\w]+/,""), sub:m[3], price:m[2], pv:parseInt(m[2])||0 }
+          : { tag:"REC", main:line.substring(0,40), sub:line.substring(40), price:"", pv:0 };
+      })
+    };
+  }
+  return r;
+}
+
+// Default empty RESULTS — will be replaced by live data
+let RESULTS = {};
 
 function PxChar({type,size=28}){
   const C={
@@ -111,9 +137,10 @@ function SingleThinkStream({lines,color,onDone}){
   );
 }
 
-function ResultCard({zoneKey,selections,onSelect}){
+function ResultCard({zoneKey,selections,onSelect,liveResults}){
   const z=ZONES.find(z=>z.key===zoneKey);
-  const data=RESULTS[zoneKey];
+  const data=(liveResults||RESULTS)[zoneKey];
+  if(!data||!data.items?.length) return null;
   const{mode,items,bookLabel,bookIcon}=data;
   const sel=selections[zoneKey]||[];
   const hasSelection=sel.length>0;
@@ -206,17 +233,11 @@ function ThinkPanel({zoneKeys,onAllDone}){
   );
 }
 
-const GPS = [
-  { id:"monza",name:"Italian GP",city:"Monza",date:"Sep 7",flag:"\u{1F1EE}\u{1F1F9}",track:"M40,75 L35,30 Q38,15 50,12 Q62,10 68,25 L72,50 Q75,65 65,75 Q55,80 40,75Z",hero:"#059669" },
-  { id:"monaco",name:"Monaco GP",city:"Monte Carlo",date:"May 25",flag:"\u{1F1F2}\u{1F1E8}",track:"M35,30 Q45,15 60,20 L70,35 Q75,50 65,60 L50,70 Q35,75 30,60 L35,30Z",hero:"#DC2626" },
-  { id:"britain",name:"British GP",city:"Silverstone",date:"Jul 6",flag:"\u{1F1EC}\u{1F1E7}",track:"M25,45 Q30,20 50,15 Q70,12 80,30 Q85,45 78,60 Q65,75 45,78 Q25,70 25,45Z",hero:"#1E40AF" },
-  { id:"japan",name:"Japanese GP",city:"Suzuka",date:"Apr 6",flag:"\u{1F1EF}\u{1F1F5}",track:"M25,45 Q35,20 50,25 Q60,30 55,45 Q50,55 60,60 Q70,65 65,75 Q50,80 35,70 Q25,60 25,45Z",hero:"#DC2626" },
-  { id:"usa",name:"US GP",city:"Austin",date:"Oct 19",flag:"\u{1F1FA}\u{1F1F8}",track:"M25,50 Q30,20 50,15 Q65,12 75,25 L80,45 Q82,60 70,70 Q55,78 40,75 Q25,65 25,50Z",hero:"#1E40AF" },
-  { id:"miami",name:"Miami GP",city:"Miami",date:"May 4",flag:"\u{1F1FA}\u{1F1F8}",track:"M30,35 L65,20 Q80,25 75,40 L60,50 Q55,55 60,65 L40,75 Q25,70 25,55 L30,35Z",hero:"#EC4899" },
-  { id:"vegas",name:"Las Vegas GP",city:"Las Vegas",date:"Nov 22",flag:"\u{1F1FA}\u{1F1F8}",track:"M30,30 L70,25 Q82,30 80,45 L75,60 Q70,72 55,75 L35,70 Q22,65 25,45Z",hero:"#7C3AED" },
-  { id:"singapore",name:"Singapore GP",city:"Marina Bay",date:"Oct 5",flag:"\u{1F1F8}\u{1F1EC}",track:"M30,35 Q40,18 55,20 Q70,22 78,35 Q82,50 75,62 Q65,72 50,75 Q35,72 28,58 Q25,45 30,35Z",hero:"#DC2626" },
-  { id:"brazil",name:"Brazilian GP",city:"S\u00E3o Paulo",date:"Nov 9",flag:"\u{1F1E7}\u{1F1F7}",track:"M70,25 Q78,35 75,50 L65,65 Q55,75 40,72 L30,55 Q25,40 35,28 Q50,18 70,25Z",hero:"#059669" },
-];
+// ── Country flag lookup ─────────────────────────────────────────────
+const FLAGS={"Australia":"\u{1F1E6}\u{1F1FA}","China":"\u{1F1E8}\u{1F1F3}","Japan":"\u{1F1EF}\u{1F1F5}","USA":"\u{1F1FA}\u{1F1F8}","Canada":"\u{1F1E8}\u{1F1E6}","Monaco":"\u{1F1F2}\u{1F1E8}","Spain":"\u{1F1EA}\u{1F1F8}","Austria":"\u{1F1E6}\u{1F1F9}","UK":"\u{1F1EC}\u{1F1E7}","Belgium":"\u{1F1E7}\u{1F1EA}","Hungary":"\u{1F1ED}\u{1F1FA}","Netherlands":"\u{1F1F3}\u{1F1F1}","Italy":"\u{1F1EE}\u{1F1F9}","Azerbaijan":"\u{1F1E6}\u{1F1FF}","Singapore":"\u{1F1F8}\u{1F1EC}","Mexico":"\u{1F1F2}\u{1F1FD}","Brazil":"\u{1F1E7}\u{1F1F7}","Qatar":"\u{1F1F6}\u{1F1E6}","UAE":"\u{1F1E6}\u{1F1EA}"};
+const HERO_COLORS=["#059669","#DC2626","#1E40AF","#EC4899","#7C3AED","#F59E0B","#06B6D4","#F97316"];
+// Generic track SVGs — one per GP would be ideal, but these cover the demo
+const TRACKS=["M40,75 L35,30 Q38,15 50,12 Q62,10 68,25 L72,50 Q75,65 65,75 Q55,80 40,75Z","M35,30 Q45,15 60,20 L70,35 Q75,50 65,60 L50,70 Q35,75 30,60 L35,30Z","M25,45 Q30,20 50,15 Q70,12 80,30 Q85,45 78,60 Q65,75 45,78 Q25,70 25,45Z","M25,50 Q30,20 50,15 Q65,12 75,25 L80,45 Q82,60 70,70 Q55,78 40,75 Q25,65 25,50Z","M30,35 L65,20 Q80,25 75,40 L60,50 Q55,55 60,65 L40,75 Q25,70 25,55 L30,35Z","M30,30 L70,25 Q82,30 80,45 L75,60 Q70,72 55,75 L35,70 Q22,65 25,45Z"];
 
 function TrackSVG({d,color,size=44}){
   return <svg width={size} height={size} viewBox="0 0 100 90"><path d={d} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" opacity={0.6} style={{strokeDasharray:300,strokeDashoffset:300,animation:"drawTrack 1.5s ease-out forwards"}}/></svg>;
@@ -224,6 +245,7 @@ function TrackSVG({d,color,size=44}){
 
 export default function App(){
   const[screen,setScreen]=useState("select");
+  const[gpList,setGpList]=useState([]);
   const[gp,setGp]=useState(null);
   const[phase,setPhase]=useState("welcome");
   const[form,setForm]=useState({origin:"",budget:"2500",stand:"any",extraDays:2,special:"",stops:""});
@@ -232,13 +254,22 @@ export default function App(){
   const[speaking,setSpeaking]=useState(false);
   const[thinkBatch,setThinkBatch]=useState(null);
   const[results,setResults]=useState([]);
+  const[liveResults,setLiveResults]=useState({});
+  const[budgetSummary,setBudgetSummary]=useState(null);
   const[chatInput,setChatInput]=useState("");
   const[chatMsgs,setChatMsgs]=useState([]);
+  const[chatLoading,setChatLoading]=useState(false);
   const[pipeIdx,setPipeIdx]=useState(-1);
   const[selections,setSelections]=useState({});
   const cancelRef=useRef(false);
   const scrollRef=useRef(null);
   const resolveRef=useRef(null);
+  const wsRef=useRef(null);
+
+  // Fetch GP calendar from backend on mount
+  useEffect(()=>{
+    fetch(`${API_BASE}/api/calendar`).then(r=>r.json()).then(setGpList).catch(()=>{});
+  },[]);
 
   useEffect(()=>{if(scrollRef.current)setTimeout(()=>{scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},80);},[results,thinkBatch,chatMsgs]);
 
@@ -255,48 +286,126 @@ export default function App(){
     if(resolveRef.current){resolveRef.current();resolveRef.current=null;}
   },[]);
 
+  // ── WebSocket-driven planning run ────────────────────────────────
   const run=async()=>{
-    cancelRef.current=false;setResults([]);
-    setChatMsgs([{from:"c",text:"Welcome, VIP! Dispatching your request now..."}]);
-    if(form.stops) setChatMsgs(prev=>[...prev,{from:"c",text:`Route noted: ${form.stops}. Transport agent will plan multi-stop flights and trains.`}]);
-    if(form.special) setChatMsgs(prev=>[...prev,{from:"c",text:`Special request: "${form.special}". The team will factor this in.`}]);
+    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});
+    setChatMsgs([{from:"c",text:"Welcome, VIP! Connecting to your team..."}]);
     setPhase("running");setSpeaking(true);
-    await w(600);
 
-    for(let pi=0;pi<PIPELINE.length;pi++){
-      if(cancelRef.current)return;
-      const step=PIPELINE[pi];
-      setPipeIdx(pi);
-      moveTo(step.zones);
-      setSpeaking(true);
-      setChatMsgs(prev=>[...prev,{from:"c",text:step.label}]);
-      await w(600);
-      setSpeaking(false);
+    // Open WebSocket
+    const ws=new WebSocket(WS_URL);
+    wsRef.current=ws;
+    let pipelineStep=0;
 
-      step.zones.forEach(k=>setZSt(prev=>({...prev,[k]:"active"})));
+    ws.onopen=()=>{
+      ws.send(JSON.stringify({type:"plan",data:{
+        gp_name:gp.gp_name, gp_city:gp.city, gp_date:gp.race_date,
+        origin:form.origin||"New York", budget:+(form.budget||2500),
+        stand_pref:form.stand, extra_days:form.extraDays,
+        stops:form.stops, special_requests:form.special,
+      }}));
+    };
 
-      await new Promise(resolve=>{
-        resolveRef.current=resolve;
-        setThinkBatch(step.zones);
-      });
+    ws.onmessage=(evt)=>{
+      const msg=JSON.parse(evt.data);
+      if(msg.type==="message"){
+        const agent=msg.data?.agent||"concierge";
+        const text=msg.data?.text||"";
+        setChatMsgs(prev=>[...prev,{from:"c",text:`[${agent}] ${text}`}]);
+        setSpeaking(true);
+        // Drive zone animation based on agent name
+        const agentToZone={ticket:"ticket",transport:"transport",hotel:"hotel",plan:"plan",tour:"tour",budget:"tour"};
+        const zone=agentToZone[agent];
+        if(zone){
+          setZSt(prev=>({...prev,[zone]:"active"}));
+          setTimeout(()=>setZSt(prev=>({...prev,[zone]:"done"})),800);
+        }
+        // Advance pipeline progress bar
+        if(agent==="ticket"&&pipelineStep<1){pipelineStep=0;setPipeIdx(0);}
+        if((agent==="transport"||agent==="hotel")&&pipelineStep<2){pipelineStep=1;setPipeIdx(1);}
+        if((agent==="plan"||agent==="tour")&&pipelineStep<3){pipelineStep=2;setPipeIdx(2);}
+      }
+      if(msg.type==="result"){
+        const d=msg.data;
+        const transformed=transformResults(d);
+        RESULTS=transformed;
+        setLiveResults(transformed);
+        setBudgetSummary(d.budget_summary);
+        setResults(Object.keys(transformed));
+      }
+      if(msg.type==="done"){
+        setConPos(CONC_HOME);setSpeaking(true);setPhase("done");setPipeIdx(-1);
+        const bs=budgetSummary;
+        // Budget message will use latest state
+        setChatMsgs(prev=>[...prev,{from:"c",text:"All done! Review your plan below and adjust anything in chat."}]);
+        setTimeout(()=>setSpeaking(false),400);
+      }
+      if(msg.type==="error"){
+        setChatMsgs(prev=>[...prev,{from:"c",text:`Error: ${msg.data}`}]);
+        setPhase("done");setSpeaking(false);
+      }
+    };
 
-      if(cancelRef.current)return;
-      step.zones.forEach(k=>{
-        setZSt(prev=>({...prev,[k]:"done"}));
-      });
-      setResults(prev=>[...prev,...step.zones]);
-      await w(300);
-    }
-
-    setConPos(CONC_HOME);setSpeaking(true);setPhase("done");setPipeIdx(-1);
-    const total=2401;const budget=+(form.budget||2500);
-    setChatMsgs(prev=>[...prev,{from:"c",text:`All done! Total: €${total.toLocaleString()} ${total<=budget?"within":"over"} your €${budget.toLocaleString()} budget. Adjust anything below!`}]);
-    await w(400);setSpeaking(false);
+    ws.onerror=()=>{
+      setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Is the backend running on localhost:8000?"}]);
+      setPhase("done");setSpeaking(false);
+    };
   };
 
-  const reset=()=>{cancelRef.current=true;resolveRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setChatMsgs([]);setChatInput("");setPipeIdx(-1);setSelections({});};
+  const reset=()=>{cancelRef.current=true;resolveRef.current=null;if(wsRef.current)wsRef.current.close();wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setChatMsgs([]);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);};
   const backToSelect=()=>{reset();setScreen("select");setGp(null);};
-  const handleChat=()=>{const t=chatInput.trim();if(!t)return;setChatInput("");setChatMsgs(prev=>[...prev,{from:"u",text:t}]);setTimeout(()=>setChatMsgs(prev=>[...prev,{from:"c",text:`Got it! "${t}" — adjusting the plan.`}]),500);};
+
+  // ── WebSocket-driven chat ────────────────────────────────────────
+  const handleChat=()=>{
+    const t=chatInput.trim();if(!t)return;
+    setChatInput("");setChatLoading(true);
+    setChatMsgs(prev=>[...prev,{from:"u",text:t}]);
+
+    const ws=wsRef.current;
+    if(!ws||ws.readyState!==WebSocket.OPEN){
+      // Reconnect if ws closed
+      const newWs=new WebSocket(WS_URL);
+      wsRef.current=newWs;
+      newWs.onopen=()=>{newWs.send(JSON.stringify({type:"chat",data:t}));};
+      newWs.onmessage=(evt)=>{
+        const msg=JSON.parse(evt.data);
+        if(msg.type==="reply"){
+          setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
+        }
+        if(msg.type==="result"){
+          const transformed=transformResults(msg.data);
+          RESULTS=transformed;
+          setLiveResults(transformed);
+          setBudgetSummary(msg.data.budget_summary);
+          setResults(Object.keys(transformed));
+        }
+        if(msg.type==="done")setChatLoading(false);
+        if(msg.type==="error"){setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);setChatLoading(false);}
+      };
+      return;
+    }
+    ws.send(JSON.stringify({type:"chat",data:t}));
+    // Response handled by existing ws.onmessage — but we need chat-specific handling
+    const origHandler=ws.onmessage;
+    ws.onmessage=(evt)=>{
+      const msg=JSON.parse(evt.data);
+      if(msg.type==="reply"){
+        setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
+      }
+      if(msg.type==="result"){
+        const transformed=transformResults(msg.data);
+        RESULTS=transformed;
+        setLiveResults(transformed);
+        setBudgetSummary(msg.data.budget_summary);
+        setResults(Object.keys(transformed));
+      }
+      if(msg.type==="done"){setChatLoading(false);ws.onmessage=origHandler;}
+      if(msg.type==="message"){
+        setChatMsgs(prev=>[...prev,{from:"c",text:msg.data?.text||""}]);
+      }
+      if(msg.type==="error"){setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);setChatLoading(false);ws.onmessage=origHandler;}
+    };
+  };
 
   if(screen==="select") return(
     <div style={{background:"#0a0a0a",minHeight:"100vh",fontFamily:"'DM Sans',sans-serif",color:"#fff",padding:"20px 16px",maxWidth:680,margin:"0 auto"}}>
@@ -309,18 +418,26 @@ export default function App(){
         <div style={{width:40,height:2,background:"#E10600",margin:"10px auto 0",borderRadius:1}}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-        {GPS.map(g=>(
-          <div key={g.id} onClick={()=>{setGp(g);setScreen("paddock");setPhase("welcome");}} style={{
-            padding:"12px 8px",borderRadius:10,cursor:"pointer",background:"#111",border:"1px solid #222",
-            display:"flex",flexDirection:"column",alignItems:"center",gap:4,transition:"all .2s",
-          }} onMouseEnter={e=>{e.currentTarget.style.borderColor=g.hero;e.currentTarget.style.transform="translateY(-2px)";}}
-             onMouseLeave={e=>{e.currentTarget.style.borderColor="#222";e.currentTarget.style.transform="translateY(0)";}}>
-            <TrackSVG d={g.track} color={g.hero} size={44}/>
-            <span style={{fontSize:16}}>{g.flag}</span>
-            <div style={{fontSize:10,fontWeight:600,color:"#ccc",textAlign:"center"}}>{g.city}</div>
-            <div style={{fontSize:8,color:"#555"}}>{g.date}</div>
-          </div>
-        ))}
+        {(gpList.length?gpList:[]).map((g,i)=>{
+          const flag=FLAGS[g.country]||"\u{1F3C1}";
+          const hero=HERO_COLORS[i%HERO_COLORS.length];
+          const track=TRACKS[i%TRACKS.length];
+          const dateStr=g.race_date?new Date(g.race_date+"T00:00:00").toLocaleDateString("en",{month:"short",day:"numeric"}):"TBD";
+          return(
+            <div key={g.gp_name} onClick={()=>{setGp({...g,hero,track});setScreen("paddock");setPhase("welcome");}} style={{
+              padding:"12px 8px",borderRadius:10,cursor:"pointer",background:g.is_past?"#0a0a0a":"#111",border:`1px solid ${g.is_past?"#1a1a1a":"#222"}`,
+              display:"flex",flexDirection:"column",alignItems:"center",gap:4,transition:"all .2s",
+              opacity:g.is_past?0.5:1,
+            }} onMouseEnter={e=>{if(!g.is_past){e.currentTarget.style.borderColor=hero;e.currentTarget.style.transform="translateY(-2px)";}}}
+               onMouseLeave={e=>{e.currentTarget.style.borderColor=g.is_past?"#1a1a1a":"#222";e.currentTarget.style.transform="translateY(0)";}}>
+              <TrackSVG d={track} color={hero} size={44}/>
+              <span style={{fontSize:16}}>{flag}</span>
+              <div style={{fontSize:10,fontWeight:600,color:g.is_past?"#555":"#ccc",textAlign:"center"}}>{g.city}</div>
+              <div style={{fontSize:8,color:g.is_past?"#333":"#555"}}>{dateStr}{g.is_past?" (past)":""}</div>
+            </div>
+          );
+        })}
+        {!gpList.length&&<div style={{gridColumn:"1/-1",textAlign:"center",color:"#555",fontSize:11,padding:20}}>Loading calendar... (is backend running?)</div>}
       </div>
       <style>{`@keyframes drawTrack{to{stroke-dashoffset:0}}`}</style>
     </div>
@@ -332,10 +449,10 @@ export default function App(){
 
       <div style={{padding:"8px 16px",borderBottom:"1px solid #1a1a1a",flexShrink:0,display:"flex",alignItems:"center",gap:8}}>
         <div onClick={backToSelect} style={{cursor:"pointer",color:"#555",fontSize:14}}>←</div>
-        {gp&&<TrackSVG d={gp.track} color={gp.hero} size={28}/>}
+        {gp&&<TrackSVG d={gp.track||TRACKS[0]} color={gp.hero||"#059669"} size={28}/>}
         <div style={{flex:1}}>
-          <div style={{fontSize:13,fontWeight:700}}>{gp?`${gp.flag} ${gp.name}`:"Paddock Club"}</div>
-          {gp&&<div style={{fontSize:9,color:"#555"}}>{gp.city} · {gp.date}</div>}
+          <div style={{fontSize:13,fontWeight:700}}>{gp?`${FLAGS[gp.country]||""} ${gp.gp_name}`:"Paddock Club"}</div>
+          {gp&&<div style={{fontSize:9,color:"#555"}}>{gp.city} · {gp.race_date?new Date(gp.race_date+"T00:00:00").toLocaleDateString("en",{month:"short",day:"numeric"}):"TBD"}</div>}
         </div>
         {phase==="running"&&<div style={{display:"flex",gap:3,alignItems:"center"}}>{PIPELINE.map((_,i)=><div key={i} style={{width:16,height:3,borderRadius:2,background:i<=pipeIdx?"#E10600":"#222",transition:"all .3s"}}/>)}</div>}
         {phase!=="welcome"&&<button onClick={reset} style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#555",fontSize:8,cursor:"pointer"}}>RESET</button>}
@@ -403,45 +520,32 @@ export default function App(){
 
         {thinkBatch&&<ThinkPanel zoneKeys={thinkBatch} onAllDone={handleBatchDone}/>}
 
-        {results.map(key=><ResultCard key={key} zoneKey={key} selections={selections} onSelect={(zone,arr)=>setSelections(prev=>({...prev,[zone]:arr}))}/>)}
+        {results.map(key=><ResultCard key={key} zoneKey={key} selections={selections} onSelect={(zone,arr)=>setSelections(prev=>({...prev,[zone]:arr}))} liveResults={liveResults}/>)}
 
-        {phase==="done"&&(()=>{
-          const fixed=240+40;
-          let total=fixed;
-          const selected=[];
-          Object.entries(selections).forEach(([zone,idxArr])=>{
-            if(!idxArr||!idxArr.length)return;
-            const data=RESULTS[zone];
-            if(!data)return;
-            idxArr.forEach(idx=>{
-              const it=data.items[idx];
-              if(it&&it.pv){total+=it.pv;selected.push({zone,name:it.main,price:it.pv});}
-            });
-          });
-          const budget=+(form.budget||2500);
-          const hasSelections=selected.length>0;
+        {phase==="done"&&budgetSummary&&(()=>{
+          const bs=budgetSummary;
+          const total=bs.total||0;
+          const budget=bs.budget||+(form.budget||2500);
+          const within=bs.within_budget;
+          const items=bs.items||[];
           return(
-            <div style={{background:"#111",border:`1px solid ${hasSelections?"#22C55E33":"#333"}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
-              <div style={{fontSize:9,color:"#666",marginBottom:6}}>
-                {hasSelections?"Your selections:":"Select items from cards above to see your total"}
-              </div>
-              {selected.map((s,i)=>(
+            <div style={{background:"#111",border:`1px solid ${within?"#22C55E33":"#EF444433"}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
+              <div style={{fontSize:9,color:"#666",marginBottom:6}}>Budget breakdown (EUR)</div>
+              {items.map((it,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#aaa",padding:"2px 0"}}>
-                  <span>{s.name}</span><span style={{color:"#ddd"}}>€{s.price}</span>
+                  <span>{it.name}</span><span style={{color:"#ddd"}}>€{Math.round(it.amount)}</span>
                 </div>
               ))}
-              {hasSelections&&<div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#555",padding:"2px 0"}}>
-                <span>Food + local transport (est.)</span><span style={{color:"#666"}}>€{fixed}</span>
-              </div>}
-              {hasSelections&&<div style={{borderTop:"1px solid #222",marginTop:4,paddingTop:4}}>
+              <div style={{borderTop:"1px solid #222",marginTop:4,paddingTop:4}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                   <span style={{fontSize:9,color:"#888"}}>Estimated total</span>
-                  <span style={{fontSize:13,fontWeight:700,color:total<=budget?"#22C55E":"#EF4444"}}>€{total.toLocaleString()} <span style={{fontSize:9,fontWeight:400,color:"#555"}}>/ €{budget.toLocaleString()}</span></span>
+                  <span style={{fontSize:13,fontWeight:700,color:within?"#22C55E":"#EF4444"}}>€{Math.round(total).toLocaleString()} <span style={{fontSize:9,fontWeight:400,color:"#555"}}>/ €{Math.round(budget).toLocaleString()}</span></span>
                 </div>
                 <div style={{height:4,borderRadius:2,background:"#1a1a1a",overflow:"hidden"}}>
-                  <div style={{height:"100%",borderRadius:2,background:total<=budget?"linear-gradient(90deg,#22C55E,#4ADE80)":"linear-gradient(90deg,#EF4444,#F87171)",width:`${Math.min(total/budget*100,100)}%`,transition:"width .5s"}}/>
+                  <div style={{height:"100%",borderRadius:2,background:within?"linear-gradient(90deg,#22C55E,#4ADE80)":"linear-gradient(90deg,#EF4444,#F87171)",width:`${Math.min(total/budget*100,100)}%`,transition:"width .5s"}}/>
                 </div>
-              </div>}
+                {bs.savings_tip&&<div style={{fontSize:8,color:"#EF4444",marginTop:4}}>{bs.savings_tip}</div>}
+              </div>
             </div>
           );
         })()}
@@ -460,9 +564,10 @@ export default function App(){
       {phase!=="welcome"&&(
         <div style={{padding:"6px 14px 10px",borderTop:"1px solid #1a1a1a",flexShrink:0,display:"flex",gap:6}}>
           <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChat();}}}
-            placeholder="Adjust the plan..." style={{flex:1,padding:"7px 10px",borderRadius:7,border:"1px solid #222",background:"#111",color:"#eee",fontSize:11,outline:"none",fontFamily:"inherit"}}
+            placeholder="Adjust your plan... (e.g. cheaper hotels, direct flights only)" disabled={chatLoading}
+            style={{flex:1,padding:"7px 10px",borderRadius:7,border:"1px solid #222",background:"#111",color:"#eee",fontSize:11,outline:"none",fontFamily:"inherit",opacity:chatLoading?0.5:1}}
             onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
-          <button onClick={handleChat} disabled={!chatInput.trim()} style={{padding:"7px 12px",borderRadius:7,border:"none",background:chatInput.trim()?"#E10600":"#222",color:chatInput.trim()?"#fff":"#555",fontSize:10,fontWeight:600,cursor:chatInput.trim()?"pointer":"not-allowed"}}>GO</button>
+          <button onClick={handleChat} disabled={!chatInput.trim()||chatLoading} style={{padding:"7px 12px",borderRadius:7,border:"none",background:chatInput.trim()&&!chatLoading?"#E10600":"#222",color:chatInput.trim()&&!chatLoading?"#fff":"#555",fontSize:10,fontWeight:600,cursor:chatInput.trim()&&!chatLoading?"pointer":"not-allowed"}}>{chatLoading?"...":"GO"}</button>
         </div>
       )}
 
