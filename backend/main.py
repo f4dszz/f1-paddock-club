@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from logging_config import setup_logging
 from graph import plan_trip
 from refine import refine_plan
+from _session import create_session, append_turn, clear_history, get_history
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ async def websocket_session(ws: WebSocket):
     (produces 3/5 sections — no itinerary/tour).
     """
     await ws.accept()
-    session_state: dict = {}
+    session = create_session()
 
     try:
         while True:
@@ -115,18 +116,15 @@ async def websocket_session(ws: WebSocket):
             msg_data = msg.get("data", {})
 
             # Backward compat: raw TripRequest without {type, data} envelope.
-            # Detect by checking for gp_name (a TripRequest field) without type.
             if not msg_type and msg.get("gp_name"):
                 msg_type = "plan"
                 msg_data = msg
 
             if msg_type == "plan":
-                # ── Lane 1: Full planning pipeline ──────────────
-                await _handle_plan(ws, msg_data, session_state)
+                await _handle_plan(ws, msg_data, session)
 
             elif msg_type == "chat":
-                # ── Lane 2: Supervisor refinement ───────────────
-                await _handle_chat(ws, msg_data, session_state)
+                await _handle_chat(ws, msg_data, session)
 
             else:
                 await ws.send_json({
@@ -145,34 +143,30 @@ async def websocket_session(ws: WebSocket):
             pass
 
 
-async def _handle_plan(ws: WebSocket, data: dict, session_state: dict) -> None:
-    """Run Lane 1 full pipeline and update session state."""
+async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
+    """Run Lane 1 full pipeline. Clears history (fresh start)."""
     logger.info("/ws plan: %s", data.get("gp_name", "?"))
 
-    # Notify client that planning has started
     await ws.send_json({
         "type": "message",
         "data": {"agent": "concierge", "text": "Starting your trip plan..."},
     })
 
-    # Run Lane 1 in thread (LangGraph is sync)
     result = await asyncio.to_thread(plan_trip, data)
 
-    # Stream status messages
     for msg in result.get("messages", []):
         await ws.send_json({"type": "message", "data": msg})
 
-    # Update session state — replace entirely on new plan
-    session_state.clear()
-    session_state.update(result)
+    # Replace plan state entirely + clear conversation history
+    session["plan_state"] = result
+    clear_history(session)
 
-    # Send full result snapshot
-    await ws.send_json({"type": "result", "data": _state_snapshot(session_state)})
+    await ws.send_json({"type": "result", "data": _state_snapshot(result)})
     await ws.send_json({"type": "done"})
 
 
-async def _handle_chat(ws: WebSocket, data, session_state: dict) -> None:
-    """Run Lane 2 supervisor and update session state."""
+async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
+    """Run Lane 2 supervisor with conversation history."""
     user_message = data if isinstance(data, str) else str(data)
     logger.info("/ws chat: %s", user_message[:100])
 
@@ -181,20 +175,21 @@ async def _handle_chat(ws: WebSocket, data, session_state: dict) -> None:
         "data": {"agent": "concierge", "text": "Processing your request..."},
     })
 
-    # Run Lane 2 in thread
+    plan_state = session.get("plan_state", {})
+    history = get_history(session)
+
+    # Run Lane 2 with history
     updated_state, reply = await asyncio.to_thread(
-        refine_plan, session_state, user_message,
+        refine_plan, plan_state, user_message, history,
     )
 
-    # refine_plan mutates session_state in place (same dict reference),
-    # but also returns it. Update reference just in case.
-    session_state.update(updated_state)
+    session["plan_state"] = updated_state
 
-    # Send supervisor's text reply
+    # Record this turn in conversation history
+    append_turn(session, user_message, reply)
+
     await ws.send_json({"type": "reply", "data": reply})
-
-    # Send updated state snapshot (client can diff with previous)
-    await ws.send_json({"type": "result", "data": _state_snapshot(session_state)})
+    await ws.send_json({"type": "result", "data": _state_snapshot(updated_state)})
     await ws.send_json({"type": "done"})
 
 

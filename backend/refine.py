@@ -404,15 +404,21 @@ def _format_state(state: dict) -> str:
 # SECTION 5: Main Entry Point
 # ═══════════════════════════════════════════════════════════════════════
 
-def refine_plan(state: dict, user_message: str) -> tuple[dict, str]:
+def refine_plan(
+    state: dict,
+    user_message: str,
+    conversation_history: list[tuple[str, str]] | None = None,
+) -> tuple[dict, str]:
     """Universal entry point for chat-based interaction.
 
     Handles both initial planning (empty state) and refinement (existing plan).
 
     Args:
-        state: Current TravelPlanState dict. Can be empty ({}) for initial planning,
-               or populated (from plan_trip or previous refine_plan) for refinement.
+        state: Current TravelPlanState dict.
         user_message: Natural language input in any language.
+        conversation_history: Optional list of (role, content) tuples from
+            previous turns. Enables the supervisor to resolve references
+            like "not that one" or "the cheaper option you showed."
 
     Returns:
         (updated_state, reply_text)
@@ -434,7 +440,6 @@ def refine_plan(state: dict, user_message: str) -> tuple[dict, str]:
     )
 
     # ── Create state-aware tools ─────────────────────────────────
-    # Tools auto-fill parameters from state — the key P0-3 guardrail.
     tools = _build_tools(state)
 
     # ── Create and invoke supervisor ─────────────────────────────
@@ -444,10 +449,17 @@ def refine_plan(state: dict, user_message: str) -> tuple[dict, str]:
         prompt=prompt,
     )
 
-    logger.info("refine_plan [%s mode]: %s", mode, user_message[:100])
+    logger.info("refine_plan [%s mode, %d history turns]: %s",
+                mode, len(conversation_history or []) // 2, user_message[:100])
+
+    # Build message list: conversation history + current user message
+    messages = []
+    for role, content in (conversation_history or []):
+        messages.append((role, content))
+    messages.append(("user", user_message))
 
     result = supervisor.invoke({
-        "messages": [("user", user_message)],
+        "messages": messages,
     })
 
     # ── Extract reply ────────────────────────────────────────────
