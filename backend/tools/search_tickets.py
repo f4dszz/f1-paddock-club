@@ -27,38 +27,9 @@ from pydantic import BaseModel, Field
 
 from ._cache import cached
 from ._parallel import query_parallel
+from ._race_calendar import race_date as _calendar_race_date
 
 logger = logging.getLogger(__name__)
-
-
-# ── Race date lookup (for dynamic TTL, NOT user-facing data) ─────────
-
-_RACE_DATES_2026: dict[str, str] = {
-    "Bahrain GP": "2026-03-08",
-    "Saudi Arabian GP": "2026-03-22",
-    "Australian GP": "2026-04-12",
-    "Chinese GP": "2026-04-26",
-    "Japanese GP": "2026-05-10",
-    "Miami GP": "2026-05-24",
-    "Emilia Romagna GP": "2026-05-31",
-    "Monaco GP": "2026-06-07",
-    "Spanish GP": "2026-06-21",
-    "Canadian GP": "2026-07-05",
-    "Austrian GP": "2026-07-19",
-    "British GP": "2026-08-02",
-    "Belgian GP": "2026-08-16",
-    "Hungarian GP": "2026-08-23",
-    "Dutch GP": "2026-08-30",
-    "Italian GP": "2026-09-06",
-    "Azerbaijan GP": "2026-09-20",
-    "Singapore GP": "2026-10-04",
-    "United States GP": "2026-10-25",
-    "Mexico City GP": "2026-11-01",
-    "Brazilian GP": "2026-11-15",
-    "Las Vegas GP": "2026-11-22",
-    "Qatar GP": "2026-11-29",
-    "Abu Dhabi GP": "2026-12-06",
-}
 
 # ── Known official ticket URLs per GP ────────────────────────────────
 
@@ -76,15 +47,15 @@ _DEFAULT_TICKET_URL = "https://tickets.formula1.com/en"
 
 def _ticket_ttl(gp_name: str, year: int = 2026, **kwargs) -> int:
     """Dynamic TTL: closer to race = shorter cache."""
-    date_str = _RACE_DATES_2026.get(gp_name)
+    date_str = _calendar_race_date(gp_name)
     if not date_str:
         return 12 * 3600
     try:
-        race_date = date.fromisoformat(date_str)
+        race_dt = date.fromisoformat(date_str)
     except ValueError:
         return 12 * 3600
 
-    days_until = (race_date - date.today()).days
+    days_until = (race_dt - date.today()).days
     if days_until < 0:    return 24 * 3600
     if days_until < 14:   return 3 * 3600
     if days_until < 60:   return 3 * 3600

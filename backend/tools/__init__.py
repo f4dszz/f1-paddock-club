@@ -17,6 +17,10 @@ from ._cache import clear_cache
 from ._parallel import query_parallel, DegradationReport
 from ._trip_dates import compute_trip_dates
 from ._currency import to_eur, convert
+from ._race_calendar import (
+    get_race, race_date, is_past, days_until,
+    upcoming_races, next_upcoming, all_races, gp_names,
+)
 
 __all__ = [
     "search_flights",
@@ -30,4 +34,12 @@ __all__ = [
     "compute_trip_dates",
     "to_eur",
     "convert",
+    "get_race",
+    "race_date",
+    "is_past",
+    "days_until",
+    "upcoming_races",
+    "next_upcoming",
+    "all_races",
+    "gp_names",
 ]
