@@ -8,7 +8,8 @@
 
 ## Why this project
 
-It started as a generic "I'm tired of manually triggering Claude / GPT / Gemini for each step of a task" problem. We picked an opinionated, demo-friendly use case — **planning a trip to a Formula 1 Grand Prix** — to showcase real multi-agent orchestration:
+It started as a generic "I'm tired of manually triggering Claude / GPT / Gemini for each step of a task" problem. Then I was thinking like: why can't we just design our own agents and let them collaborate?
+So I picked an opinionated, demo-friendly use case, also came from my personal interests — **planning a trip to a Formula 1 Grand Prix** — to showcase real multi-agent orchestration:
 
 - One **concierge** parses your request.
 - A **ticket agent** finds grandstand options.
