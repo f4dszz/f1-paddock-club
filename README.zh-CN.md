@@ -140,6 +140,27 @@ cd ..
 # 前端: http://localhost:3000（自动打开浏览器）
 ```
 
+前端前置要求：
+- Node.js `^20.19.0 || >=22.12.0`（当前安装的 Vite 8 要求）
+- npm `11+`
+- 如果你在 Windows PowerShell 里遇到执行策略拦截 `npm`，请改用 `npm.cmd`
+
+本地验证前端构建：
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+Windows PowerShell 等价命令：
+
+```powershell
+cd frontend
+& 'C:\Program Files\nodejs\npm.cmd' install
+& 'C:\Program Files\nodejs\npm.cmd' run build
+```
+
 ### 手动安装
 
 #### 1. 安装后端依赖
@@ -269,6 +290,15 @@ cd frontend
 npm install   # 首次安装
 npm run dev   # → http://localhost:3000
 ```
+
+要求：
+- Node.js `^20.19.0 || >=22.12.0`
+- npm `11+`
+- `frontend/node_modules` 里已经安装好依赖
+
+Windows PowerShell 说明：
+- 如果出现 `npm.ps1 cannot be loaded because running scripts is disabled`，请改用 `npm.cmd`
+- 例如：`& 'C:\Program Files\nodejs\npm.cmd' run dev`
 
 前端从 `/api/calendar` 加载 GP 赛历，通过 `/ws` 连接实时规划，渲染真实智能体结果。已结束的 GP 在选择网格中显示为半透明。
 

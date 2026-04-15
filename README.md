@@ -127,7 +127,7 @@ f1-paddock-club/
 ```bash
 # One-time setup
 cd backend && pip install -r requirements.txt && cp .env.example .env
-# Edit .env — at minimum set OPENAI_API_KEY
+# Edit .env - at minimum set OPENAI_API_KEY
 cd ../frontend && npm install
 cd ..
 
@@ -135,6 +135,27 @@ cd ..
 ./start.sh
 # Backend: http://localhost:8000
 # Frontend: http://localhost:3000 (opens in browser)
+```
+
+Frontend prerequisites:
+- Node.js `^20.19.0 || >=22.12.0` (required by the installed Vite 8 toolchain)
+- npm `11+`
+- If you're on Windows PowerShell and `npm` is blocked by execution policy, use `npm.cmd` instead of `npm`
+
+Local frontend verification commands:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+On Windows PowerShell, the equivalent commands are:
+
+```powershell
+cd frontend
+& 'C:\Program Files\nodejs\npm.cmd' install
+& 'C:\Program Files\nodejs\npm.cmd' run build
 ```
 
 ### Manual setup
@@ -266,6 +287,15 @@ cd frontend
 npm install   # first time only
 npm run dev   # → http://localhost:3000
 ```
+
+Requirements:
+- Node.js `^20.19.0 || >=22.12.0`
+- npm `11+`
+- Frontend dependencies installed in `frontend/node_modules`
+
+Windows PowerShell note:
+- If `npm` fails with `npm.ps1 cannot be loaded because running scripts is disabled`, run `npm.cmd` instead.
+- Example: `& 'C:\Program Files\nodejs\npm.cmd' run dev`
 
 The frontend loads the GP calendar from `/api/calendar`, connects to `/ws` for live planning, and renders real agent results. Past GPs are dimmed in the selection grid.
 
