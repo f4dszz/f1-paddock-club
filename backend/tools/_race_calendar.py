@@ -21,9 +21,14 @@ from typing import Optional
 # ═══════════════════════════════════════════════════════════════════════
 # Canonical 2026 race calendar
 #
-# Source: formula1.com/en/racing/2026 (verified 2026-04-15)
-# 22 races. Bahrain + Saudi Arabian not on current calendar.
-# Emilia Romagna GP (Imola) discontinued.
+# Source: formula1.com/en/racing/2026 (cross-ref ESPN, Sky Sports)
+# Last checked: 2026-04-15
+#
+# 21 scheduled races.
+# 3 entries marked not_scheduled:
+#   - Bahrain GP: not on current 2026 calendar (Middle East situation)
+#   - Saudi Arabian GP: not on current 2026 calendar (Middle East situation)
+#   - Emilia Romagna GP: discontinued (Imola not renewed)
 # Spanish GP moved to new Madrid street circuit.
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -49,6 +54,10 @@ _CALENDAR_2026: list[dict] = [
     {"round": 19, "gp_name": "Las Vegas GP",        "city": "Las Vegas",    "country": "USA",           "race_date": "2026-11-22"},
     {"round": 20, "gp_name": "Qatar GP",            "city": "Lusail",       "country": "Qatar",         "race_date": "2026-11-29"},
     {"round": 21, "gp_name": "Abu Dhabi GP",        "city": "Abu Dhabi",    "country": "UAE",           "race_date": "2026-12-06"},
+    # ── Not scheduled for 2026 (kept so lookups don't return None) ──
+    {"round": None, "gp_name": "Bahrain GP",          "city": "Sakhir",       "country": "Bahrain",       "race_date": None, "not_scheduled": True, "calendar_note": "Not on current 2026 calendar"},
+    {"round": None, "gp_name": "Saudi Arabian GP",    "city": "Jeddah",       "country": "Saudi Arabia",  "race_date": None, "not_scheduled": True, "calendar_note": "Not on current 2026 calendar"},
+    {"round": None, "gp_name": "Emilia Romagna GP",   "city": "Imola",        "country": "Italy",         "race_date": None, "not_scheduled": True, "calendar_note": "Discontinued for 2026"},
 ]
 
 # Quick-lookup indices (built once at import time)
@@ -60,55 +69,70 @@ _BY_CITY: dict[str, dict] = {r["city"].lower(): r for r in _CALENDAR_2026}
 # Public helpers — runtime computation, never stored
 # ═══════════════════════════════════════════════════════════════════════
 
+def _is_scheduled(r: dict) -> bool:
+    """Check if a race entry is scheduled (has a date and not marked not_scheduled)."""
+    return r.get("race_date") is not None and not r.get("not_scheduled")
+
+
 def get_race(gp_name: str) -> Optional[dict]:
-    """Look up a GP by official name. Returns None if not found."""
+    """Look up a GP by official name. Returns None if unknown GP.
+    Note: returns entries even for not_scheduled races (Bahrain, etc.)
+    so callers can check .get('not_scheduled') and show appropriate UI."""
     return _BY_NAME.get(gp_name)
 
 
 def get_race_by_city(city: str) -> Optional[dict]:
-    """Look up a GP by city name (case-insensitive). Returns None if not found."""
+    """Look up a GP by city name (case-insensitive)."""
     return _BY_CITY.get(city.lower())
 
 
-def race_date(gp_name: str) -> Optional[str]:
-    """Return race date as ISO string, or None if GP not found."""
+def is_not_scheduled(gp_name: str) -> bool:
+    """Check if a GP is known but not on the current 2026 calendar."""
     r = _BY_NAME.get(gp_name)
-    return r["race_date"] if r else None
+    return bool(r and r.get("not_scheduled"))
+
+
+def race_date(gp_name: str) -> Optional[str]:
+    """Return race date as ISO string, or None if not found/not scheduled."""
+    r = _BY_NAME.get(gp_name)
+    if not r:
+        return None
+    return r.get("race_date")
 
 
 def is_past(gp_name: str, today: Optional[date] = None) -> bool:
-    """Check if a GP's race date has already passed."""
+    """Check if a GP's race date has already passed. False for not_scheduled."""
     r = _BY_NAME.get(gp_name)
-    if not r:
+    if not r or not r.get("race_date"):
         return False
     today = today or date.today()
     return date.fromisoformat(r["race_date"]) < today
 
 
 def days_until(gp_name: str, today: Optional[date] = None) -> Optional[int]:
-    """Days from today to the race. Negative if past."""
+    """Days from today to the race. Negative if past. None if not scheduled."""
     r = _BY_NAME.get(gp_name)
-    if not r:
+    if not r or not r.get("race_date"):
         return None
     today = today or date.today()
     return (date.fromisoformat(r["race_date"]) - today).days
 
 
 def upcoming_races(today: Optional[date] = None) -> list[dict]:
-    """Return all GPs with race_date >= today, sorted by date."""
+    """Return all scheduled GPs with race_date >= today, sorted by date."""
     today = today or date.today()
     return [
         r for r in _CALENDAR_2026
-        if date.fromisoformat(r["race_date"]) >= today
+        if _is_scheduled(r) and date.fromisoformat(r["race_date"]) >= today
     ]
 
 
 def past_races(today: Optional[date] = None) -> list[dict]:
-    """Return all GPs with race_date < today, sorted by date."""
+    """Return all scheduled GPs with race_date < today, sorted by date."""
     today = today or date.today()
     return [
         r for r in _CALENDAR_2026
-        if date.fromisoformat(r["race_date"]) < today
+        if _is_scheduled(r) and date.fromisoformat(r["race_date"]) < today
     ]
 
 
@@ -118,16 +142,23 @@ def next_upcoming(today: Optional[date] = None) -> Optional[dict]:
     return races[0] if races else None
 
 
-def all_races() -> list[dict]:
-    """Return the full 2026 calendar."""
-    return list(_CALENDAR_2026)
+def all_races(include_not_scheduled: bool = False) -> list[dict]:
+    """Return the 2026 calendar. By default excludes not_scheduled entries."""
+    if include_not_scheduled:
+        return list(_CALENDAR_2026)
+    return [r for r in _CALENDAR_2026 if _is_scheduled(r)]
 
 
-def gp_names() -> list[str]:
-    """Return all GP names in calendar order."""
-    return [r["gp_name"] for r in _CALENDAR_2026]
+def scheduled_races() -> list[dict]:
+    """Return only scheduled (has date, not cancelled) races."""
+    return [r for r in _CALENDAR_2026 if _is_scheduled(r)]
+
+
+def gp_names(include_not_scheduled: bool = False) -> list[str]:
+    """Return GP names in calendar order."""
+    return [r["gp_name"] for r in all_races(include_not_scheduled)]
 
 
 def race_dates_map() -> dict[str, str]:
-    """Return {gp_name: race_date} dict — drop-in replacement for old _RACE_DATES_2026."""
-    return {r["gp_name"]: r["race_date"] for r in _CALENDAR_2026}
+    """Return {gp_name: race_date} dict for scheduled races only."""
+    return {r["gp_name"]: r["race_date"] for r in _CALENDAR_2026 if r.get("race_date")}

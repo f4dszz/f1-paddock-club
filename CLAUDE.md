@@ -192,7 +192,7 @@ f1-paddock-club/
    - 3.4 ✅ Supervisor agent skeleton (refine.py)
    - 3.5 ✅ Supervisor dual-mode (planning from natural language + refinement with state mutation). State mutation via post-loop ToolMessage scanning. Budget auto-recompute.
    - 3.6 ✅ Supervisor hardening — multi-currency budget (EUR/USD/CNY via _currency.py), trip date computation (_trip_dates.py for outbound/return/checkin/checkout), state-aware tool factory (closure-based auto-fill prevents supervisor from asking for known info). Specialists deferred (see note below).
-   - 3.7 ✅ /ws WebSocket dual-lane routing — type=plan → Lane 1, type=chat → Lane 2, session state per connection, backward-compat shim for raw TripRequest.
+   - 3.7 ✅ /ws WebSocket dual-lane routing — type=plan → Lane 1, type=chat → Lane 2, session state per connection, backward-compat shim for raw TripRequest. Session-level conversation memory (6-turn history, separate from plan state) enables multi-turn refinement.
    - Note: search_web.py (Tavily/DuckDuckGo) remains stubbed — tour_agent uses LLM only. Not blocking.
 4. **Phase 4 — Frontend migration** — Move prototype to Next.js, connect WebSocket to backend. Chat input box as first-class entry point alongside GP grid + form.
 5. **Phase 5 — Polish + deploy** — Security baseline, error handling, persistence, deploy.
@@ -217,7 +217,6 @@ What was actually implemented in 3.6:
 - Round-trip flight handling — ROUNDTRIP tag + recompute support
 
 What was NOT implemented (deferred):
-- Multi-turn conversation memory (supervisor creates fresh agent per call, no chat history across turns)
 - Budget tradeoff suggestions (supervisor reports over-budget but doesn't proactively suggest swaps)
 - "Change GP entirely" / "start over" via chat intent (only via type=plan on /ws)
 - Specialists deferred to Phase 5 when validated by real usage patterns
