@@ -21,15 +21,17 @@ from typing import Optional
 # ═══════════════════════════════════════════════════════════════════════
 # Canonical 2026 race calendar
 #
-# Source: formula1.com/en/racing/2026 (cross-ref ESPN, Sky Sports)
+# Primary source: formula1.com/en/racing/2026 (official calendar page)
+# Update source: formula1.com/en/latest/article (official calendar articles)
+# Conflict rule: calendar page > article > per-race page
 # Last checked: 2026-04-15
 #
-# 21 scheduled races.
+# 22 scheduled races.
+# Notable: Barcelona-Catalunya GP AND Spanish GP (Madrid) are separate rounds.
 # 3 entries marked not_scheduled:
 #   - Bahrain GP: not on current 2026 calendar (Middle East situation)
 #   - Saudi Arabian GP: not on current 2026 calendar (Middle East situation)
 #   - Emilia Romagna GP: discontinued (Imola not renewed)
-# Spanish GP moved to new Madrid street circuit.
 # ═══════════════════════════════════════════════════════════════════════
 
 _CALENDAR_2026: list[dict] = [
@@ -38,22 +40,23 @@ _CALENDAR_2026: list[dict] = [
     {"round": 3,  "gp_name": "Japanese GP",         "city": "Suzuka",       "country": "Japan",         "race_date": "2026-03-29"},
     {"round": 4,  "gp_name": "Miami GP",            "city": "Miami",        "country": "USA",           "race_date": "2026-05-03", "sprint": True},
     {"round": 5,  "gp_name": "Canadian GP",         "city": "Montreal",     "country": "Canada",        "race_date": "2026-05-24", "sprint": True},
-    {"round": 6,  "gp_name": "Monaco GP",           "city": "Monte Carlo",  "country": "Monaco",        "race_date": "2026-06-07"},
-    {"round": 7,  "gp_name": "Spanish GP",          "city": "Madrid",       "country": "Spain",         "race_date": "2026-06-14"},
-    {"round": 8,  "gp_name": "Austrian GP",         "city": "Spielberg",    "country": "Austria",       "race_date": "2026-06-28"},
-    {"round": 9,  "gp_name": "British GP",          "city": "Silverstone",  "country": "UK",            "race_date": "2026-07-05", "sprint": True},
-    {"round": 10, "gp_name": "Belgian GP",          "city": "Spa",          "country": "Belgium",       "race_date": "2026-07-19"},
-    {"round": 11, "gp_name": "Hungarian GP",        "city": "Budapest",     "country": "Hungary",       "race_date": "2026-07-26"},
-    {"round": 12, "gp_name": "Dutch GP",            "city": "Zandvoort",    "country": "Netherlands",   "race_date": "2026-08-23", "sprint": True},
-    {"round": 13, "gp_name": "Italian GP",          "city": "Monza",        "country": "Italy",         "race_date": "2026-09-06"},
-    {"round": 14, "gp_name": "Azerbaijan GP",       "city": "Baku",         "country": "Azerbaijan",    "race_date": "2026-09-20"},
-    {"round": 15, "gp_name": "Singapore GP",        "city": "Singapore",    "country": "Singapore",     "race_date": "2026-10-11", "sprint": True},
-    {"round": 16, "gp_name": "United States GP",    "city": "Austin",       "country": "USA",           "race_date": "2026-10-25"},
-    {"round": 17, "gp_name": "Mexico City GP",      "city": "Mexico City",  "country": "Mexico",        "race_date": "2026-11-01"},
-    {"round": 18, "gp_name": "Brazilian GP",        "city": "Sao Paulo",    "country": "Brazil",        "race_date": "2026-11-08"},
-    {"round": 19, "gp_name": "Las Vegas GP",        "city": "Las Vegas",    "country": "USA",           "race_date": "2026-11-22"},
-    {"round": 20, "gp_name": "Qatar GP",            "city": "Lusail",       "country": "Qatar",         "race_date": "2026-11-29"},
-    {"round": 21, "gp_name": "Abu Dhabi GP",        "city": "Abu Dhabi",    "country": "UAE",           "race_date": "2026-12-06"},
+    {"round": 6,  "gp_name": "Monaco GP",                "city": "Monte Carlo",        "country": "Monaco",        "race_date": "2026-06-07"},
+    {"round": 7,  "gp_name": "Barcelona-Catalunya GP",  "city": "Barcelona",          "country": "Spain",         "race_date": "2026-06-14"},
+    {"round": 8,  "gp_name": "Austrian GP",              "city": "Spielberg",          "country": "Austria",       "race_date": "2026-06-28"},
+    {"round": 9,  "gp_name": "British GP",               "city": "Silverstone",        "country": "UK",            "race_date": "2026-07-05", "sprint": True},
+    {"round": 10, "gp_name": "Belgian GP",               "city": "Spa",                "country": "Belgium",       "race_date": "2026-07-19"},
+    {"round": 11, "gp_name": "Hungarian GP",             "city": "Budapest",           "country": "Hungary",       "race_date": "2026-07-26"},
+    {"round": 12, "gp_name": "Dutch GP",                 "city": "Zandvoort",          "country": "Netherlands",   "race_date": "2026-08-23", "sprint": True},
+    {"round": 13, "gp_name": "Italian GP",               "city": "Monza",              "country": "Italy",         "race_date": "2026-09-06"},
+    {"round": 14, "gp_name": "Spanish GP",               "city": "Madrid",             "country": "Spain",         "race_date": "2026-09-13"},
+    {"round": 15, "gp_name": "Azerbaijan GP",            "city": "Baku",               "country": "Azerbaijan",    "race_date": "2026-09-26"},
+    {"round": 16, "gp_name": "Singapore GP",           "city": "Singapore",          "country": "Singapore",     "race_date": "2026-10-11", "sprint": True},
+    {"round": 17, "gp_name": "United States GP",     "city": "Austin",             "country": "USA",           "race_date": "2026-10-25"},
+    {"round": 18, "gp_name": "Mexico City GP",       "city": "Mexico City",        "country": "Mexico",        "race_date": "2026-11-01"},
+    {"round": 19, "gp_name": "Brazilian GP",         "city": "Sao Paulo",          "country": "Brazil",        "race_date": "2026-11-08"},
+    {"round": 20, "gp_name": "Las Vegas GP",         "city": "Las Vegas",          "country": "USA",           "race_date": "2026-11-22"},
+    {"round": 21, "gp_name": "Qatar GP",             "city": "Lusail",             "country": "Qatar",         "race_date": "2026-11-29"},
+    {"round": 22, "gp_name": "Abu Dhabi GP",         "city": "Abu Dhabi",          "country": "UAE",           "race_date": "2026-12-06"},
     # ── Not scheduled for 2026 (kept so lookups don't return None) ──
     {"round": None, "gp_name": "Bahrain GP",          "city": "Sakhir",       "country": "Bahrain",       "race_date": None, "not_scheduled": True, "calendar_note": "Not on current 2026 calendar"},
     {"round": None, "gp_name": "Saudi Arabian GP",    "city": "Jeddah",       "country": "Saudi Arabia",  "race_date": None, "not_scheduled": True, "calendar_note": "Not on current 2026 calendar"},
