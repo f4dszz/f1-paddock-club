@@ -108,22 +108,44 @@ f1-paddock-club/
 │   ├── logging_config.py      # File logger setup (writes to logs/)
 │   ├── requirements.txt
 │   └── .env.example           # Documents all supported env vars
-└── frontend/
-    └── prototype.jsx          # Paddock Club themed React prototype
+├── frontend/
+│   ├── prototype.jsx          # Paddock Club React app (connected to /ws)
+│   ├── src/main.jsx           # Vite entry point
+│   ├── index.html             # HTML shell
+│   ├── vite.config.js         # Vite dev server config (port 3000)
+│   └── package.json           # React + Vite deps
+└── start.sh                   # Launch both backend + frontend
 ```
 
 ---
 
 ## Getting Started
 
-### 1. Install backend dependencies
+### Quick start (both backend + frontend)
+
+```bash
+# One-time setup
+cd backend && pip install -r requirements.txt && cp .env.example .env
+# Edit .env — at minimum set OPENAI_API_KEY
+cd ../frontend && npm install
+cd ..
+
+# Launch both services
+./start.sh
+# Backend: http://localhost:8000
+# Frontend: http://localhost:3000 (opens in browser)
+```
+
+### Manual setup
+
+#### 1. Install backend dependencies
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-### 2. (Optional) Configure an LLM provider
+#### 2. (Optional) Configure an LLM provider
 
 Without an API key, the LLM-powered agents (`itinerary`, `tour`) automatically fall back to mock data. With a key they call a real model. The recommended way to configure this is a `.env` file:
 
@@ -235,6 +257,16 @@ Server responses:
 > **Backward compat:** raw TripRequest JSON (without `{type, data}` envelope) is auto-detected and routed to Lane 1.
 
 > **Note:** `type=chat` as the first message uses the supervisor's planning mode, which produces tickets/flights/hotels/budget but **not** itinerary or tour (3/5 sections). For a complete 5/5 plan, use `type=plan` first.
+
+#### 5. Run the frontend
+
+```bash
+cd frontend
+npm install   # first time only
+npm run dev   # → http://localhost:3000
+```
+
+The frontend loads the GP calendar from `/api/calendar`, connects to `/ws` for live planning, and renders real agent results. Past GPs are dimmed in the selection grid.
 
 ### Logs
 

@@ -106,26 +106,49 @@ f1-paddock-club/
 │   ├── llm.py                 # 可插拔大模型客户端封装（Phase 2 新增）
 │   ├── agents/__init__.py     # 7 个智能体节点函数
 │   ├── refine.py              # Lane 2：Supervisor 智能体（双模式规划 + 调整）
-│   ├── tools/                 # 外部数据工具（SerpAPI、Firecrawl、缓存、币种、日期）
+│   ├── _session.py            # WebSocket 会话管理（对话记忆 + plan state 分层）
+│   ├── tools/                 # 外部数据工具（SerpAPI、Firecrawl、缓存、币种、日期、赛历）
 │   ├── logging_config.py      # 文件日志配置（写到 logs/）
 │   ├── requirements.txt
 │   └── .env.example           # 列出所有支持的环境变量
-└── frontend/
-    └── prototype.jsx          # Paddock Club 主题的 React 原型
+├── frontend/
+│   ├── prototype.jsx          # Paddock Club React 应用（已接 /ws）
+│   ├── src/main.jsx           # Vite 入口
+│   ├── index.html             # HTML 壳
+│   ├── vite.config.js         # Vite 开发服务器配置（端口 3000）
+│   └── package.json           # React + Vite 依赖
+└── start.sh                   # 一键启动后端 + 前端
 ```
 
 ---
 
 ## 快速开始
 
-### 1. 安装后端依赖
+### 一键启动（后端 + 前端）
+
+```bash
+# 首次安装
+cd backend && pip install -r requirements.txt && cp .env.example .env
+# 编辑 .env —— 至少填入 OPENAI_API_KEY
+cd ../frontend && npm install
+cd ..
+
+# 启动
+./start.sh
+# 后端: http://localhost:8000
+# 前端: http://localhost:3000（自动打开浏览器）
+```
+
+### 手动安装
+
+#### 1. 安装后端依赖
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-### 2.（可选）配置大模型 Provider
+#### 2.（可选）配置大模型 Provider
 
 不设置 API key 也能跑 —— 涉及大模型的两个智能体（`itinerary`、`tour`）会自动回退到 mock 数据。配上 key 之后才会真正调用模型。推荐用 `.env` 文件来管理：
 
@@ -237,6 +260,16 @@ WebSocket 支持多轮会话，分两条通道：
 > **向后兼容**：直接发送 raw TripRequest JSON（不带 `{type, data}` 包装）会被自动识别并路由到 Lane 1。
 
 > **注意**：首条消息用 `type=chat`（而非 `type=plan`）会走 Supervisor 的规划模式，只产出门票/机票/酒店/预算，**不包含**行程和观光推荐（3/5 sections）。要获得完整的 5/5 计划，请先用 `type=plan`。
+
+#### 5. 启动前端
+
+```bash
+cd frontend
+npm install   # 首次安装
+npm run dev   # → http://localhost:3000
+```
+
+前端从 `/api/calendar` 加载 GP 赛历，通过 `/ws` 连接实时规划，渲染真实智能体结果。已结束的 GP 在选择网格中显示为半透明。
 
 ### 日志
 
