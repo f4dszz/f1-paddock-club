@@ -1,15 +1,13 @@
-"""Search for hotel options via SerpAPI Google Hotels (+ Bing parallel).
+"""Search for hotel options via SerpAPI (Google Hotels + Google Maps parallel).
 
-Same data flow pattern as search_flights:
-    1. Parallel: google_hotels + bing (both via SerpAPI)
+Data flow:
+    1. Parallel: google_hotels + google_maps (both via SerpAPI)
     2. LLM estimation fallback
     3. Raise → agent mock
 
-WHY google_hotels engine specifically?
-SerpAPI's google_hotels engine returns structured data: property name,
-price, rating, GPS coords, amenities, images. This is MUCH richer
-than scraping a booking page. For Chinese routes, Bing supplements
-with local OTA results that Google Hotels might miss.
+google_hotels returns booking-oriented data (prices, availability).
+Google Maps returns location-oriented data (ratings, addresses, reviews).
+Together they give a complete picture.
 
 TTL: 3 hours.
 """

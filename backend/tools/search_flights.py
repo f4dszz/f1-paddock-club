@@ -1,18 +1,16 @@
 """Search for flight options via SerpAPI (multiple engines in parallel).
 
 Data flow:
-    1. Parallel query: google_flights + bing (if SERPAPI_API_KEY set)
+    1. Parallel query: google_flights + google_search (if SERPAPI_API_KEY set)
     2. If parallel returns results → merge, deduplicate, cache, return
     3. If ALL parallel sources fail → try LLM estimation
     4. If LLM also fails → raise (agent falls back to mock)
 
 Each result dict carries:
-    _source:   "google_flights" | "bing" | "llm_estimate"
+    _source:   "google_flights" | "google_search" | "llm_estimate"
     _degraded: False (real data) | True (estimated)
 
 TTL: 3 hours.
-
-Teaching notes inline — search for "WHY:" comments.
 """
 
 from __future__ import annotations
@@ -87,10 +85,7 @@ def _try_serpapi_google_flights(
     origin: str, dest: str, date: str, return_date: str | None,
     stops: int | None, cabin: str | None, api_key: str,
 ) -> list[dict]:
-    """WHY a separate function per engine?
-    Each SerpAPI engine has different parameter names and response
-    shapes. Isolating them means changing Google Flights parsing
-    doesn't risk breaking Bing parsing. Single Responsibility.
+    """Query SerpAPI's google_flights engine for structured flight data.
 
     When return_date is provided, searches round-trip (type=1).
     google_flights returns round-trip prices in this mode — the price
@@ -148,50 +143,6 @@ def _try_serpapi_google_flights(
         })
 
     return results[:6]
-
-
-# ── SerpAPI source: Bing search engine (补充信息，中文友好) ────────────
-
-def _try_serpapi_bing(
-    origin: str, dest: str, date: str, api_key: str,
-) -> list[dict]:
-    """WHY Bing as a second source?
-    Bing returns web results (not structured flight data), but its
-    snippets often contain price ranges and airline names that
-    Google Flights might miss — especially for Chinese airlines and
-    routes. We extract structured data from snippets via simple parsing.
-    """
-    from serpapi import GoogleSearch
-
-    query = f"flights {origin} to {dest} {date} price"
-    params = {
-        "engine": "bing",
-        "q": query,
-        "api_key": api_key,
-    }
-    raw = GoogleSearch(params).get_dict()
-    organic = raw.get("organic_results", [])
-
-    # WHY: we don't try to deeply parse Bing results into TransportLeg
-    # shape. We extract what we can (title + snippet + link) and mark
-    # them as supplementary info. The supervisor/frontend can show
-    # these as "also found on web" links rather than structured cards.
-    results = []
-    for r in organic[:3]:
-        snippet = r.get("snippet", "")
-        link = r.get("link", "")
-        title = r.get("title", "")
-        if snippet and link:
-            results.append({
-                "tag": "INFO",
-                "summary": title[:80],
-                "detail": snippet[:150],
-                "price": 0,  # Can't reliably extract price from snippets
-                "currency": "USD",
-                "link": link,
-            })
-
-    return results
 
 
 # ── SerpAPI source: Google Search (price snippets as cross-reference) ─
@@ -327,7 +278,7 @@ def search_flights(
     WHY return a tuple (results, summary) instead of just results?
     Because the caller (agent) needs the summary string to include in
     its status message to the user. Example:
-        "Found 5 flights (google_flights + bing)"
+        "Found 5 flights (google_flights + google_search)"
         "Found 2 flights (estimated — google_flights failed: timeout)"
 
     The summary is a human-readable one-liner from DegradationReport.
@@ -340,11 +291,9 @@ def search_flights(
 
     # ── Layer 1: Parallel real sources ───────────────────────────
     if api_key:
-        # Two complementary sources (tested: Bing returned locale-dependent
-        # noise — flight simulators or Chinese social media. Not worth it.):
-        # - google_flights: structured airline data (primary, one-level source)
-        # - google_search: price snippets as cross-reference (two-level source)
-        # True redundancy (another one-level source) would need Amadeus API.
+        # Two complementary sources:
+        # - google_flights: structured airline data (primary)
+        # - google_search: price snippets as cross-reference
         sources = {
             "google_flights": lambda: _try_serpapi_google_flights(
                 origin, dest, date, return_date, stops, cabin, api_key,

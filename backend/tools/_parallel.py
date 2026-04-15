@@ -1,7 +1,7 @@
 """Parallel multi-source query framework with degradation tracking.
 
-When a tool needs data from multiple providers (Google Flights + Bing +
-Fliggy), this module fires all queries simultaneously using ThreadPool
+When a tool needs data from multiple providers (Google Flights + Google
+Search, or Google Hotels + Google Maps), this module fires all queries simultaneously using ThreadPool
 and merges results. Failed sources are logged and skipped — they don't
 block or crash the overall search.
 
@@ -16,13 +16,13 @@ Design notes:
 
 2. WHY as_completed, not map?
    `as_completed` returns results in the order they FINISH, not the
-   order they were submitted. This means if Bing responds in 0.5s but
-   Google takes 2s, we start processing Bing's results immediately.
+   order they were submitted. This means if Google Maps responds in 0.5s
+   but Google Hotels takes 2s, we start processing Maps results immediately.
    For user-facing latency, this matters.
 
 3. WHY per-result _source and _degraded fields?
-   A single search might partially degrade (Google succeeded, Bing
-   failed). Per-result metadata lets the frontend show a ⚠️ only on
+   A single search might partially degrade (one source succeeded, another
+   failed). Per-result metadata lets the frontend show a warning only on
    the degraded items, not blanket the whole page. See design notes
    in the parent module's docstring.
 
@@ -30,8 +30,8 @@ Usage:
     from tools._parallel import query_parallel
 
     results, report = query_parallel({
-        "google_flights": lambda: call_serpapi(...),
-        "bing": lambda: call_serpapi_bing(...),
+        "google_flights": lambda: call_serpapi_flights(...),
+        "google_search": lambda: call_serpapi_search(...),
     })
     # results: list[dict] with _source on each
     # report: DegradationReport with per-source status
@@ -83,9 +83,9 @@ class DegradationReport:
         """Human-readable one-liner for log messages and user notifications.
 
         Examples:
-            "sources: google_flights(3) + bing(2)"
-            "sources: google_flights(3) | FAILED: bing (timeout)"
-            "ALL SOURCES FAILED: google_flights (timeout), bing (401)"
+            "sources: google_flights(3) + google_search(2)"
+            "sources: google_flights(3) | FAILED: google_search (timeout)"
+            "ALL SOURCES FAILED: google_flights (timeout), google_search (401)"
         """
         parts = []
         for s in self.sources:

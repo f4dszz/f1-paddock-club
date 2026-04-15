@@ -1,7 +1,7 @@
 """Search for F1 ticket options via Firecrawl + SerpAPI + LLM estimation.
 
 Data flow:
-    1. Parallel: Firecrawl (scrape official page) + SerpAPI Bing (web search)
+    1. Parallel: Firecrawl (scrape official page) + SerpAPI Google Search
     2. If results → LLM extracts structured TicketOption[] from combined text
     3. If parallel fails → LLM estimation from training data
     4. If LLM fails → raise (agent falls back to mock)
@@ -11,7 +11,7 @@ Flights and hotels have structured SerpAPI engines (google_flights,
 google_hotels) that return machine-readable data. Tickets DON'T —
 there's no "google_tickets" engine. So our strategy is:
     - Firecrawl: scrape the official ticket page → get raw markdown
-    - SerpAPI Bing: search for ticket info → get snippets
+    - SerpAPI Google Search: search for ticket info → get snippets
     - Feed BOTH into the LLM as context → extract structured data
 
 This is a "retrieve then extract" pattern (light RAG without a vector DB).
@@ -144,10 +144,9 @@ def _try_firecrawl(gp_name: str, year: int, api_key: str) -> list[str]:
 # ── SerpAPI Google Search: ticket pricing snippets ───────────────────
 
 def _try_serpapi_google_tickets(gp_name: str, year: int, api_key: str) -> list[str]:
-    """WHY Google Search instead of Bing for tickets?
-    Google Search returns richer snippets for F1 ticket queries:
-    price ranges, grandstand names, official links. Bing was returning
-    generic booking site homepages. Same SerpAPI key, different engine.
+    """Google Search via SerpAPI for F1 ticket pricing snippets.
+    Returns richer snippets than other engines for F1 ticket queries:
+    price ranges, grandstand names, official links.
     """
     from serpapi import GoogleSearch
 
@@ -182,7 +181,7 @@ def _extract_with_llm(
     source_label: str,
 ) -> list[dict]:
     """WHY a separate extraction function?
-    Both Firecrawl (markdown) and Bing (snippets) produce raw text.
+    Both Firecrawl (markdown) and Google Search (snippets) produce raw text.
     The LLM's job is the same in both cases: read text → output
     structured TicketOption[]. Centralizing this avoids duplicating
     the prompt and schema logic.
@@ -319,7 +318,7 @@ def search_tickets(
     WHY is the flow different from flights/hotels?
     Flights/hotels have structured API engines that return machine data.
     Tickets require a TWO-STEP process:
-      Step 1: Gather raw text (Firecrawl scrape + Bing search, parallel)
+      Step 1: Gather raw text (Firecrawl scrape + Google Search, parallel)
       Step 2: LLM extracts structured TicketOption[] from that text
     This is essentially "light RAG" — retrieve text, then generate
     structured output from it — without needing a vector database.
@@ -329,7 +328,7 @@ def search_tickets(
 
     # ── Layer 1: Parallel text gathering ─────────────────────────
     # WHY gather text first, then extract?
-    # Because Firecrawl returns markdown and Bing returns snippets.
+    # Because Firecrawl returns markdown and Google Search returns snippets.
     # Both are raw text. We merge them into one context and let
     # ONE LLM call extract from the combined picture — this gives
     # better results than extracting from each source separately.
