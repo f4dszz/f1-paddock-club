@@ -81,7 +81,7 @@
 | **1 — 图 + Mock 数据** | ✅ 已完成 | LangGraph 完整接好，7 个智能体返回 mock 数据，CLI 端到端跑通，FastAPI 端点可用。 |
 | **2 — 真实大模型调用** | ✅ 已完成 | `itinerary_agent` 与 `tour_agent` 调用真实大模型（`with_structured_output`）。Provider 可切换（OpenAI/Anthropic）。无 key 时自动回退 mock。 |
 | **3 — 外部数据 + Supervisor** | ✅ 已完成 | SerpAPI（机票/酒店）、Firecrawl（门票抓取）、Supervisor 对话式调整、`/ws` 双通道路由、多币种预算（EUR/USD/CNY）、行程日期计算。详见下方。 |
-| **4 — 前端** | ⏳ 下一步 | 把 `prototype.jsx` 接上 `/ws`，后续迁移到 Next.js。 |
+| **4 — 前端** | 🟡 进行中 | 4.0 已完成（`prototype.jsx` 已接 `/ws`）。4.1 加固中。4.2 部署 + PWA + Next.js 迁移计划中。 |
 | **5 — 打磨与部署** | ⏳ 待定 | 安全基线、错误处理、持久化、部署。 |
 
 ### Phase 3 —— 具体做了什么
@@ -360,7 +360,7 @@ tail -f backend/logs/backend_$(date +%F).log   # 实时跟踪今天的日志
 
 ## 后续路线图
 
-- **Phase 4（下一步）** —— 把 `frontend/prototype.jsx` 接上 `/ws`，后续迁移到 Next.js 实时规划界面。
+- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固：debug 模式、状态/聊天分离、门票消歧、EUR refine summary（完成）。后续：币种选择器、可编辑日期、Next.js 迁移。
 - **Phase 5** —— 安全基线、错误处理、运行结果持久化、部署上线。
 
 ---

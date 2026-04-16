@@ -199,7 +199,7 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
           }} style={{width:"100%",padding:"7px",borderRadius:5,border:"none",background:z.color,color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
             <span style={{fontSize:12}}>{bookIcon}</span> {bookLabel} ({bookableItems.length})
           </button>
-          <div style={{fontSize:8,color:"#444",textAlign:"center",marginTop:3}}>Opens booking site with your dates pre-filled</div>
+          <div style={{fontSize:8,color:"#444",textAlign:"center",marginTop:3}}>Opens the official booking site in a new tab</div>
         </div>
       )}
     </div>
