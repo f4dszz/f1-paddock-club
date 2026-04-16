@@ -89,7 +89,7 @@ Long-term vision: the supervisor may eventually replace Lane 1 for initial plann
 - **Data tools**: SerpAPI — active, real data verified (flights + hotels); Firecrawl — active, real data verified (ticket page scraping); Tavily/DuckDuckGo — **stubbed** (search_web.py skeleton only, not wired). All active tools disk-cached with TTL.
 - **Frontend**: React prototype exists (`frontend/prototype.jsx`), planned migration to Next.js.
 - **Streaming**: FastAPI WebSocket for real-time agent status.
-- **Logging**: File-based (`backend/logs/backend.log`), `LOG_LEVEL` env var controllable.
+- **Logging**: File-based (`backend/logs/backend_YYYY-MM-DD.log`, one file per startup date), `LOG_LEVEL` env var controllable.
 
 ---
 
@@ -250,7 +250,7 @@ PYTHONIOENCODING=utf-8 python -i graph.py
 >>> print(reply)
 
 # API server
-uvicorn main:app --reload    # API on :8000
+uvicorn main:app --reload --port 8001    # API on :8001
 ```
 
 ---

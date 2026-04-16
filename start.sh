@@ -2,8 +2,8 @@
 # F1 Paddock Club — Start both backend and frontend
 #
 # Usage: ./start.sh
-# Backend: http://localhost:8000 (API + WebSocket)
-# Frontend: http://localhost:3000 (opens in browser)
+# Backend: http://localhost:8001 (API + WebSocket)
+# Frontend: http://localhost:3000 (Vite may open a browser tab depending on environment)
 #
 # Prerequisites:
 #   Backend:  pip install -r backend/requirements.txt + .env with API keys
@@ -15,16 +15,16 @@ echo "=== F1 Paddock Club ==="
 echo ""
 
 # Start backend
-echo "[1/2] Starting backend on :8000..."
+echo "[1/2] Starting backend on :8001..."
 cd backend
-PYTHONIOENCODING=utf-8 uvicorn main:app --reload --port 8000 &
+PYTHONIOENCODING=utf-8 uvicorn main:app --reload --port 8001 &
 BACKEND_PID=$!
 cd ..
 
 # Wait for backend to be ready
 echo "      Waiting for backend..."
 for i in $(seq 1 15); do
-  if curl -s http://localhost:8000/api/calendar > /dev/null 2>&1; then
+  if curl -s http://localhost:8001/api/calendar > /dev/null 2>&1; then
     echo "      Backend ready."
     break
   fi
@@ -40,7 +40,7 @@ cd ..
 
 echo ""
 echo "=== Both services running ==="
-echo "  Backend:  http://localhost:8000"
+echo "  Backend:  http://localhost:8001"
 echo "  Frontend: http://localhost:3000"
 echo ""
 echo "Press Ctrl+C to stop both."

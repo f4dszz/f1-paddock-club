@@ -136,9 +136,39 @@ cd ..
 
 # 启动
 ./start.sh
-# 后端: http://localhost:8000
-# 前端: http://localhost:3000（自动打开浏览器）
+# 后端: http://localhost:8001
+# 前端: http://localhost:3000（Vite 可能会自动打开浏览器，取决于运行环境）
 ```
+
+### 推荐：双终端开发流程（Windows / Git Bash）
+
+`start.sh` 只在同一终端用 `Ctrl+C` 停止时才清理进程。日常开发推荐用 `scripts/` 下的独立脚本：
+
+```bash
+# 终端 1：后端 :8001
+./scripts/dev-backend.sh
+
+# 终端 2：前端 :3000（strictPort，端口不漂移）
+./scripts/dev-frontend.sh
+
+# 结束时——清理 3000/3001/8000/8001 上的残留进程
+./scripts/dev-stop.sh
+
+# 查看当前监听情况
+./scripts/dev-status.sh
+```
+
+### 自检（验证前后端是否可达）
+
+```bash
+# 直连后端
+curl http://127.0.0.1:8001/api/calendar
+
+# 通过 Vite 代理（也必须返回 200）
+curl http://localhost:3000/api/calendar
+```
+
+如果第二条不通而第一条通，说明前端在跑但代理拿不到后端——`dev-stop.sh` 后重新 `dev-frontend.sh`。
 
 前端前置要求：
 - Node.js `^20.19.0 || >=22.12.0`（当前安装的 Vite 8 要求）
@@ -238,13 +268,13 @@ python graph.py
 ```bash
 # 在 backend/ 目录下
 uvicorn main:app --reload
-# → http://localhost:8000
+# → http://localhost:8001
 ```
 
 #### POST `/plan`
 
 ```bash
-curl -X POST http://localhost:8000/plan \
+curl -X POST http://localhost:8001/plan \
   -H "Content-Type: application/json" \
   -d '{
     "gp_name": "Italian GP",
@@ -304,10 +334,10 @@ Windows PowerShell 说明：
 
 ### 日志
 
-每次运行都会往 `backend/logs/backend.log` 追加一份结构化日志（UTF-8 编码），每个智能体的状态消息、LLM 调用的起止、以及任何异常堆栈都会带上时间戳和来源模块名落进去。CLI 那份漂亮的 console 输出不动，文件日志是**额外**的审计轨迹，不是替代。
+每次运行都会往 `backend/logs/backend_YYYY-MM-DD.log` 追加一份结构化日志（UTF-8 编码，按启动日期分文件），每个智能体的状态消息、LLM 调用的起止、以及任何异常堆栈都会带上时间戳和来源模块名落进去。CLI 那份漂亮的 console 输出不动，文件日志是**额外**的审计轨迹，不是替代。
 
 ```bash
-tail -f backend/logs/backend.log   # 实时跟踪
+tail -f backend/logs/backend_$(date +%F).log   # 实时跟踪今天的日志
 ```
 
 想看更详细的（LLM 初始化参数、调试行），把 `LOG_LEVEL=DEBUG` 写到 `.env` 里或 `export` 出来就行。`backend/logs/` 已经在 `.gitignore` 里，不会被提交。

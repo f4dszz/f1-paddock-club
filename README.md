@@ -133,9 +133,39 @@ cd ..
 
 # Launch both services
 ./start.sh
-# Backend: http://localhost:8000
-# Frontend: http://localhost:3000 (opens in browser)
+# Backend: http://localhost:8001
+# Frontend: http://localhost:3000 (Vite may open a browser tab automatically depending on environment)
 ```
+
+### Recommended: two-terminal dev workflow (Windows / Git Bash)
+
+`start.sh` only cleans up if you stop with `Ctrl+C` in the same terminal. For day-to-day development on Windows, use the dedicated scripts in `scripts/`:
+
+```bash
+# Terminal 1: backend on :8001
+./scripts/dev-backend.sh
+
+# Terminal 2: frontend on :3000 (strictPort, no drift)
+./scripts/dev-frontend.sh
+
+# When done — kill any leftover processes on 3000/3001/8000/8001
+./scripts/dev-stop.sh
+
+# Check what's currently listening
+./scripts/dev-status.sh
+```
+
+### Health check (verify both services are reachable)
+
+```bash
+# Backend direct
+curl http://127.0.0.1:8001/api/calendar
+
+# Backend through Vite proxy (must also return 200)
+curl http://localhost:3000/api/calendar
+```
+
+If the second one fails but the first succeeds, the frontend is running but its proxy can't reach the backend — restart frontend with `dev-stop.sh` then `dev-frontend.sh`.
 
 Frontend prerequisites:
 - Node.js `^20.19.0 || >=22.12.0` (required by the installed Vite 8 toolchain)
@@ -235,13 +265,13 @@ The `(OpenAI)` / `(Anthropic)` / `(mock)` tag tells you which provider answered,
 ```bash
 # from backend/
 uvicorn main:app --reload
-# → http://localhost:8000
+# → http://localhost:8001
 ```
 
 #### POST `/plan`
 
 ```bash
-curl -X POST http://localhost:8000/plan \
+curl -X POST http://localhost:8001/plan \
   -H "Content-Type: application/json" \
   -d '{
     "gp_name": "Italian GP",
@@ -301,10 +331,10 @@ The frontend loads the GP calendar from `/api/calendar`, connects to `/ws` for l
 
 ### Logs
 
-Every run writes a structured audit trail to `backend/logs/backend.log` (UTF-8, append mode). Each agent's status messages, LLM call boundaries, and any exceptions land there with timestamps and the originating module name. The pretty console output from the CLI test is untouched — file logs are additive, not a replacement.
+Every run writes a structured audit trail to `backend/logs/backend_YYYY-MM-DD.log` (UTF-8, append mode, one file per startup date). Each agent's status messages, LLM call boundaries, and any exceptions land there with timestamps and the originating module name. The pretty console output from the CLI test is untouched — file logs are additive, not a replacement.
 
 ```bash
-tail -f backend/logs/backend.log   # follow live
+tail -f backend/logs/backend_$(date +%F).log   # follow today's log
 ```
 
 Bump verbosity with `LOG_LEVEL=DEBUG` in your `.env` (or `export`) to see LLM init details and prompts-related debug lines. `backend/logs/` is gitignored.
