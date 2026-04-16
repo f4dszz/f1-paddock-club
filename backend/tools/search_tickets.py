@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from ._cache import cached
 from ._parallel import query_parallel
-from ._race_calendar import race_date as _calendar_race_date
+from ._race_calendar import race_date as _calendar_race_date, get_race as _get_race
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,42 @@ _TICKET_URLS: dict[str, str] = {
 }
 # Default fallback URL for GPs not in the map
 _DEFAULT_TICKET_URL = "https://tickets.formula1.com/en"
+
+# Known circuit names for search disambiguation (Austrian vs Australian, etc.)
+_CIRCUIT_NAMES: dict[str, str] = {
+    "Australian GP": "Albert Park Melbourne",
+    "Austrian GP": "Red Bull Ring Spielberg",
+    "Azerbaijan GP": "Baku City Circuit",
+    "Barcelona-Catalunya GP": "Circuit de Barcelona-Catalunya",
+    "Belgian GP": "Spa-Francorchamps",
+    "Brazilian GP": "Interlagos Sao Paulo",
+    "British GP": "Silverstone",
+    "Canadian GP": "Circuit Gilles Villeneuve Montreal",
+    "Chinese GP": "Shanghai International Circuit",
+    "Dutch GP": "Zandvoort",
+    "Hungarian GP": "Hungaroring Budapest",
+    "Italian GP": "Monza Autodromo Nazionale",
+    "Japanese GP": "Suzuka Circuit",
+    "Las Vegas GP": "Las Vegas Strip Circuit",
+    "Mexico City GP": "Autodromo Hermanos Rodriguez",
+    "Miami GP": "Miami International Autodrome",
+    "Monaco GP": "Circuit de Monaco Monte Carlo",
+    "Qatar GP": "Lusail International Circuit",
+    "Singapore GP": "Marina Bay Street Circuit",
+    "Spanish GP": "Madrid circuit",
+    "United States GP": "Circuit of the Americas Austin",
+    "Abu Dhabi GP": "Yas Marina Circuit",
+}
+
+
+def _disambiguate(gp_name: str) -> str:
+    """Return a disambiguation suffix for search queries (city + circuit)."""
+    circuit = _CIRCUIT_NAMES.get(gp_name, "")
+    if circuit:
+        return circuit
+    # Fallback: pull city from race calendar
+    race = _get_race(gp_name)
+    return f"{race['city']} {race['country']}" if race else ""
 
 
 def _ticket_ttl(gp_name: str, year: int = 2026, **kwargs) -> int:
@@ -125,10 +161,11 @@ def _try_serpapi_google_tickets(gp_name: str, year: int, api_key: str) -> list[s
     # - "formula 1" disambiguates from other events at same venue
     # - "tribune" / "grandstand" are the terms ticket sites actually use
     # - "EUR" biases toward European pricing pages (where most GPs are)
-    # - Avoids generic words like "Italian" that trigger cultural content
+    # - Circuit/city name prevents Austrian↔Australian confusion
+    venue = _disambiguate(gp_name)
     params = {
         "engine": "google",
-        "q": f"formula 1 {gp_name} {year} tickets tribune grandstand price EUR official buy",
+        "q": f"formula 1 {gp_name} {venue} {year} tickets grandstand price official",
         "api_key": api_key,
     }
     raw = GoogleSearch(params).get_dict()

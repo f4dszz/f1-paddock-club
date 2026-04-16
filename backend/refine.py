@@ -49,6 +49,7 @@ from tools.search_flights import search_flights as _raw_search_flights
 from tools.search_tickets import search_tickets as _raw_search_tickets
 from tools.recompute import recompute_budget as _raw_recompute_budget
 from tools._trip_dates import compute_trip_dates
+from tools._currency import to_eur
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,14 @@ They want to make changes. Your job:
 1. Understand EXACTLY what the user wants to change.
 2. Call ONLY the tools needed for that specific change.
    If the user only wants to change hotels, do NOT touch flights or tickets.
-3. Present the changes clearly: what was before, what's new, budget impact.
+3. Present the changes clearly.
+
+RESPONSE FORMAT — Your reply MUST be short (2-3 sentences max). Structure:
+- Line 1: What you changed (e.g., "Switched hotel to Burg Rooms at €100/night.")
+- Line 2: Budget impact (e.g., "New total: €1,850 / €2,000 — within budget." or "No budget change.")
+- Do NOT repeat raw tool output, price lists, or detailed comparisons.
+- Do NOT use markdown headers, bullet lists, or long explanations.
+- The updated result cards will show the details — your reply is just a summary.
 
 CRITICAL RULES for refinement:
 - All trip parameters (city, dates, origin, budget) are ALREADY KNOWN.
@@ -114,6 +122,7 @@ CRITICAL RULES for refinement:
   these are already in the plan. Asking for known information is a bug.
 - ONLY ask clarifying questions about the user's NEW request
   (e.g., "Do you want 4-star or 5-star Marriott?" is OK).
+- All prices in your reply MUST use EUR. Convert if the tool returned other currencies.
 """
 
 
@@ -357,29 +366,35 @@ def _format_state(state: dict) -> str:
     if state.get("special_requests"):
         lines.append(f"Special requests: {state['special_requests']}")
 
+    # Always display in EUR — convert from item's source currency.
+    # Reason: supervisor echoes these prices back to the user; mixing
+    # USD/EUR/CNY in the displayed text confuses users.
+    def _eur(amount, currency: str) -> str:
+        try:
+            return f"EUR {round(to_eur(float(amount), currency or 'EUR'))}"
+        except (TypeError, ValueError):
+            return f"EUR {amount}"
+
     if state.get("tickets"):
         lines.append("\nTickets:")
         for t in state["tickets"]:
             if t.get("tag") == "INFO":
                 continue
-            cur = t.get("currency", "EUR")
-            lines.append(f"  - [{t.get('tag', '')}] {t.get('name', '')} {cur} {t.get('price', '?')}")
+            lines.append(f"  - [{t.get('tag', '')}] {t.get('name', '')} {_eur(t.get('price'), t.get('currency', 'EUR'))}")
 
     if state.get("transport"):
         lines.append("\nFlights:")
         for t in state["transport"]:
             if t.get("tag") == "INFO":
                 continue
-            cur = t.get("currency", "USD")
-            lines.append(f"  - [{t.get('tag', '')}] {t.get('summary', '')} {cur} {t.get('price', '?')}")
+            lines.append(f"  - [{t.get('tag', '')}] {t.get('summary', '')} {_eur(t.get('price'), t.get('currency', 'USD'))}")
 
     if state.get("hotel"):
         lines.append("\nHotels:")
         for h in state["hotel"]:
             if h.get("tag") == "INFO":
                 continue
-            cur = h.get("currency", "USD")
-            lines.append(f"  - [{h.get('tag', '')}] {h.get('name', '')} {cur} {h.get('price_per_night', '?')}/night")
+            lines.append(f"  - [{h.get('tag', '')}] {h.get('name', '')} {_eur(h.get('price_per_night'), h.get('currency', 'USD'))}/night")
 
     bs = state.get("budget_summary") or {}
     if bs:

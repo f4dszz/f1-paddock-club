@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 const ZONES = [
   { key:"ticket", label:"Tickets", color:"#F59E0B", x:8, y:8, w:42, h:38 },
@@ -269,6 +269,7 @@ function TrackSVG({d,color,size=44}){
 }
 
 export default function App(){
+  const debugMode=useMemo(()=>new URLSearchParams(window.location.search).has("debug"),[]);
   const[screen,setScreen]=useState("select");
   const[gpList,setGpList]=useState([]);
   const[gp,setGp]=useState(null);
@@ -283,10 +284,14 @@ export default function App(){
   const[budgetSummary,setBudgetSummary]=useState(null);
   const[chatInput,setChatInput]=useState("");
   const[chatMsgs,setChatMsgs]=useState([]);
+  const[statusMsgs,setStatusMsgs]=useState([]);
+  const[showStatus,setShowStatus]=useState(false);
   const[chatLoading,setChatLoading]=useState(false);
+  const[updatedCards,setUpdatedCards]=useState(new Set());
   const[pipeIdx,setPipeIdx]=useState(-1);
   const[selections,setSelections]=useState({});
   const[debugLog,setDebugLog]=useState([]);
+  const[copyStatus,setCopyStatus]=useState("copy");
   const cancelRef=useRef(false);
   const scrollRef=useRef(null);
   const resolveRef=useRef(null);
@@ -316,7 +321,7 @@ export default function App(){
       });
   },[pushDebug]);
 
-  useEffect(()=>{if(scrollRef.current)setTimeout(()=>{scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},80);},[results,thinkBatch,chatMsgs]);
+  useEffect(()=>{if(scrollRef.current)setTimeout(()=>{scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},80);},[results,thinkBatch,chatMsgs,statusMsgs]);
 
   const w=ms=>new Promise(r=>setTimeout(r,ms));
   const moveTo=(zoneKeys)=>{
@@ -332,13 +337,15 @@ export default function App(){
   },[]);
 
   // ── Shared ws message handler (used by both plan and chat) ────────
+  const prevResultsRef=useRef(null);
+  const highlightTimeoutRef=useRef(null);
   const handleWsMsg=useCallback((evt)=>{
     const msg=JSON.parse(evt.data);
     pushDebug("ws.message", msg.type);
     if(msg.type==="message"){
       const agent=msg.data?.agent||"concierge";
       const text=msg.data?.text||"";
-      setChatMsgs(prev=>[...prev,{from:"c",text:`[${agent}] ${text}`}]);
+      setStatusMsgs(prev=>[...prev,{agent,text}]);
       setSpeaking(true);
       const agentToZone={ticket:"ticket",transport:"transport",hotel:"hotel",plan:"plan",tour:"tour",budget:"tour"};
       const zone=agentToZone[agent];
@@ -350,6 +357,19 @@ export default function App(){
     if(msg.type==="result"){
       const d=msg.data;
       const transformed=transformResults(d);
+      // Detect which cards changed (for highlight after refine)
+      if(prevResultsRef.current){
+        const changed=new Set();
+        for(const key of Object.keys(transformed)){
+          if(JSON.stringify(transformed[key])!==JSON.stringify(prevResultsRef.current[key])) changed.add(key);
+        }
+        if(changed.size>0){
+          setUpdatedCards(changed);
+          if(highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+          highlightTimeoutRef.current=setTimeout(()=>{setUpdatedCards(new Set());highlightTimeoutRef.current=null;},3000);
+        }
+      }
+      prevResultsRef.current=transformed;
       RESULTS=transformed;
       setLiveResults(transformed);
       setBudgetSummary(d.budget_summary);
@@ -360,7 +380,6 @@ export default function App(){
     }
     if(msg.type==="done"){
       setConPos(CONC_HOME);setSpeaking(true);setPhase("done");setPipeIdx(-1);
-      setChatMsgs(prev=>[...prev,{from:"c",text:"All done! Review your plan below and adjust anything in chat."}]);
       setTimeout(()=>setSpeaking(false),400);
       setChatLoading(false);
     }
@@ -403,8 +422,9 @@ export default function App(){
       budget: +(form.budget || 2500),
       extra_days: form.extraDays,
     });
-    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});
-    setChatMsgs([{from:"c",text:"Welcome, VIP! Connecting to your team..."}]);
+    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});setUpdatedCards(new Set());
+    prevResultsRef.current=null;
+    setChatMsgs([]);setStatusMsgs([{agent:"concierge",text:"Welcome, VIP! Connecting to your team..."}]);setShowStatus(false);
     setPhase("running");setSpeaking(true);setPipeIdx(0);
 
     const ws=connectWs();
@@ -427,7 +447,7 @@ export default function App(){
     }
   };
 
-  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setChatMsgs([]);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);};
+  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());prevResultsRef.current=null;};
   const backToSelect=()=>{reset();setScreen("select");setGp(null);};
 
   // ── WebSocket-driven chat ────────────────────────────────────────
@@ -571,21 +591,14 @@ export default function App(){
                 }} style={{width:"100%",accentColor:"#E10600"}}/>
               </div>
               <div>
-                <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Stops along the way <span style={{color:"#333"}}>(optional)</span></label>
-                <input value={form.stops} onChange={e=>setForm({...form,stops:e.target.value})}
-                  placeholder="e.g. Milan 2 days → Lake Como → Monza"
-                  style={{width:"100%",padding:"6px 9px",borderRadius:5,border:"1px solid #222",background:"#0a0a0a",color:"#eee",fontSize:10.5,outline:"none",fontFamily:"inherit",boxSizing:"border-box"}}
-                  onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
-              </div>
-              <div>
                 <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Special requests <span style={{color:"#333"}}>(optional)</span></label>
                 <textarea value={form.special} onChange={e=>setForm({...form,special:e.target.value})}
-                  placeholder="Wheelchair access, vegetarian, Michelin restaurant, want pit walk experience..."
-                  style={{width:"100%",padding:"6px 9px",borderRadius:5,border:"1px solid #222",background:"#0a0a0a",color:"#eee",fontSize:10.5,outline:"none",fontFamily:"inherit",boxSizing:"border-box",resize:"none",height:40,lineHeight:1.5}}
+                  placeholder="e.g. stop in Milan 2 days, vegetarian meals, pit walk, wheelchair access, Michelin restaurant..."
+                  style={{width:"100%",padding:"6px 9px",borderRadius:5,border:"1px solid #222",background:"#0a0a0a",color:"#eee",fontSize:10.5,outline:"none",fontFamily:"inherit",boxSizing:"border-box",resize:"none",height:48,lineHeight:1.5}}
                   onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
               </div>
               <div style={{fontSize:8,color:"#555",lineHeight:1.5,marginTop:6}}>
-                These free-text fields shape the first plan. After the first result is ready, use the refine chat below to adjust hotels, flights, or budget.
+                Describe any stops, dietary needs, accessibility, or experiences you want. After results, use the chat to refine.
               </div>
             </div>
             <button onClick={run} style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:"#E10600",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.03em"}}>START PLANNING</button>
@@ -594,7 +607,31 @@ export default function App(){
 
         {thinkBatch&&<ThinkPanel zoneKeys={thinkBatch} onAllDone={handleBatchDone}/>}
 
-        {results.map(key=><ResultCard key={key} zoneKey={key} selections={selections} onSelect={(zone,arr)=>setSelections(prev=>({...prev,[zone]:arr}))} liveResults={liveResults}/>)}
+        {/* Status messages during planning — collapsible after done */}
+        {phase==="running"&&statusMsgs.map((m,i)=>(
+          <div key={`s${i}`} style={{marginBottom:3,animation:"slideUp .2s ease-out"}}>
+            <div style={{display:"flex",gap:5,alignItems:"flex-end"}}><PxChar type="concierge" size={14}/><div style={{padding:"4px 9px",borderRadius:"3px 7px 7px 7px",background:"#151515",border:"1px solid #1a1a1a",fontSize:9.5,color:"#666",maxWidth:"80%"}}>[{m.agent}] {m.text}</div></div>
+          </div>
+        ))}
+        {phase==="done"&&statusMsgs.length>0&&(
+          <div style={{marginBottom:6}}>
+            <button onClick={()=>setShowStatus(!showStatus)} style={{fontSize:8,color:"#444",background:"none",border:"none",cursor:"pointer",padding:0,textDecoration:"underline"}}>
+              {showStatus?"Hide":"Show"} planning trace ({statusMsgs.length} messages)
+            </button>
+            {showStatus&&<div style={{marginTop:4,padding:"6px 8px",background:"#0d0d0d",borderRadius:6,border:"1px solid #1a1a1a",maxHeight:120,overflowY:"auto"}}>
+              {statusMsgs.map((m,i)=>(
+                <div key={i} style={{fontSize:8,color:"#555",padding:"1px 0"}}>[{m.agent}] {m.text}</div>
+              ))}
+            </div>}
+          </div>
+        )}
+
+        {/* Result cards — with highlight animation for updated cards after refine */}
+        {results.map(key=>(
+          <div key={key} style={{borderRadius:8,border:updatedCards.has(key)?"1px solid #E1060066":"1px solid transparent",transition:"border-color 0.5s",animation:updatedCards.has(key)?"cardPulse 1s ease-out":"none"}}>
+            <ResultCard zoneKey={key} selections={selections} onSelect={(zone,arr)=>setSelections(prev=>({...prev,[zone]:arr}))} liveResults={liveResults}/>
+          </div>
+        ))}
 
         {phase==="done"&&budgetSummary&&(()=>{
           const bs=budgetSummary;
@@ -624,6 +661,7 @@ export default function App(){
           );
         })()}
 
+        {/* Refine chat conversation — only user messages and supervisor replies */}
         {chatMsgs.map((m,i)=>(
           <div key={i} style={{marginBottom:5,animation:"slideUp .2s ease-out"}}>
             {m.from==="u"?(
@@ -645,14 +683,27 @@ export default function App(){
         </div>
       )}
 
-      <div style={{padding:"6px 14px 10px",borderTop:"1px solid #141414",background:"#0b0b0b",flexShrink:0}}>
-        <div style={{fontSize:8,color:"#555",marginBottom:4}}>Debug trace</div>
-        <div style={{maxHeight:88,overflowY:"auto",fontSize:8,color:"#777",fontFamily:"ui-monospace, SFMono-Regular, Consolas, monospace",lineHeight:1.5}}>
-          {debugLog.length
-            ? debugLog.map((line,i)=><div key={i}>{line}</div>)
-            : <div>No events yet.</div>}
+      {debugMode&&(
+        <div style={{padding:"6px 14px 10px",borderTop:"1px solid #141414",background:"#0b0b0b",flexShrink:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+            <div style={{fontSize:8,color:"#555"}}>Debug trace</div>
+            <button onClick={async()=>{
+              try{
+                await navigator.clipboard.writeText(debugLog.join("\n"));
+                setCopyStatus("copied");
+              }catch(e){
+                setCopyStatus("failed");
+              }
+              setTimeout(()=>setCopyStatus("copy"),1500);
+            }} style={{fontSize:7,color:copyStatus==="failed"?"#EF4444":"#555",background:"#1a1a1a",border:"1px solid #333",borderRadius:3,padding:"1px 6px",cursor:"pointer"}}>{copyStatus}</button>
+          </div>
+          <div style={{maxHeight:88,overflowY:"auto",fontSize:8,color:"#777",fontFamily:"ui-monospace, SFMono-Regular, Consolas, monospace",lineHeight:1.5}}>
+            {debugLog.length
+              ? debugLog.map((line,i)=><div key={i}>{line}</div>)
+              : <div>No events yet.</div>}
+          </div>
         </div>
-      </div>
+      )}
 
       <style>{`
         @keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -660,6 +711,7 @@ export default function App(){
         @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.5)}}
         @keyframes cBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
         @keyframes cardSlide{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes cardPulse{0%{border-color:#E10600}50%{border-color:#E1060066}100%{border-color:transparent}}
         @keyframes drawTrack{to{stroke-dashoffset:0}}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#333;border-radius:4px}
       `}</style>
