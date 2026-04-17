@@ -41,10 +41,10 @@ from agents import (
     increment_retry,
 )
 
-# Initialize file logging as soon as this module is imported. Safe to
-# call multiple times; see logging_config.setup_logging for details.
-setup_logging()
-
+# File logging is initialized only when this module is the entry point
+# (CLI test via `python graph.py`) or when the FastAPI app starts up.
+# Library imports (e.g. `from graph import plan_trip` in a script)
+# do not write to the log file. See logging_config.setup_logging.
 logger = logging.getLogger(__name__)
 
 
@@ -116,7 +116,7 @@ def plan_trip(user_input: dict) -> dict:
 
     Args:
         user_input: Dict with keys matching TravelPlanState input fields:
-            gp_name, gp_city, gp_date, origin, budget,
+            gp_name, gp_city, gp_date, origin, budget, currency,
             stand_pref, extra_days, stops, special_requests
 
     Returns:
@@ -131,6 +131,7 @@ def plan_trip(user_input: dict) -> dict:
         "gp_date": user_input.get("gp_date", "Sep 6"),
         "origin": user_input.get("origin", "New York"),
         "budget": float(user_input.get("budget", 2500)),
+        "currency": user_input.get("currency", "EUR"),
         "stand_pref": user_input.get("stand_pref", "any"),
         "extra_days": int(user_input.get("extra_days", 2)),
         "stops": user_input.get("stops", ""),
@@ -149,11 +150,12 @@ def plan_trip(user_input: dict) -> dict:
     }
 
     logger.info(
-        "plan_trip start gp=%s city=%s origin=%s budget=%s extra_days=%s",
+        "plan_trip start gp=%s city=%s origin=%s budget=%s %s extra_days=%s",
         initial_state["gp_name"],
         initial_state["gp_city"],
         initial_state["origin"],
         initial_state["budget"],
+        initial_state["currency"],
         initial_state["extra_days"],
     )
     result = graph.invoke(initial_state)
@@ -174,6 +176,7 @@ if __name__ == "__main__":
     import json
 
     _configure_console_output()
+    setup_logging()
 
     result = plan_trip({
         "gp_name": "Italian GP",
@@ -181,6 +184,7 @@ if __name__ == "__main__":
         "gp_date": "Sep 6",
         "origin": "New York",
         "budget": 2500,
+        "currency": "EUR",
         "stand_pref": "mid",
         "extra_days": 2,
         "stops": "Milan 2 days → Lake Como → Monza",

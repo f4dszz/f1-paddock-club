@@ -305,11 +305,15 @@ def tour_agent(state: TravelPlanState) -> dict:
         try:
             from pydantic import BaseModel, Field
 
+            currency = str(state.get("currency") or "EUR").upper()
+            _SYM = {"EUR": "€", "USD": "$", "CNY": "¥"}
+            sym = _SYM.get(currency, currency + " ")
+
             class TourRecs(BaseModel):
                 recommendations: list[str] = Field(
                     description=(
                         "One line per recommendation. Format: "
-                        "'<emoji> Name (€price) — short why-it-is-cool note'."
+                        f"'<emoji> Name ({sym}price) — short why-it-is-cool note'."
                     )
                 )
 
@@ -328,9 +332,10 @@ def tour_agent(state: TravelPlanState) -> dict:
                 f"Special requests: {special or 'none'}\n\n"
                 "Mix iconic sights, a hidden gem, a local food spot, and a "
                 "motorsport-flavored pick. Each line must follow exactly: "
-                "'<emoji> Name (€price) — short note'. Use € for prices "
-                "(approximate is fine). If a request above is dietary or "
-                "accessibility-related, honor it in your picks."
+                f"'<emoji> Name ({sym}price) — short note'. Use {sym} "
+                f"({currency}) for prices (approximate is fine). If a "
+                "request above is dietary or accessibility-related, honor "
+                "it in your picks."
             )
 
             logger.info("tour_agent calling LLM (provider=%s, city=%s)", provider_label(), state.get("gp_city", ""))
@@ -373,11 +378,12 @@ def budget_agent(state: TravelPlanState) -> dict:
     total = summary["total"]
     budget = summary["budget"]
     within = summary["within_budget"]
+    cur = summary.get("currency", "EUR")
 
     return {
         "budget_summary": summary,
         "budget_ok": within,
-        "messages": [_msg("budget", f"Total EUR {total:.0f} / EUR {budget:.0f} — {'within budget' if within else 'OVER BUDGET'}")],
+        "messages": [_msg("budget", f"Total {cur} {total:.0f} / {cur} {budget:.0f} — {'within budget' if within else 'OVER BUDGET'}")],
     }
 
 

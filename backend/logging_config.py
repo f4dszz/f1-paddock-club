@@ -1,11 +1,18 @@
 """Logging configuration for the F1 Paddock Club backend.
 
-Call `setup_logging()` once at the top of each entry point (graph.py,
-main.py). It attaches a file handler that writes to
-`backend/logs/backend_YYYY-MM-DD.log` in UTF-8, append mode. The existing
-CLI print output and uvicorn's own console logs are left untouched —
-this adds a file-based audit trail alongside them, it doesn't replace
-them.
+Call `setup_logging()` ONLY from the runtime entry points:
+- FastAPI lifespan startup in `main.py` (when uvicorn serves the app)
+- `if __name__ == "__main__":` block in `graph.py` (when running CLI test)
+
+Do NOT call it at module import level. Library imports (e.g. from a
+verification script or REPL) should not create log files as a side
+effect — a log file existing is a signal that a service was actually
+running.
+
+It attaches a file handler that writes to
+`backend/logs/backend_YYYY-MM-DD.log` in UTF-8, append mode. The CLI
+print output and uvicorn's own console logs are left untouched — this
+adds a file-based audit trail alongside them, it doesn't replace them.
 
 The log file name is dated per startup so logs from different sessions
 are easy to separate. Same-day restarts append to the same dated file.

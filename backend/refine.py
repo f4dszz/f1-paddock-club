@@ -107,8 +107,8 @@ They want to make changes. Your job:
 3. Present the changes clearly.
 
 RESPONSE FORMAT — Your reply MUST be short (2-3 sentences max). Structure:
-- Line 1: What you changed (e.g., "Switched hotel to Burg Rooms at €100/night.")
-- Line 2: Budget impact (e.g., "New total: €1,850 / €2,000 — within budget." or "No budget change.")
+- Line 1: What you changed (e.g., "Switched hotel to Burg Rooms at {currency} 100/night.")
+- Line 2: Budget impact (e.g., "New total: {currency} 1,850 / {currency} 2,000 — within budget." or "No budget change.")
 - Do NOT repeat raw tool output, price lists, or detailed comparisons.
 - Do NOT use markdown headers, bullet lists, or long explanations.
 - The updated result cards will show the details — your reply is just a summary.
@@ -122,7 +122,7 @@ CRITICAL RULES for refinement:
   these are already in the plan. Asking for known information is a bug.
 - ONLY ask clarifying questions about the user's NEW request
   (e.g., "Do you want 4-star or 5-star Marriott?" is OK).
-- All prices in your reply MUST use EUR. Convert if the tool returned other currencies.
+- All prices in your reply MUST use {currency}. Convert if the tool returned other currencies.
 """
 
 
@@ -160,6 +160,7 @@ def _build_tools(state: dict) -> list:
     _city = state.get("gp_city", "")
     _origin = state.get("origin", "")
     _gp_name = state.get("gp_name", "")
+    _currency = str(state.get("currency") or "EUR").upper()
     _checkin = dates["hotel_checkin"]
     _checkout = dates["hotel_checkout"]
     _outbound = dates["outbound_date"]
@@ -265,6 +266,11 @@ def _build_tools(state: dict) -> list:
         Pass the FULL current state as a JSON string."""
         try:
             s = json.loads(state_json)
+            # Inherit session currency if supervisor passed partial state
+            # without it. Prevents silent fallback to EUR when the
+            # actual plan was USD / CNY.
+            if not s.get("currency"):
+                s["currency"] = _currency
             summary = _raw_recompute_budget(s)
             return json.dumps(summary, ensure_ascii=False)
         except Exception as e:
@@ -328,8 +334,10 @@ def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
         try:
             state["budget_summary"] = _raw_recompute_budget(state)
             state["budget_ok"] = state["budget_summary"].get("within_budget", False)
-            logger.info("budget recomputed after state update: EUR %.0f / EUR %.0f",
-                        state["budget_summary"]["total"], state["budget_summary"]["budget"])
+            bs = state["budget_summary"]
+            bs_cur = bs.get("currency", state.get("currency", "EUR"))
+            logger.info("budget recomputed after state update: %s %.0f / %s %.0f",
+                        bs_cur, bs["total"], bs_cur, bs["budget"])
         except Exception:
             logger.exception("budget recomputation failed after state update")
 
@@ -341,7 +349,24 @@ def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _format_state(state: dict) -> str:
-    """Compact human-readable summary of the current plan for the prompt."""
+    """Compact human-readable summary of the current plan for the prompt.
+
+    Display-layer code — must NEVER crash. If the state has unexpected
+    shape, degrade to a best-effort summary rather than raise, since
+    this output is fed into the supervisor prompt on every chat turn.
+    """
+    try:
+        return _format_state_impl(state)
+    except Exception as e:
+        logger.warning("_format_state degraded: %s", e)
+        gp = state.get("gp_name", "?")
+        cur = str(state.get("currency") or "EUR").upper()
+        budget = state.get("budget", "?")
+        return f"GP: {gp}\nBudget: {cur} {budget}\n(plan summary unavailable, working with raw state)"
+
+
+def _format_state_impl(state: dict) -> str:
+    cur = str(state.get("currency") or "EUR").upper()
     has_data = any(state.get(f) for f in ("tickets", "transport", "hotel"))
 
     if not has_data:
@@ -351,54 +376,61 @@ def _format_state(state: dict) -> str:
         if state.get("origin"):
             lines.append(f"Origin: {state['origin']}")
         if state.get("budget"):
-            lines.append(f"Budget: EUR {state['budget']}")
+            lines.append(f"Budget: {cur} {state['budget']}")
         return "\n".join(lines)
 
-    # Pre-compute trip dates for display
-    dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+    # Pre-compute trip dates for display — degrade on parse failure
+    try:
+        dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+    except Exception:
+        dates = {"outbound_date": "?", "return_date": "?",
+                 "hotel_checkin": "?", "hotel_checkout": "?", "trip_nights": "?"}
 
     lines = []
     lines.append(f"GP: {state.get('gp_name', '?')} in {state.get('gp_city', '?')} ({state.get('gp_date', '?')})")
     lines.append(f"Origin: {state.get('origin', '?')}")
-    lines.append(f"Budget: EUR {state.get('budget', '?')}")
+    lines.append(f"Budget: {cur} {state.get('budget', '?')}")
     lines.append(f"Extra days: {state.get('extra_days', 0)}")
     lines.append(f"Trip: {dates['outbound_date']} to {dates['return_date']} ({dates['trip_nights']} nights)")
     if state.get("special_requests"):
         lines.append(f"Special requests: {state['special_requests']}")
 
-    # Always display in EUR — convert from item's source currency.
-    # Reason: supervisor echoes these prices back to the user; mixing
-    # USD/EUR/CNY in the displayed text confuses users.
-    def _eur(amount, currency: str) -> str:
+    # All item prices displayed in the user's selected currency. The raw
+    # item.currency may differ (e.g. SerpAPI returns USD for most flights);
+    # we convert via EUR pivot so the supervisor sees one consistent unit.
+    def _fmt(amount, source_currency: str) -> str:
         try:
-            return f"EUR {round(to_eur(float(amount), currency or 'EUR'))}"
+            eur = to_eur(float(amount), source_currency or "EUR")
+            target_amount = eur if cur == "EUR" else _convert_eur_to(eur, cur)
+            return f"{cur} {round(target_amount)}"
         except (TypeError, ValueError):
-            return f"EUR {amount}"
+            return f"{cur} {amount}"
 
     if state.get("tickets"):
         lines.append("\nTickets:")
         for t in state["tickets"]:
             if t.get("tag") == "INFO":
                 continue
-            lines.append(f"  - [{t.get('tag', '')}] {t.get('name', '')} {_eur(t.get('price'), t.get('currency', 'EUR'))}")
+            lines.append(f"  - [{t.get('tag', '')}] {t.get('name', '')} {_fmt(t.get('price'), t.get('currency', 'EUR'))}")
 
     if state.get("transport"):
         lines.append("\nFlights:")
         for t in state["transport"]:
             if t.get("tag") == "INFO":
                 continue
-            lines.append(f"  - [{t.get('tag', '')}] {t.get('summary', '')} {_eur(t.get('price'), t.get('currency', 'USD'))}")
+            lines.append(f"  - [{t.get('tag', '')}] {t.get('summary', '')} {_fmt(t.get('price'), t.get('currency', 'USD'))}")
 
     if state.get("hotel"):
         lines.append("\nHotels:")
         for h in state["hotel"]:
             if h.get("tag") == "INFO":
                 continue
-            lines.append(f"  - [{h.get('tag', '')}] {h.get('name', '')} {_eur(h.get('price_per_night'), h.get('currency', 'USD'))}/night")
+            lines.append(f"  - [{h.get('tag', '')}] {h.get('name', '')} {_fmt(h.get('price_per_night'), h.get('currency', 'USD'))}/night")
 
     bs = state.get("budget_summary") or {}
     if bs:
-        lines.append(f"\nBudget: EUR {bs.get('total', '?')} / EUR {bs.get('budget', '?')} "
+        bs_cur = bs.get("currency", cur)
+        lines.append(f"\nBudget: {bs_cur} {bs.get('total', '?')} / {bs_cur} {bs.get('budget', '?')} "
                       f"({'within budget' if bs.get('within_budget') else 'OVER BUDGET'})")
 
     lines.append("\n--- Tool parameters (auto-filled, override only to change) ---")
@@ -410,9 +442,18 @@ def _format_state(state: dict) -> str:
     lines.append(f"hotel_checkin: {dates['hotel_checkin']}")
     lines.append(f"hotel_checkout: {dates['hotel_checkout']}")
     lines.append(f"trip_nights: {dates['trip_nights']}")
-    lines.append(f"budget: {state.get('budget', '?')}")
+    lines.append(f"budget: {state.get('budget', '?')} ({cur})")
 
     return "\n".join(lines)
+
+
+def _convert_eur_to(eur_amount: float, target_currency: str) -> float:
+    """Helper: EUR → target via _currency.from_eur, non-crashing."""
+    from tools._currency import from_eur
+    try:
+        return from_eur(eur_amount, target_currency)
+    except Exception:
+        return eur_amount
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -445,7 +486,10 @@ def refine_plan(
     # ── Detect mode ──────────────────────────────────────────────
     has_plan = bool(state.get("tickets") or state.get("transport") or state.get("hotel"))
     mode = "refinement" if has_plan else "initial_planning"
-    mode_instructions = MODE_REFINE if has_plan else MODE_INITIAL
+    currency = str(state.get("currency") or "EUR").upper()
+    mode_template = MODE_REFINE if has_plan else MODE_INITIAL
+    # MODE_REFINE has {currency} placeholders — resolve them before final format
+    mode_instructions = mode_template.replace("{currency}", currency)
 
     # ── Build prompt ─────────────────────────────────────────────
     state_summary = _format_state(state)

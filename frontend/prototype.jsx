@@ -33,44 +33,64 @@ function transformResults(data) {
   const r = {};
   if (data.tickets?.length) {
     r.ticket = { mode:"single", bookLabel:"Book tickets", bookIcon:"🎫", items:
-      data.tickets.filter(t=>t.tag!=="INFO").map(t=>({
-        tag:t.tag||"PICK", main:t.name||"Ticket", sub:t.section||"",
-        price:`${t.currency||"EUR"} ${t.price}`, pv:t.price||0, link:t.link||"",
-      }))
+      data.tickets.filter(t=>t.tag!=="INFO").map(t=>{
+        const pv=t.price||0;
+        return {
+          tag:t.tag||"PICK", main:t.name||"Ticket", sub:t.section||"",
+          price: pv>0 ? `${t.currency||"EUR"} ${t.price}` : "Price not provided",
+          pv, priced: pv>0,
+          currency:t.currency||"EUR", link:t.link||"",
+        };
+      })
     };
   }
   if (data.transport?.length) {
-    r.transport = { mode:"multi", bookLabel:"Book flights", bookIcon:"✈", items:
-      data.transport.filter(t=>t.tag!=="INFO").map(t=>({
-        tag:t.tag||"OUT", main:t.summary||"Flight", sub:t.detail||"",
-        price:`${t.currency||"USD"} ${t.price}`, pv:t.price||0, link:t.link||"",
-      }))
+    // Flights changed to single-select: all current booking links route
+    // to the same Google Flights search page, so multi-select is misleading.
+    r.transport = { mode:"single", bookLabel:"Book flight", bookIcon:"✈", items:
+      data.transport.filter(t=>t.tag!=="INFO").map(t=>{
+        const pv=t.price||0;
+        return {
+          tag:t.tag||"OUT", main:t.summary||"Flight", sub:t.detail||"",
+          price: pv>0 ? `${t.currency||"USD"} ${t.price}` : "Price not provided",
+          pv, priced: pv>0,
+          currency:t.currency||"USD", link:t.link||"",
+        };
+      })
     };
   }
   if (data.hotel?.length) {
     r.hotel = { mode:"single", bookLabel:"Book hotel", bookIcon:"🏨", items:
-      data.hotel.filter(h=>h.tag!=="INFO").map(h=>({
-        tag:h.tag||"NEAR", main:h.name||"Hotel",
-        sub:`${h.distance||""} · ${h.rating||""}★ · ${h.nights||"?"}n`,
-        price:`${h.currency||"USD"} ${h.price_per_night}/n`, pv:h.price_per_night||0, link:h.link||"",
-      }))
+      data.hotel.filter(h=>h.tag!=="INFO").map(h=>{
+        const pv=h.price_per_night||0;
+        return {
+          tag:h.tag||"NEAR", main:h.name||"Hotel",
+          sub:`${h.distance||""} · ${h.rating||""}★ · ${h.nights||"?"}n`,
+          price: pv>0 ? `${h.currency||"USD"} ${h.price_per_night}/n` : "Price not provided",
+          pv, priced: pv>0,
+          currency:h.currency||"USD", link:h.link||"",
+        };
+      })
     };
   }
   if (data.itinerary?.length) {
     r.plan = { mode:"none", items:
       data.itinerary.map((line,i)=>{
         const m = line.match(/^Day\s*\d+\s*\((\w+)\):\s*(.+)/i);
-        return { tag:m?m[1].substring(0,3).toUpperCase():`D${i+1}`, main:m?m[2]:line, sub:"", price:"" };
+        return { tag:m?m[1].substring(0,3).toUpperCase():`D${i+1}`, main:m?m[2]:line, sub:"", price:"", priced:false };
       })
     };
   }
   if (data.tour?.length) {
-    r.tour = { mode:"multi", bookLabel:"Book activities", bookIcon:"🗺", items:
+    // Tour is display-only — the items come from an LLM and don't have
+    // booking URLs, so selection/checkbox UX was misleading. Keep as
+    // informational recommendations like itinerary.
+    r.tour = { mode:"none", items:
       data.tour.map(line=>{
         const m = line.match(/^(.+?)\s*\(([^)]+)\)\s*[—–-]\s*(.+)/);
         return m
-          ? { tag:"REC", main:m[1].replace(/^[^\w]+/,""), sub:m[3], price:m[2], pv:parseInt(m[2])||0 }
-          : { tag:"REC", main:line.substring(0,40), sub:line.substring(40), price:"", pv:0 };
+          ? { tag:"REC", main:m[1].replace(/^[^\w]+/,""), sub:m[3], price:m[2], pv:parseInt(m[2])||0, priced:true }
+          : { tag:"REC", main:line.substring(0,40), sub:line.substring(40), price:"", pv:0, priced:false };
       })
     };
   }
@@ -137,6 +157,9 @@ function SingleThinkStream({lines,color,onDone}){
   );
 }
 
+// Currency symbol lookup (for cards which show source currency per plan A)
+const CUR_SYMBOL={EUR:"€",USD:"$",CNY:"¥"};
+
 function ResultCard({zoneKey,selections,onSelect,liveResults}){
   const z=ZONES.find(z=>z.key===zoneKey);
   const data=(liveResults||RESULTS)[zoneKey];
@@ -144,11 +167,27 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
   const{mode,items,bookLabel,bookIcon}=data;
   const sel=selections[zoneKey]||[];
   const hasSelection=sel.length>0;
-  const selectedTotal=sel.reduce((s,idx)=>(items[idx]?.pv||0)+s,0);
-  const bookableItems=sel.filter(idx=>items[idx]?.link);
+  // Only priced items can be selected; unpriced items are shown as
+  // informational with optional click-through to the provider's site.
+  const unpricedCount=items.filter(it=>it.priced===false&&it.pv===0&&(mode==="single"||mode==="multi")).length;
+  // Chip logic: if all selected items share one currency, show that
+  // total; if mixed (rare), show a neutral "N selected" instead of
+  // pretending to know the currency. Avoids fake-€ summing across USD.
+  const selectedItems=sel.map(idx=>items[idx]).filter(Boolean);
+  const selectedCurs=new Set(selectedItems.filter(it=>it.priced!==false).map(it=>it.currency||"").filter(Boolean));
+  const selectedTotal=selectedItems.filter(it=>it.priced!==false).reduce((s,it)=>(it.pv||0)+s,0);
+  const chipSameCur=selectedCurs.size===1?[...selectedCurs][0]:null;
+  const chipText=chipSameCur
+    ?`${CUR_SYMBOL[chipSameCur]||(chipSameCur+" ")}${selectedTotal}`
+    :`${sel.length} selected`;
+  // Only priced items with a link are truly bookable via the batch button.
+  // Unpriced items with links are still jumpable per-row (see render below).
+  const bookableItems=sel.filter(idx=>items[idx]?.link&&items[idx]?.priced!==false);
 
   const toggle=(idx)=>{
     if(mode==="none")return;
+    const it=items[idx];
+    if(it&&it.priced===false)return;  // can't add unpriced to budget selection
     if(mode==="single") onSelect(zoneKey,sel[0]===idx?[]:[idx]);
     else{
       const next=sel.includes(idx)?sel.filter(x=>x!==idx):[...sel,idx];
@@ -162,22 +201,24 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
         <PxChar type={zoneKey} size={16}/>
         <span style={{fontSize:10,fontWeight:600,color:"#ccc"}}>{z.label}</span>
         {mode!=="none"&&<span style={{fontSize:7,color:"#444",marginLeft:4}}>{mode==="single"?"pick one":"select any"}</span>}
-        {hasSelection&&<span style={{marginLeft:"auto",fontSize:8,fontWeight:600,color:z.color}}>€{selectedTotal}</span>}
+        {hasSelection&&<span style={{marginLeft:"auto",fontSize:8,fontWeight:600,color:z.color}}>{chipText}</span>}
         {!hasSelection&&<div style={{marginLeft:"auto",width:4,height:4,borderRadius:"50%",background:z.color,boxShadow:`0 0 5px ${z.color}`}}/>}
       </div>
       {items.map((it,i)=>{
         const isSel=sel.includes(i);
-        const clickable=mode!=="none";
+        const selectable=mode!=="none" && it.priced!==false;
         const isRadio=mode==="single";
+        const unpriced=it.priced===false && (mode==="single"||mode==="multi");
         return(
-          <div key={i} onClick={()=>toggle(i)}
+          <div key={i} onClick={()=>selectable&&toggle(i)}
             style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",borderBottom:i<items.length-1?"1px solid #1a1a1a":"none",
-              cursor:clickable?"pointer":"default",
+              cursor:selectable?"pointer":"default",
               background:isSel?z.color+"12":"transparent",
               borderLeft:isSel?`2px solid ${z.color}`:"2px solid transparent",
+              opacity:unpriced?0.65:1,
               transition:"all .15s",
             }}>
-            {clickable&&<div style={{width:12,height:12,borderRadius:isRadio?"50%":3,border:`1.5px solid ${isSel?z.color:"#333"}`,background:isSel?z.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
+            {mode!=="none"&&<div style={{width:12,height:12,borderRadius:isRadio?"50%":3,border:`1.5px solid ${isSel?z.color:(unpriced?"#2a2a2a":"#333")}`,background:isSel?z.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
               {isSel&&<span style={{fontSize:8,color:"#fff",lineHeight:1}}>✓</span>}
             </div>}
             <span style={{fontSize:7,fontWeight:700,color:z.color,background:z.color+"15",padding:"1px 4px",borderRadius:3,minWidth:30,textAlign:"center"}}>{it.tag}</span>
@@ -185,7 +226,8 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
               <div style={{fontSize:10.5,fontWeight:500,color:"#ddd"}}>{it.main}</div>
               {it.sub&&<div style={{fontSize:9,color:"#555"}}>{it.sub}</div>}
             </div>
-            {it.price&&<span style={{fontSize:10.5,fontWeight:600,color:isSel?"#fff":"#888"}}>{it.price}</span>}
+            {it.price&&<span style={{fontSize:unpriced?9:10.5,fontWeight:unpriced?400:600,color:unpriced?"#666":(isSel?"#fff":"#888"),fontStyle:unpriced?"italic":"normal"}}>{it.price}</span>}
+            {unpriced&&it.link&&<button onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>Check →</button>}
           </div>
         );
       })}
@@ -274,7 +316,7 @@ export default function App(){
   const[gpList,setGpList]=useState([]);
   const[gp,setGp]=useState(null);
   const[phase,setPhase]=useState("welcome");
-  const[form,setForm]=useState({origin:"",budget:"2500",stand:"any",extraDays:2,special:"",stops:"",departDate:"",returnDate:""});
+  const[form,setForm]=useState({origin:"",budget:"2500",currency:"EUR",stand:"any",extraDays:2,special:"",stops:"",departDate:"",returnDate:""});
   const[zSt,setZSt]=useState({});
   const[conPos,setConPos]=useState(CONC_HOME);
   const[speaking,setSpeaking]=useState(false);
@@ -420,6 +462,7 @@ export default function App(){
       gp_date: gp?.race_date || null,
       origin: form.origin || "New York",
       budget: +(form.budget || 2500),
+      currency: form.currency,
       extra_days: form.extraDays,
     });
     cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});setUpdatedCards(new Set());
@@ -431,6 +474,7 @@ export default function App(){
     const planPayload=JSON.stringify({type:"plan",data:{
       gp_name:gp.gp_name, gp_city:gp.city, gp_date:gp.race_date,
       origin:form.origin||"New York", budget:+(form.budget||2500),
+      currency:form.currency||"EUR",
       stand_pref:form.stand, extra_days:form.extraDays,
       stops:form.stops, special_requests:form.special,
     }});
@@ -548,7 +592,7 @@ export default function App(){
 
             <div style={{background:"#111",border:"1px solid #222",borderRadius:10,padding:"12px",marginBottom:10}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                {[{l:"Flying from",k:"origin",p:"e.g. New York",t:"text"},{l:"Budget (EUR)",k:"budget",p:"2500",t:"number"}].map(f=>(
+                {[{l:"Flying from",k:"origin",p:"e.g. New York",t:"text"},{l:`Budget (${form.currency})`,k:"budget",p:"2500",t:"number"}].map(f=>(
                   <div key={f.k}>
                     <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>{f.l}</label>
                     <input value={form[f.k]} onChange={e=>setForm({...form,[f.k]:e.target.value})} placeholder={f.p} type={f.t}
@@ -556,6 +600,14 @@ export default function App(){
                       onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
                   </div>
                 ))}
+              </div>
+              <div style={{marginBottom:6}}>
+                <label style={{fontSize:8,color:"#555",display:"block",marginBottom:3}}>Currency <span style={{color:"#333"}}>(budget amount is interpreted in this unit)</span></label>
+                <div style={{display:"flex",gap:3}}>
+                  {["EUR","USD","CNY"].map(c=>(
+                    <button key={c} onClick={()=>setForm({...form,currency:c})} style={{flex:1,padding:"4px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",border:`1px solid ${form.currency===c?"#E10600":"#222"}`,background:form.currency===c?"#E1060015":"transparent",color:form.currency===c?"#E10600":"#555"}}>{c}</button>
+                  ))}
+                </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
                 <div>
@@ -639,23 +691,31 @@ export default function App(){
           const budget=bs.budget||+(form.budget||2500);
           const within=bs.within_budget;
           const items=bs.items||[];
+          const cur=bs.currency||form.currency||"EUR";
+          const sym=CUR_SYMBOL[cur]||(cur+" ");
+          // Count unpriced items across all live zones so the breakdown
+          // can surface how many options were excluded from the total.
+          const unpricedCount=Object.values(liveResults||{}).reduce((n,zone)=>
+            n + (zone.items||[]).filter(it=>it.priced===false && (zone.mode==="single"||zone.mode==="multi")).length, 0);
           return(
             <div style={{background:"#111",border:`1px solid ${within?"#22C55E33":"#EF444433"}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
-              <div style={{fontSize:9,color:"#666",marginBottom:6}}>Budget breakdown (EUR)</div>
+              <div style={{fontSize:9,color:"#666",marginBottom:6}}>Budget breakdown ({cur})</div>
               {items.map((it,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#aaa",padding:"2px 0"}}>
-                  <span>{it.name}</span><span style={{color:"#ddd"}}>€{Math.round(it.amount)}</span>
+                  <span>{it.name}</span><span style={{color:"#ddd"}}>{sym}{Math.round(it.amount)}</span>
                 </div>
               ))}
               <div style={{borderTop:"1px solid #222",marginTop:4,paddingTop:4}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                   <span style={{fontSize:9,color:"#888"}}>Estimated total</span>
-                  <span style={{fontSize:13,fontWeight:700,color:within?"#22C55E":"#EF4444"}}>€{Math.round(total).toLocaleString()} <span style={{fontSize:9,fontWeight:400,color:"#555"}}>/ €{Math.round(budget).toLocaleString()}</span></span>
+                  <span style={{fontSize:13,fontWeight:700,color:within?"#22C55E":"#EF4444"}}>{sym}{Math.round(total).toLocaleString()} <span style={{fontSize:9,fontWeight:400,color:"#555"}}>/ {sym}{Math.round(budget).toLocaleString()}</span></span>
                 </div>
                 <div style={{height:4,borderRadius:2,background:"#1a1a1a",overflow:"hidden"}}>
                   <div style={{height:"100%",borderRadius:2,background:within?"linear-gradient(90deg,#22C55E,#4ADE80)":"linear-gradient(90deg,#EF4444,#F87171)",width:`${Math.min(total/budget*100,100)}%`,transition:"width .5s"}}/>
                 </div>
                 {bs.savings_tip&&<div style={{fontSize:8,color:"#EF4444",marginTop:4}}>{bs.savings_tip}</div>}
+                {unpricedCount>0&&<div style={{fontSize:8,color:"#666",marginTop:4,fontStyle:"italic"}}>{unpricedCount} option{unpricedCount>1?"s":""} without prices excluded. Budget based on cheapest available.</div>}
+                {unpricedCount===0&&<div style={{fontSize:8,color:"#444",marginTop:4,fontStyle:"italic"}}>Budget based on cheapest available options.</div>}
               </div>
             </div>
           );

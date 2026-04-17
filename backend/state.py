@@ -60,6 +60,7 @@ class TravelPlanState(TypedDict):
     gp_date: str
     origin: str
     budget: float
+    currency: str            # "EUR" | "USD" | "CNY" — budget/display currency
     stand_pref: str          # "any" | "ga" | "mid" | "vip"
     extra_days: int
     stops: str               # multi-stop route description
