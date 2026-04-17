@@ -420,6 +420,13 @@ export default function App(){
     if(msg.type==="reply"){
       setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
     }
+    if(msg.type==="trace"){
+      // Backend-emitted debug trace event (only when session opted in).
+      // Render as a pushDebug line so it lives alongside existing UI traces.
+      const ev=msg.data||{};
+      const eventName=ev.event||"trace";
+      pushDebug(`trace.${eventName}`, ev);
+    }
     if(msg.type==="done"){
       setConPos(CONC_HOME);setSpeaking(true);setPhase("done");setPipeIdx(-1);
       setTimeout(()=>setSpeaking(false),400);
@@ -477,6 +484,7 @@ export default function App(){
       currency:form.currency||"EUR",
       stand_pref:form.stand, extra_days:form.extraDays,
       stops:form.stops, special_requests:form.special,
+      debug:debugMode,
     }});
 
     if(ws.readyState===WebSocket.OPEN){

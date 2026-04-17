@@ -294,6 +294,105 @@ _TOOL_STATE_MAP: dict[str, str] = {
     "search_tickets_tool": "tickets",
 }
 
+# Prefixes used by _build_tools when a tool raises; detecting them lets us
+# flag failed tools in the deterministic summary instead of trusting the
+# LLM to report them honestly.
+_TOOL_FAILURE_PREFIXES = (
+    "Hotel search failed",
+    "Flight search failed",
+    "Ticket search failed",
+    "Budget recomputation failed",
+)
+
+_FIELD_LABELS: dict[str, str] = {
+    "hotel": "hotels",
+    "transport": "flights",
+    "tickets": "tickets",
+}
+
+
+def _count_tool_messages(messages: list) -> int:
+    return sum(1 for m in messages if isinstance(m, ToolMessage))
+
+
+def _collect_failed_tools(messages: list) -> list[str]:
+    failed = []
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        content = (msg.content or "")
+        if content.startswith(_TOOL_FAILURE_PREFIXES):
+            name = getattr(msg, "name", "unknown_tool")
+            if name not in failed:
+                failed.append(name)
+    return failed
+
+
+def _detect_date_override(messages: list, state: dict) -> bool:
+    """True if the supervisor called any tool with explicit date args
+    that differ from the plan's defaults. Until Phase 2 persists
+    depart/return dates, such overrides are transient searches only."""
+    try:
+        default = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+    except Exception:
+        return False
+    default_values = {default.get("hotel_checkin"), default.get("hotel_checkout"),
+                      default.get("outbound_date"), default.get("return_date")}
+    for msg in messages:
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        for tc in tool_calls:
+            args = tc.get("args", {}) if isinstance(tc, dict) else {}
+            for key in ("checkin", "checkout", "date", "return_date"):
+                val = args.get(key)
+                if val and val not in default_values:
+                    return True
+    return False
+
+
+def _build_deterministic_summary(
+    state: dict,
+    updated_fields: dict[str, bool],
+    failed_tools: list[str],
+    date_override: bool,
+) -> str:
+    cur = str(state.get("currency") or "EUR").upper()
+    parts: list[str] = []
+
+    if updated_fields:
+        bits = []
+        for field in ("tickets", "transport", "hotel"):
+            if updated_fields.get(field):
+                count = len(state.get(field, []) or [])
+                label = _FIELD_LABELS.get(field, field)
+                bits.append(f"{label} ({count} options)")
+        if bits:
+            parts.append("Updated " + ", ".join(bits) + ".")
+
+    if failed_tools:
+        nice = ", ".join(t.replace("_tool", "").replace("search_", "") for t in failed_tools)
+        parts.append(f"Tool call failed and did not update plan: {nice}.")
+
+    bs = state.get("budget_summary") or {}
+    if bs:
+        total = bs.get("total")
+        budget = bs.get("budget")
+        within = "within budget" if bs.get("within_budget") else "OVER budget"
+        try:
+            parts.append(f"New total: {cur} {float(total):.0f} / {cur} {float(budget):.0f} — {within}.")
+        except (TypeError, ValueError):
+            pass
+
+    if date_override:
+        parts.append(
+            "Note: your trip dates remain as originally planned. Date customization "
+            "is not yet persisted — to change dates, please re-plan from the start."
+        )
+
+    if not parts:
+        parts.append("Plan unchanged.")
+
+    return " ".join(parts)
+
 
 def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
     """Scan the message history and apply tool results to state.
@@ -544,4 +643,26 @@ def refine_plan(
     else:
         logger.info("refine_plan: no state changes (supervisor answered without calling tools)")
 
-    return state, reply
+    # ── Groundedness: if any tool was invoked, replace the LLM reply
+    #    with a deterministic summary built from final state + final
+    #    budget_summary. This prevents the LLM from claiming changes that
+    #    didn't land (e.g. flight search timeout) or inventing budget
+    #    numbers. Pure conversational turns (no tool calls) keep the
+    #    natural LLM reply.
+    tool_call_count = _count_tool_messages(messages)
+    failed_tools: list[str] = []
+    if tool_call_count > 0:
+        failed_tools = _collect_failed_tools(messages)
+        date_override = _detect_date_override(messages, state)
+        reply = _build_deterministic_summary(state, updated_fields, failed_tools, date_override)
+        logger.info("refine_plan: deterministic reply used (tool_calls=%d, failed=%d, date_override=%s)",
+                    tool_call_count, len(failed_tools), date_override)
+
+    # Return a small trace dict alongside (state, reply) so transport
+    # layer can surface debug traces without re-scanning messages.
+    trace = {
+        "failed_tools": failed_tools,
+        "updated_fields": list(updated_fields.keys()),
+        "tool_call_count": tool_call_count,
+    }
+    return state, reply, trace

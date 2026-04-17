@@ -175,6 +175,75 @@ async def plan(payload: dict):
 
 MAX_WS_MESSAGE_SIZE = 16 * 1024  # 16KB max per ws message
 
+
+def _build_trace_events(
+    before_state: dict | None,
+    after_state: dict,
+    failed_tools: list[str] | None = None,
+    updated_fields: list[str] | None = None,
+) -> list[dict]:
+    """Derive trace events from state before/after a handler run.
+
+    Emits three event kinds per reviewer Round 026 Step 1 scope:
+      - state_apply  (one per changed list field — by content, not just count)
+      - tool_fail    (one per failed Lane-2 tool call)
+      - budget_final (once, from final budget_summary)
+
+    state_apply detection: Lane 2 callers pass an explicit `updated_fields`
+    list from `_apply_tool_updates`, which is the authoritative signal
+    that a tool wrote to that field (even if counts match, e.g. 3 hotels
+    replaced by 3 different hotels). Lane 1 callers pass None, in which
+    case we fall back to a JSON content diff (every agent run rewrites
+    state fresh, so this catches real content changes).
+    """
+    events: list[dict] = []
+    before = before_state or {}
+
+    for field in ("tickets", "transport", "hotel", "itinerary", "tour"):
+        b = before.get(field) or []
+        a = after_state.get(field) or []
+
+        if updated_fields is not None:
+            # Lane 2: trust the refine closure's report
+            changed = field in updated_fields
+        else:
+            # Lane 1 (or unknown): content-aware diff
+            try:
+                changed = json.dumps(a, sort_keys=True, ensure_ascii=False) \
+                       != json.dumps(b, sort_keys=True, ensure_ascii=False)
+            except (TypeError, ValueError):
+                changed = len(a) != len(b)
+
+        if changed:
+            events.append({
+                "event": "state_apply",
+                "field": field,
+                "before_count": len(b),
+                "after_count": len(a),
+            })
+
+    for name in (failed_tools or []):
+        events.append({"event": "tool_fail", "tool": name})
+
+    bs = after_state.get("budget_summary") or {}
+    if bs:
+        events.append({
+            "event": "budget_final",
+            "total": bs.get("total"),
+            "budget": bs.get("budget"),
+            "currency": bs.get("currency"),
+            "within_budget": bs.get("within_budget"),
+        })
+
+    return events
+
+
+async def _send_trace(ws: WebSocket, events: list[dict], enabled: bool) -> None:
+    if not enabled or not events:
+        return
+    for ev in events:
+        await ws.send_json({"type": "trace", "data": ev})
+
 @app.websocket("/ws")
 async def websocket_session(ws: WebSocket):
     """WebSocket endpoint with session state and two-lane routing.
@@ -248,6 +317,12 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
     """
     logger.info("/ws plan: %s", data.get("gp_name", "?"))
 
+    # Debug opt-in: once set on a plan call, it stays on for subsequent
+    # chats in the same session. Reviewer Round 026 picked plan-envelope
+    # flag over ws query string.
+    if data.get("debug") is True or data.get("_debug") is True:
+        session["debug"] = True
+
     try:
         req = _validate_plan_payload(data)
     except ValueError as e:
@@ -259,6 +334,7 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
         "data": {"agent": "concierge", "text": "Starting your trip plan..."},
     })
 
+    before = session.get("plan_state") or {}
     result = await asyncio.to_thread(plan_trip, req.model_dump())
 
     for msg in result.get("messages", []):
@@ -269,6 +345,12 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
     clear_history(session)
 
     await ws.send_json({"type": "result", "data": _state_snapshot(result)})
+
+    # Minimal trace (Step 1): state_apply + budget_final. Lane 1 doesn't
+    # expose per-tool failures so tool_fail stays empty here.
+    trace = _build_trace_events(before, result, failed_tools=[])
+    await _send_trace(ws, trace, session.get("debug", False))
+
     await ws.send_json({"type": "done"})
 
 
@@ -285,8 +367,14 @@ async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
     plan_state = session.get("plan_state", {})
     history = get_history(session)
 
-    # Run Lane 2 with history
-    updated_state, reply = await asyncio.to_thread(
+    # Snapshot state for trace diff; refine_plan mutates plan_state
+    # in place but returns the same object, so the shallow before-copy
+    # would see post-mutation values. Keep a pre-mutation field-count
+    # snapshot instead of deep-copying the whole state.
+    before_snapshot = {f: list(plan_state.get(f) or []) for f in ("tickets", "transport", "hotel", "itinerary", "tour")}
+
+    # Run Lane 2 with history. Returns (state, reply, trace_context).
+    updated_state, reply, trace_ctx = await asyncio.to_thread(
         refine_plan, plan_state, user_message, history,
     )
 
@@ -297,6 +385,18 @@ async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
 
     await ws.send_json({"type": "reply", "data": reply})
     await ws.send_json({"type": "result", "data": _state_snapshot(updated_state)})
+
+    # Minimal trace for Lane 2 — updated_fields from refine trace_ctx is
+    # authoritative (tool actually wrote), which also covers the
+    # "3 hotels → 3 different hotels" case that pure count diff misses.
+    trace = _build_trace_events(
+        before_snapshot,
+        updated_state,
+        failed_tools=trace_ctx.get("failed_tools") or [],
+        updated_fields=trace_ctx.get("updated_fields") or [],
+    )
+    await _send_trace(ws, trace, session.get("debug", False))
+
     await ws.send_json({"type": "done"})
 
 
