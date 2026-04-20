@@ -21,7 +21,7 @@ The design below is the shipped version. Earlier drafts underestimated the cross
 |---|-----------|-----|
 | 1 | **Front-load validation** at API boundary — agents see only empty or valid dates | Prevents deep-stack ValueErrors from crashing Lane 1 or WS sessions |
 | 2 | **No silent fallback** on explicit invalid input | User expects their input to be respected; silent fallback produces plausible-but-wrong plans |
-| 3 | **Hard check + soft warning** layering | Hard-block only format/ordering errors; allow legitimate non-typical trips (Saturday arrival, day-trip, long stay) with soft hints |
+| 3 | **Hard check + soft warning** layering | Hard-block only format/ordering errors and day-trips (same-day depart and return, rejected until a first-class day-trip mode exists); allow other non-typical trips such as Saturday arrival or long stays with soft warnings |
 | 4 | **Display layer never crashes** | `_format_state` and similar present-layer code must degrade on unexpected state rather than raise |
 | 5 | **Card currency: plan A** — cards show source currency, summary/reply shows selected currency | Smallest change footprint, easiest to debug, doesn't pollute raw data |
 | 6 | **Copy-on-write state mutation** in refine | Half-updated state on exception must not persist in session |
@@ -77,7 +77,8 @@ Rationale: auto-conversion introduces a whole class of edge cases (rate precisio
 **Hard check (blocks submission):**
 - Both dates must be set (if either is set, both required)
 - ISO format `YYYY-MM-DD`
-- `depart_date ≤ return_date`
+- `depart_date < return_date` (strictly less; same-day day-trips rejected)
+- Trip length ≤ 30 nights
 
 **Soft warnings (non-blocking):**
 - `depart_date > gp_date` → "You'll arrive after the race starts"

@@ -66,7 +66,7 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` on the `messag
 |---|---|
 | Orchestration | **LangGraph** (state machine + parallel fan-out + conditional edges) |
 | LLM | **Pluggable** — OpenAI (default) or Anthropic, switchable via `LLM_PROVIDER` env var. Also supports any OpenAI-compatible proxy via `OPENAI_BASE_URL`. |
-| Backend | **Python 3.12+** + **FastAPI** + **Uvicorn** |
+| Backend | **Python 3.12** (the version tested in CI; 3.13+ works but emits a Pydantic V1 deprecation warning from LangChain — not blocking) + **FastAPI** + **Uvicorn** |
 | Streaming | **WebSocket** (`/ws`) for real-time agent status |
 | Frontend | React prototype (`frontend/prototype.jsx`) → Next.js (planned) |
 
@@ -341,17 +341,43 @@ Bump verbosity with `LOG_LEVEL=DEBUG` in your `.env` (or `export`) to see LLM in
 
 ---
 
-## Agents at a Glance
+## Components at a Glance
 
-| Agent | Input | Output | Mock or LLM? |
+The word "agent" is used loosely in the AI community, so here's the honest breakdown of what each component actually does. Only the Lane 2 supervisor is an agent in the strict sense — it picks its own next action, decides which tool to call, and reacts to tool output. Everything else in Lane 1 is a workflow node running on a fixed graph edge.
+
+### Lane 1 — workflow nodes (fixed DAG)
+
+Each node runs in a predetermined position in the LangGraph pipeline. There is no self-directed planning; the graph decides the order.
+
+| Node | Input | Output | Data source |
 |---|---|---|---|
 | `parse_input` | user form | normalized state | deterministic |
 | `ticket_agent` | gp, date, pref, budget | 3 grandstand options | **Firecrawl + LLM extraction** → LLM estimate → mock |
 | `transport_agent` | origin, city, date, stops | flights + local | **SerpAPI google_flights** → LLM estimate → mock |
 | `hotel_agent` | city, dates, budget left | 2–3 stays | **SerpAPI google_hotels + maps** → LLM estimate → mock |
-| `itinerary_agent` | all prior + special requests | day-by-day lines | **LLM** (OpenAI / Anthropic) → mock |
-| `tour_agent` | city, days, special requests | sights + food | **LLM** (OpenAI / Anthropic) → mock |
+| `itinerary_agent` | all prior + special requests | day-by-day lines | **LLM** (OpenAI / Anthropic, single structured call) → generic mock |
+| `tour_agent` | city, days, special requests | sights + food | **LLM** (OpenAI / Anthropic, single structured call) → generic mock |
 | `budget_agent` | all outputs | cost breakdown + over/under | deterministic |
+
+The three "tool-backed" nodes (`ticket_agent`, `transport_agent`, `hotel_agent`) wrap the tools layer with a three-tier fallback (real API → LLM estimate → mock). The two "LLM workflow" nodes (`itinerary_agent`, `tour_agent`) make a single structured-output call to an LLM and fall back to a generic mock. The source folder is still `backend/agents/` because the names are entrenched in the LangGraph wiring; renaming is deferred until it buys more than it costs.
+
+### Lane 2 — supervisor agent
+
+| Component | Input | Output | Data source |
+|---|---|---|---|
+| `refine.refine_plan` | existing plan state + user chat | updated plan state + short grounded reply | ReAct agent (LangGraph) with dynamic tool selection |
+
+The supervisor is a real agent: it reads the conversation, chooses whether and which of the search tools to invoke, reasons over tool output, and decides when to stop. Replies are post-processed into a deterministic summary of what actually persisted, so the agent can never silently invent budget numbers.
+
+### Tools / providers (shared layer)
+
+| Tool | Backed by | Used by |
+|---|---|---|
+| `search_flights` | SerpAPI Google Flights + Google Search (parallel) | `transport_agent`, supervisor |
+| `search_hotels` | SerpAPI Google Hotels + Google Maps (parallel) | `hotel_agent`, supervisor |
+| `search_tickets` | Firecrawl + SerpAPI Google Search + LLM extraction | `ticket_agent`, supervisor |
+| `search_web` | Tavily / DuckDuckGo (provider adapter; currently stubbed) | future: tour_agent, supervisor |
+| `recompute_budget` | pure function over state | `budget_agent`, supervisor |
 
 ---
 

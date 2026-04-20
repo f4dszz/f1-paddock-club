@@ -16,7 +16,7 @@ First tagged release. Captures everything shipped from the initial multi-agent d
 ### Added
 
 #### Planning and refinement
-- **Currency selector** on the planning form with three choices — EUR, USD, CNY. The choice flows through the budget calculation, supervisor replies, and result cards, so the whole session speaks one currency.
+- **Currency selector** on the planning form with three choices — EUR, USD, CNY. The selected currency drives the budget breakdown, the estimated total, and supervisor replies. Individual result cards keep the source currency returned by each provider (e.g. a flight quoted in USD stays labeled USD), which preserves traceability to the external booking source.
 - **Editable depart / return date pickers**. Users can pick any valid arrival and departure date; the old "extra days after race" slider has been removed. Client-side validation blocks impossible input (depart on/after return, >30 nights, bad format) and warns about unusual choices (arriving after the race, leaving before it).
 - **Grounded refine replies**. After any chat action that runs a tool, the reply is built deterministically from the final saved plan and budget — never from the language model's self-report. Users no longer see claims like "new total USD 349" when the real budget is 2441.
 - **Debug mode** (`?debug=1` URL flag). Enables a copy-able trace panel that receives backend events (`state_apply`, `tool_fail`, `budget_final`) so developers can see exactly what happened during a planning or refine run.

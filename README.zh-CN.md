@@ -68,7 +68,7 @@
 |---|---|
 | 编排 | **LangGraph**（状态机 + 并行扇出 + 条件边） |
 | 大模型 | **可插拔** —— 默认 OpenAI，也可切到 Anthropic，通过 `LLM_PROVIDER` 环境变量切换。同时支持任意 OpenAI 兼容代理（设置 `OPENAI_BASE_URL`） |
-| 后端 | **Python 3.12+** + **FastAPI** + **Uvicorn** |
+| 后端 | **Python 3.12**（CI 测试的版本；3.13+ 也能跑，但 LangChain 会报 Pydantic V1 弃用警告，不阻塞） + **FastAPI** + **Uvicorn** |
 | 流式推送 | **WebSocket**（`/ws`），把每个智能体的状态实时推给前端 |
 | 前端 | React 原型（`frontend/prototype.jsx`），后续迁移到 Next.js |
 
@@ -344,17 +344,43 @@ tail -f backend/logs/backend_$(date +%F).log   # 实时跟踪今天的日志
 
 ---
 
-## 各智能体一览
+## 架构组件一览
 
-| 智能体 | 输入 | 输出 | Mock 还是大模型？ |
+"Agent" 这个词在业界用得很宽泛，这里先说清楚每个组件究竟做什么。严格意义上的 agent 只有 Lane 2 的 supervisor —— 它自己决定下一步做什么、调哪个工具、怎么根据工具返回继续推理。Lane 1 的其他组件都是跑在固定图边上的 workflow node，不是 agent。
+
+### Lane 1 —— Workflow nodes（固定 DAG）
+
+每个节点按 LangGraph 预先定义的顺序执行，没有自主规划，图决定调用顺序。
+
+| 节点 | 输入 | 输出 | 数据来源 |
 |---|---|---|---|
 | `parse_input` | 用户表单 | 标准化的 state | 纯逻辑 |
 | `ticket_agent` | 比赛、日期、偏好、预算 | 3 个看台票方案 | **Firecrawl + LLM 提取** → LLM 估算 → mock |
 | `transport_agent` | 出发地、城市、日期、中转 | 机票 + 当地交通 | **SerpAPI google_flights** → LLM 估算 → mock |
 | `hotel_agent` | 城市、日期、剩余预算 | 2–3 个住宿 | **SerpAPI google_hotels + maps** → LLM 估算 → mock |
-| `itinerary_agent` | 上面所有结果 + 特殊需求 | 按天行程 | **大模型**（OpenAI / Anthropic）→ mock |
-| `tour_agent` | 城市、天数、特殊需求 | 景点 + 美食 | **大模型**（OpenAI / Anthropic）→ mock |
+| `itinerary_agent` | 前序全部结果 + 特殊需求 | 按天行程 | **大模型**（OpenAI / Anthropic，单次 structured 调用）→ 通用 mock |
+| `tour_agent` | 城市、天数、特殊需求 | 景点 + 美食 | **大模型**（OpenAI / Anthropic，单次 structured 调用）→ 通用 mock |
 | `budget_agent` | 全部输出 | 费用明细 + 是否超预算 | 纯逻辑 |
+
+其中 `ticket_agent` / `transport_agent` / `hotel_agent` 是 tool-backed workflow node —— 对工具层做了三层降级（真实 API → LLM 估算 → mock）。`itinerary_agent` / `tour_agent` 是 LLM workflow node —— 单次 structured-output 调用后失败则退 generic mock。代码目录沿用 `backend/agents/` 是因为旧名字已经嵌入 LangGraph 接线，批量 rename 的成本 > 收益，暂不动。
+
+### Lane 2 —— Supervisor agent
+
+| 组件 | 输入 | 输出 | 数据来源 |
+|---|---|---|---|
+| `refine.refine_plan` | 现有 plan state + 用户聊天 | 更新后的 plan state + 简短 grounded 回复 | ReAct agent（LangGraph），动态选择工具 |
+
+Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索工具、调哪一个、参数是什么，再根据工具返回继续推理并决定何时停止。回复经过 deterministic 改写，基于最终持久化的 state 生成，所以不会出现"文案说改了但实际没改"的情况。
+
+### Tools / providers（共享工具层）
+
+| 工具 | 底层 | 被谁调用 |
+|---|---|---|
+| `search_flights` | SerpAPI Google Flights + Google Search（并行） | `transport_agent`、supervisor |
+| `search_hotels` | SerpAPI Google Hotels + Google Maps（并行） | `hotel_agent`、supervisor |
+| `search_tickets` | Firecrawl + SerpAPI Google Search + LLM 提取 | `ticket_agent`、supervisor |
+| `search_web` | Tavily / DuckDuckGo（provider adapter，当前为桩） | 未来：tour_agent、supervisor |
+| `recompute_budget` | 纯函数，作用于 state | `budget_agent`、supervisor |
 
 ---
 
