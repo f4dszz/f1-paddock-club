@@ -6,8 +6,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-### Added
-- Continuous integration on GitHub Actions (backend compile + frontend build on every push and pull request).
+_Nothing yet. Changes in progress will land here before the next tagged release._
 
 ## [0.3.0] — 2026-04-20
 
@@ -27,6 +26,7 @@ First tagged release. Captures everything shipped from the initial multi-agent d
 - Fallback mocks for transport and itinerary **respect the real trip context** — the user's actual city, dates, and trip length — so when a real API fails the user doesn't see Milan/Monza content for a Baku trip.
 
 #### Operations
+- **Continuous integration** on GitHub Actions — backend compile and frontend build run on every push and pull request, structured so tests / lints / deploy can be added as new steps later without a rewrite.
 - **Dated log files** (`backend/logs/backend_YYYY-MM-DD.log`) replace the single `backend.log`.
 - **Two-terminal dev workflow scripts** under `scripts/` (start backend, start frontend, stop, status) that work under Windows Git Bash.
 - Dev server ports unified to `8001` (backend) and `3000` (frontend with strictPort).
@@ -42,6 +42,7 @@ First tagged release. Captures everything shipped from the initial multi-agent d
 - Refine replies no longer invent or misstate budget numbers or declare changes that didn't persist.
 - `_handle_chat` now uses copy-on-write for the session plan state, so an exception mid-refine can no longer leave the session with a half-updated plan.
 - Invalid input (unsupported currency, non-object payloads, reversed or malformed dates) returns a clean 400 / WebSocket error without closing the socket, so users can correct and retry.
+- `frontend/package-lock.json` refreshed so `npm ci` (which CI uses) resolves cleanly on Linux — the previous lockfile was missing a WASM runtime transitive dep and had a stale root package name that passed `npm install` but failed `npm ci`.
 
 ## [0.2.0]
 
