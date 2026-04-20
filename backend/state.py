@@ -62,7 +62,9 @@ class TravelPlanState(TypedDict):
     budget: float
     currency: str            # "EUR" | "USD" | "CNY" — budget/display currency
     stand_pref: str          # "any" | "ga" | "mid" | "vip"
-    extra_days: int
+    extra_days: int          # legacy; honored only when depart_date/return_date are empty
+    depart_date: str         # ISO YYYY-MM-DD; when set with return_date, takes priority over extra_days
+    return_date: str         # ISO YYYY-MM-DD
     stops: str               # multi-stop route description
     special_requests: str
 

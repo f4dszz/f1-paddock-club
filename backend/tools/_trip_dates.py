@@ -1,14 +1,29 @@
-"""Pure-function trip date computation.
+"""Pure-function trip date computation and validation.
 
-Given a GP race date and extra_days, computes all date boundaries
-needed by flight search, hotel search, and budget calculation.
+Computes arrival / departure / hotel check-in / check-out / nights
+from the GP race date plus either an `extra_days` slider or explicit
+user-supplied `depart_date` / `return_date`.
 
-F1 race weekends run: Friday (FP1/FP2), Saturday (FP3/Qual), Sunday (Race).
+F1 race weekends run Friday (FP1/FP2), Saturday (FP3/Qual), Sunday (Race).
 The race date (gp_date) is always the Sunday.
 
-Design: a single pure function returns a dict with all dates. Both
-Lane 1 agents and Lane 2 supervisor consume the same output, ensuring
-consistency. No external dependencies.
+Two input modes — both shape the same output dict, so downstream
+callers (Lane 1 agents, Lane 2 supervisor, budget recomputation)
+don't care which mode the user picked:
+
+1. Legacy: `gp_date` + `extra_days` → arrival is the Friday of the race
+   weekend, departure is `extra_days + 1` days after the race.
+2. Explicit: `gp_date` + `depart_date` + `return_date` → arrival and
+   departure taken directly from the user. This is what the editable
+   date picker sends.
+
+`validate_trip_dates` is the hard gate used at the API boundary so
+invalid explicit dates never reach the graph — they get rejected
+with a clean 400 / WS error instead of silently falling back.
+
+`trip_nights` is the single-source helper every caller should use
+when they need "how many nights is this trip" — avoids the old
+`3 + extra_days` formula scattered across agents and recompute.
 """
 
 from __future__ import annotations
@@ -16,63 +31,130 @@ from datetime import date, timedelta
 
 from ._date_util import normalize_date
 
+_MAX_REASONABLE_NIGHTS = 30  # sanity limit; soft UI warning kicks in earlier
 
-def compute_trip_dates(gp_date: str, extra_days: int = 0) -> dict:
-    """Compute all trip date boundaries from GP race date + extra days.
 
-    Args:
-        gp_date: Race day (Sunday) in any parseable format.
-        extra_days: Number of days to stay after the race.
+def validate_trip_dates(
+    gp_date: str,
+    depart_date: str = "",
+    return_date: str = "",
+) -> tuple[bool, str]:
+    """Hard validation for user-supplied travel dates.
+
+    Contract:
+    - Both empty → OK (caller falls back to `extra_days` mode).
+    - Exactly one empty → invalid (partial input is an error).
+    - Both set → format must parse as YYYY-MM-DD AND depart <= return.
+
+    Soft warnings (arriving after race, staying >14 days) are a UI
+    concern, not an API concern; they don't surface here.
 
     Returns:
-        Dict with:
-            race_date:      ISO str — the race Sunday
-            outbound_date:  ISO str — arrival day (Friday of race week)
-            return_date:    ISO str — departure day (day after last extra day)
-            hotel_checkin:  ISO str — same as outbound_date
-            hotel_checkout: ISO str — same as return_date
-            trip_nights:    int — total nights (outbound to return)
-
-    Example:
-        >>> compute_trip_dates("Sep 6", extra_days=2)
-        {
-            'race_date': '2026-09-06',
-            'outbound_date': '2026-09-04',   # Friday
-            'return_date': '2026-09-09',     # Wednesday
-            'hotel_checkin': '2026-09-04',
-            'hotel_checkout': '2026-09-09',
-            'trip_nights': 5,
-        }
+        (True, "")         — input is acceptable, proceed
+        (False, reason)    — input is explicitly invalid, abort
     """
-    iso = normalize_date(gp_date)
+    d = (depart_date or "").strip()
+    r = (return_date or "").strip()
+
+    if not d and not r:
+        return True, ""
+
+    if not d or not r:
+        return False, "depart_date and return_date must both be set (or both empty)"
+
     try:
-        race = date.fromisoformat(iso)
+        d_dt = date.fromisoformat(d)
+        r_dt = date.fromisoformat(r)
+    except ValueError:
+        return False, "dates must be in YYYY-MM-DD format"
+
+    if d_dt > r_dt:
+        return False, "depart_date must be on or before return_date"
+
+    if (r_dt - d_dt).days > _MAX_REASONABLE_NIGHTS:
+        return False, f"trip cannot exceed {_MAX_REASONABLE_NIGHTS} nights"
+
+    return True, ""
+
+
+def compute_trip_dates(
+    gp_date: str,
+    extra_days: int = 0,
+    depart_date: str = "",
+    return_date: str = "",
+) -> dict:
+    """Compute trip date boundaries.
+
+    Priority:
+    1. If both `depart_date` and `return_date` are provided and parse
+       cleanly, use them directly. Validation should already have run
+       at the API boundary; this function trusts its inputs but still
+       fails open (returns the legacy shape) on parse errors so display
+       paths never crash.
+    2. Otherwise compute the legacy "Friday → race Sunday + extra_days"
+       shape from `gp_date` + `extra_days`.
+
+    Returns:
+        Dict with race_date, outbound_date, return_date, hotel_checkin,
+        hotel_checkout, trip_nights. All ISO strings except trip_nights
+        (int).
+    """
+    iso_race = normalize_date(gp_date)
+    try:
+        race = date.fromisoformat(iso_race)
     except (ValueError, TypeError):
-        # Can't parse — return safe defaults so callers don't crash
-        return {
-            "race_date": iso,
-            "outbound_date": iso,
-            "return_date": iso,
-            "hotel_checkin": iso,
-            "hotel_checkout": iso,
-            "trip_nights": 3 + max(extra_days, 0),
-        }
+        # gp_date itself is unparseable — return a safe skeleton
+        return _legacy_shape(iso_race, iso_race, iso_race, 3 + max(int(extra_days or 0), 0))
 
+    # Explicit-date mode
+    if depart_date and return_date:
+        try:
+            outbound = date.fromisoformat(depart_date)
+            return_day = date.fromisoformat(return_date)
+            nights = (return_day - outbound).days
+            return _legacy_shape(race.isoformat(), outbound.isoformat(),
+                                  return_day.isoformat(), max(nights, 0))
+        except ValueError:
+            # Shouldn't happen if validate_trip_dates ran, but fail open
+            pass
+
+    # Legacy mode
     extra = max(int(extra_days or 0), 0)
-
-    # Friday of race weekend = race Sunday - 2
     outbound = race - timedelta(days=2)
-    # Depart the day after the last extra day
-    # race (Sun) + extra_days + 1
     return_day = race + timedelta(days=extra + 1)
-
     nights = (return_day - outbound).days
 
+    return _legacy_shape(race.isoformat(), outbound.isoformat(),
+                          return_day.isoformat(), nights)
+
+
+def _legacy_shape(race: str, outbound: str, return_day: str, nights: int) -> dict:
     return {
-        "race_date": race.isoformat(),
-        "outbound_date": outbound.isoformat(),
-        "return_date": return_day.isoformat(),
-        "hotel_checkin": outbound.isoformat(),
-        "hotel_checkout": return_day.isoformat(),
+        "race_date": race,
+        "outbound_date": outbound,
+        "return_date": return_day,
+        "hotel_checkin": outbound,
+        "hotel_checkout": return_day,
         "trip_nights": nights,
     }
+
+
+def trip_nights(state: dict) -> int:
+    """Single source of truth for "how many nights is this trip".
+
+    Replaces the `3 + extra_days` formula that used to live in several
+    places (agents/__init__.py, recompute.py). Respects explicit
+    depart/return dates when present.
+    """
+    dates = compute_trip_dates(
+        state.get("gp_date", ""),
+        state.get("extra_days", 0),
+        state.get("depart_date", "") or "",
+        state.get("return_date", "") or "",
+    )
+    nights = dates.get("trip_nights")
+    if isinstance(nights, int) and nights > 0:
+        return nights
+    # Defensive floor — agents that pre-compute items-per-night
+    # shouldn't crash on zero even if the input was degenerate.
+    return 1

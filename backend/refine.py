@@ -150,10 +150,13 @@ def _build_tools(state: dict) -> list:
     Each tool auto-fills missing parameters from state, so the
     supervisor never needs to re-specify known trip info.
     """
-    # Pre-compute dates once for all tools
+    # Pre-compute dates once for all tools. Honor explicit user-set
+    # depart/return when present; otherwise fall back to extra_days.
     dates = compute_trip_dates(
         state.get("gp_date", ""),
         state.get("extra_days", 0),
+        state.get("depart_date", "") or "",
+        state.get("return_date", "") or "",
     )
 
     # State defaults — what the tools fall back to
@@ -330,10 +333,21 @@ def _collect_failed_tools(messages: list) -> list[str]:
 
 def _detect_date_override(messages: list, state: dict) -> bool:
     """True if the supervisor called any tool with explicit date args
-    that differ from the plan's defaults. Until Phase 2 persists
-    depart/return dates, such overrides are transient searches only."""
+    that differ from the plan's saved dates.
+
+    We compute the plan's canonical dates via compute_trip_dates using
+    all four inputs (gp_date, extra_days, depart_date, return_date) so
+    that when the user HAS set explicit trip dates, a tool call using
+    those same dates is NOT flagged as an override. Only genuine
+    out-of-band dates trigger the "date search not persisted" note.
+    """
     try:
-        default = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+        default = compute_trip_dates(
+            state.get("gp_date", ""),
+            state.get("extra_days", 0),
+            state.get("depart_date", "") or "",
+            state.get("return_date", "") or "",
+        )
     except Exception:
         return False
     default_values = {default.get("hotel_checkin"), default.get("hotel_checkout"),
@@ -383,9 +397,14 @@ def _build_deterministic_summary(
             pass
 
     if date_override:
+        # Plan-time trip dates ARE now persisted (Phase 2); the thing
+        # that's not persisted is a chat-time date change. Make the
+        # note accurate about what the user just did: we ran a preview
+        # search against other dates, but their saved plan is untouched.
         parts.append(
-            "Note: your trip dates remain as originally planned. Date customization "
-            "is not yet persisted — to change dates, please re-plan from the start."
+            "Note: those were preview searches against alternate dates — "
+            "your saved trip dates didn't change. To change the trip dates "
+            "themselves, re-plan with the new dates selected on the form."
         )
 
     if not parts:
@@ -479,8 +498,14 @@ def _format_state_impl(state: dict) -> str:
         return "\n".join(lines)
 
     # Pre-compute trip dates for display — degrade on parse failure
+    explicit_dates = bool(state.get("depart_date") and state.get("return_date"))
     try:
-        dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+        dates = compute_trip_dates(
+            state.get("gp_date", ""),
+            state.get("extra_days", 0),
+            state.get("depart_date", "") or "",
+            state.get("return_date", "") or "",
+        )
     except Exception:
         dates = {"outbound_date": "?", "return_date": "?",
                  "hotel_checkin": "?", "hotel_checkout": "?", "trip_nights": "?"}
@@ -489,8 +514,13 @@ def _format_state_impl(state: dict) -> str:
     lines.append(f"GP: {state.get('gp_name', '?')} in {state.get('gp_city', '?')} ({state.get('gp_date', '?')})")
     lines.append(f"Origin: {state.get('origin', '?')}")
     lines.append(f"Budget: {cur} {state.get('budget', '?')}")
-    lines.append(f"Extra days: {state.get('extra_days', 0)}")
-    lines.append(f"Trip: {dates['outbound_date']} to {dates['return_date']} ({dates['trip_nights']} nights)")
+    # Show the date driver explicitly so the supervisor knows what it can
+    # safely change. In explicit mode, extra_days is irrelevant noise.
+    if explicit_dates:
+        lines.append(f"Travel dates: user-set (depart {state['depart_date']}, return {state['return_date']})")
+    else:
+        lines.append(f"Extra days after race: {state.get('extra_days', 0)} (legacy; travel dates derived)")
+    lines.append(f"Trip: {dates['outbound_date']} → {dates['return_date']} ({dates['trip_nights']} nights)")
     if state.get("special_requests"):
         lines.append(f"Special requests: {state['special_requests']}")
 

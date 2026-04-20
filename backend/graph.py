@@ -134,6 +134,11 @@ def plan_trip(user_input: dict) -> dict:
         "currency": user_input.get("currency", "EUR"),
         "stand_pref": user_input.get("stand_pref", "any"),
         "extra_days": int(user_input.get("extra_days", 2)),
+        # Explicit user-editable trip dates. Empty-string default keeps
+        # the legacy `extra_days` mode working; when both are provided
+        # they take priority via compute_trip_dates.
+        "depart_date": user_input.get("depart_date", "") or "",
+        "return_date": user_input.get("return_date", "") or "",
         "stops": user_input.get("stops", ""),
         "special_requests": user_input.get("special_requests", ""),
         # Agent outputs (empty, will be filled)

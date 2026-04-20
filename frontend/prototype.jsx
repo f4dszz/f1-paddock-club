@@ -160,6 +160,42 @@ function SingleThinkStream({lines,color,onDone}){
 // Currency symbol lookup (for cards which show source currency per plan A)
 const CUR_SYMBOL={EUR:"€",USD:"$",CNY:"¥"};
 
+// ── Trip-date helpers ─────────────────────────────────────────────
+// Default "suggested" dates when the user first picks a GP: arrive
+// Friday of the race weekend, leave 3 days after race Sunday.
+// Users can edit both freely — these are just sensible defaults.
+function defaultTripDates(raceDate){
+  if(!raceDate) return { depart:"", ret:"" };
+  const rd=new Date(raceDate+"T00:00:00");
+  const dep=new Date(rd); dep.setDate(rd.getDate()-2);
+  const ret=new Date(rd); ret.setDate(rd.getDate()+3);
+  return { depart:dep.toISOString().slice(0,10), ret:ret.toISOString().slice(0,10) };
+}
+
+// Client-side validation mirroring backend validate_trip_dates.
+// Returns { valid, error, warnings[] }. `error` blocks submit;
+// `warnings` are informational and don't stop the user.
+function validateTripDates(depart, returnDate, raceDate){
+  const warnings=[];
+  if(!depart && !returnDate) return { valid:true, error:"", warnings };
+  if(!depart || !returnDate) return { valid:false, error:"Please set both depart and return dates.", warnings };
+  const iso=/^\d{4}-\d{2}-\d{2}$/;
+  if(!iso.test(depart) || !iso.test(returnDate)) return { valid:false, error:"Dates must be YYYY-MM-DD.", warnings };
+  const d=new Date(depart+"T00:00:00");
+  const r=new Date(returnDate+"T00:00:00");
+  if(isNaN(d) || isNaN(r)) return { valid:false, error:"One of the dates is invalid.", warnings };
+  if(d>r) return { valid:false, error:"Depart date must be on or before return date.", warnings };
+  const nights=Math.round((r-d)/(1000*60*60*24));
+  if(nights>30) return { valid:false, error:"Trip longer than 30 nights.", warnings };
+  if(raceDate){
+    const rc=new Date(raceDate+"T00:00:00");
+    if(d>rc) warnings.push("You arrive after race day — you'll miss the Grand Prix.");
+    if(r<rc) warnings.push("You leave before race day — you won't see the race.");
+  }
+  if(nights>14) warnings.push(`Trip is ${nights} nights — that's a long F1 weekend.`);
+  return { valid:true, error:"", warnings };
+}
+
 function ResultCard({zoneKey,selections,onSelect,liveResults}){
   const z=ZONES.find(z=>z.key===zoneKey);
   const data=(liveResults||RESULTS)[zoneKey];
@@ -470,7 +506,8 @@ export default function App(){
       origin: form.origin || "New York",
       budget: +(form.budget || 2500),
       currency: form.currency,
-      extra_days: form.extraDays,
+      depart_date: form.departDate,
+      return_date: form.returnDate,
     });
     cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});setUpdatedCards(new Set());
     prevResultsRef.current=null;
@@ -482,7 +519,12 @@ export default function App(){
       gp_name:gp.gp_name, gp_city:gp.city, gp_date:gp.race_date,
       origin:form.origin||"New York", budget:+(form.budget||2500),
       currency:form.currency||"EUR",
-      stand_pref:form.stand, extra_days:form.extraDays,
+      stand_pref:form.stand,
+      // Trip dates are now the first-class input. extra_days stays
+      // in the payload as a harmless fallback so any backend that
+      // receives an empty-dates legacy payload still computes a trip.
+      depart_date:form.departDate||"", return_date:form.returnDate||"",
+      extra_days:form.extraDays,
       stops:form.stops, special_requests:form.special,
       debug:debugMode,
     }});
@@ -539,13 +581,9 @@ export default function App(){
           return(
             <div key={g.gp_name} onClick={()=>{pushDebug("card.click", { gp:g.gp_name, is_past:g.is_past }); if(!g.is_past){
               setGp({...g,hero,track});setScreen("paddock");setPhase("welcome");
-              // Auto-compute travel dates: arrive Friday of race week, depart day after extra days
-              if(g.race_date){
-                const rd=new Date(g.race_date+"T00:00:00");
-                const dep=new Date(rd); dep.setDate(rd.getDate()-2); // Friday
-                const ret=new Date(rd); ret.setDate(rd.getDate()+1+form.extraDays); // day after race + extra
-                setForm(f=>({...f, departDate:dep.toISOString().slice(0,10), returnDate:ret.toISOString().slice(0,10)}));
-              }
+              // Seed the date pickers with sensible defaults. User can edit before submit.
+              const { depart, ret } = defaultTripDates(g.race_date);
+              setForm(f=>({...f, departDate:depart, returnDate:ret}));
             }}} style={{
               padding:"12px 8px",borderRadius:10,cursor:g.is_past?"not-allowed":"pointer",background:g.is_past?"#0a0a0a":"#111",border:`1px solid ${g.is_past?"#1a1a1a":"#222"}`,
               display:"flex",flexDirection:"column",alignItems:"center",gap:4,transition:"all .2s",
@@ -617,22 +655,36 @@ export default function App(){
                   ))}
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                <div>
-                  <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Suggested depart</label>
-                  <input type="date" value={form.departDate} readOnly
-                    title="Derived automatically from the GP race weekend"
-                    style={{width:"100%",padding:"5px 9px",borderRadius:5,border:"1px solid #222",background:"#0f0f0f",color:"#999",fontSize:10,outline:"none",fontFamily:"inherit",boxSizing:"border-box",colorScheme:"dark",cursor:"default"}}
-                  />
-                </div>
-                <div>
-                  <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Suggested return</label>
-                  <input type="date" value={form.returnDate} readOnly
-                    title="Derived from race day plus extra days"
-                    style={{width:"100%",padding:"5px 9px",borderRadius:5,border:"1px solid #222",background:"#0f0f0f",color:"#999",fontSize:10,outline:"none",fontFamily:"inherit",boxSizing:"border-box",colorScheme:"dark",cursor:"default"}}
-                  />
-                </div>
-              </div>
+              {(() => {
+                const dv = validateTripDates(form.departDate, form.returnDate, gp?.race_date);
+                const errBorder = dv.error ? "#EF4444" : "#222";
+                return (
+                  <>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:dv.error||dv.warnings.length?3:6}}>
+                      <div>
+                        <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Depart date</label>
+                        <input type="date" value={form.departDate} min={gp?.race_date?undefined:undefined}
+                          onChange={e=>setForm({...form,departDate:e.target.value})}
+                          style={{width:"100%",padding:"5px 9px",borderRadius:5,border:`1px solid ${errBorder}`,background:"#0a0a0a",color:"#eee",fontSize:10,outline:"none",fontFamily:"inherit",boxSizing:"border-box",colorScheme:"dark"}}
+                        />
+                      </div>
+                      <div>
+                        <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Return date</label>
+                        <input type="date" value={form.returnDate}
+                          onChange={e=>setForm({...form,returnDate:e.target.value})}
+                          style={{width:"100%",padding:"5px 9px",borderRadius:5,border:`1px solid ${errBorder}`,background:"#0a0a0a",color:"#eee",fontSize:10,outline:"none",fontFamily:"inherit",boxSizing:"border-box",colorScheme:"dark"}}
+                        />
+                      </div>
+                    </div>
+                    {dv.error && <div style={{fontSize:9,color:"#EF4444",marginBottom:6}}>{dv.error}</div>}
+                    {!dv.error && dv.warnings.length>0 && (
+                      <div style={{fontSize:8,color:"#F59E0B",marginBottom:6,lineHeight:1.4}}>
+                        {dv.warnings.map((w,i)=>(<div key={i}>⚠ {w}</div>))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               <div style={{marginBottom:6}}>
                 <label style={{fontSize:8,color:"#555",display:"block",marginBottom:3}}>Grandstand</label>
                 <div style={{display:"flex",gap:3}}>
@@ -640,15 +692,6 @@ export default function App(){
                     <button key={v} onClick={()=>setForm({...form,stand:v})} style={{flex:1,padding:"4px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",border:`1px solid ${form.stand===v?"#E10600":"#222"}`,background:form.stand===v?"#E1060015":"transparent",color:form.stand===v?"#E10600":"#555"}}>{l}</button>
                   ))}
                 </div>
-              </div>
-              <div style={{marginBottom:6}}>
-                <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Extra days after race: {form.extraDays}</label>
-                <input type="range" min="0" max="5" value={form.extraDays} onChange={e=>{
-                  const ed=+e.target.value;
-                  const newForm={...form,extraDays:ed};
-                  if(gp?.race_date){const rd=new Date(gp.race_date+"T00:00:00");const ret=new Date(rd);ret.setDate(rd.getDate()+1+ed);newForm.returnDate=ret.toISOString().slice(0,10);}
-                  setForm(newForm);
-                }} style={{width:"100%",accentColor:"#E10600"}}/>
               </div>
               <div>
                 <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Special requests <span style={{color:"#333"}}>(optional)</span></label>
@@ -661,7 +704,15 @@ export default function App(){
                 Describe any stops, dietary needs, accessibility, or experiences you want. After results, use the chat to refine.
               </div>
             </div>
-            <button onClick={run} style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:"#E10600",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.03em"}}>START PLANNING</button>
+            {(() => {
+              const dv = validateTripDates(form.departDate, form.returnDate, gp?.race_date);
+              const disabled = !dv.valid;
+              return (
+                <button onClick={run} disabled={disabled} style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:disabled?"#333":"#E10600",color:disabled?"#777":"#fff",fontSize:12,fontWeight:700,cursor:disabled?"not-allowed":"pointer",letterSpacing:"0.03em",transition:"all .15s"}}>
+                  {disabled ? "FIX DATES TO CONTINUE" : "START PLANNING"}
+                </button>
+              );
+            })()}
           </div>
         )}
 

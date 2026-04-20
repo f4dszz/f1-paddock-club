@@ -15,7 +15,7 @@ from .search_web import search_web
 from .recompute import recompute_budget
 from ._cache import clear_cache
 from ._parallel import query_parallel, DegradationReport
-from ._trip_dates import compute_trip_dates
+from ._trip_dates import compute_trip_dates, validate_trip_dates, trip_nights
 from ._currency import to_eur, convert
 from ._race_calendar import (
     get_race, race_date, is_past, days_until,
@@ -32,6 +32,8 @@ __all__ = [
     "query_parallel",
     "DegradationReport",
     "compute_trip_dates",
+    "validate_trip_dates",
+    "trip_nights",
     "to_eur",
     "convert",
     "get_race",

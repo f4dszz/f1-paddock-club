@@ -22,6 +22,7 @@ WebSocket message protocol:
 
 from __future__ import annotations
 import asyncio
+import copy
 import json
 import logging
 
@@ -36,6 +37,7 @@ from graph import plan_trip
 from refine import refine_plan
 from _session import create_session, append_turn, clear_history, get_history
 from tools._race_calendar import all_races, upcoming_races, is_past
+from tools._trip_dates import validate_trip_dates
 
 
 logger = logging.getLogger(__name__)
@@ -71,9 +73,11 @@ class TripRequest(BaseModel):
     gp_date: str = "Sep 6"
     origin: str = "New York"
     budget: float = 2500
-    currency: str = "EUR"     # "EUR" | "USD" | "CNY"
+    currency: str = "EUR"         # "EUR" | "USD" | "CNY"
     stand_pref: str = "any"
-    extra_days: int = 2
+    extra_days: int = 2           # legacy; ignored when depart_date/return_date are set
+    depart_date: str = ""         # optional explicit travel dates (ISO YYYY-MM-DD)
+    return_date: str = ""
     stops: str = ""
     special_requests: str = ""
 
@@ -98,16 +102,23 @@ def _validate_plan_payload(data) -> TripRequest:
     Raises ValueError(reason) on invalid input. Used by both HTTP and
     WS entry points so they share the same validation contract.
 
-    Non-dict payloads (string, list, null, number) are rejected rather
-    than silently falling back to default values — an explicit bad
-    input deserves an explicit error.
+    Three layers of validation happen here, in order:
+      1. Shape  — reject non-dict payloads outright
+      2. Schema — Pydantic + the currency field_validator
+      3. Travel-date semantics — validate_trip_dates() on the pair
+         (depart_date, return_date). Lets us surface "depart after
+         return" at the API boundary instead of producing a bad plan.
+
+    Non-dict payloads and explicit invalid dates are rejected rather
+    than silently falling back to defaults — explicit bad input
+    deserves an explicit error.
     """
     if not isinstance(data, dict):
         raise ValueError(
             f"plan payload must be a JSON object, got {type(data).__name__}"
         )
     try:
-        return TripRequest(**data)
+        req = TripRequest(**data)
     except ValidationError as e:
         # Surface the first field error in plain text; FastAPI's own
         # error body is noisy and not meant for end-user consumption.
@@ -115,6 +126,12 @@ def _validate_plan_payload(data) -> TripRequest:
         loc = ".".join(str(x) for x in first.get("loc", ()))
         msg = first.get("msg", "invalid input")
         raise ValueError(f"{loc}: {msg}" if loc else msg)
+
+    ok, reason = validate_trip_dates(req.gp_date, req.depart_date, req.return_date)
+    if not ok:
+        raise ValueError(reason)
+
+    return req
 
 
 def _state_snapshot(state: dict) -> dict:
@@ -355,7 +372,15 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
 
 
 async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
-    """Run Lane 2 supervisor with conversation history."""
+    """Run Lane 2 supervisor with conversation history.
+
+    Copy-on-write discipline: `refine_plan` mutates the state dict
+    it receives (the state-aware tool factory + `_apply_tool_updates`
+    write directly onto it). If any step raises mid-mutation, the
+    session must not be left with a half-updated plan. We deep-copy
+    the session plan_state once up front, hand the copy to refine_plan,
+    and only swap it back into the session on success.
+    """
     user_message = data if isinstance(data, str) else str(data)
     logger.info("/ws chat: %s", user_message[:100])
 
@@ -364,31 +389,44 @@ async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
         "data": {"agent": "concierge", "text": "Processing your request..."},
     })
 
-    plan_state = session.get("plan_state", {})
+    original = session.get("plan_state") or {}
     history = get_history(session)
 
-    # Snapshot state for trace diff; refine_plan mutates plan_state
-    # in place but returns the same object, so the shallow before-copy
-    # would see post-mutation values. Keep a pre-mutation field-count
-    # snapshot instead of deep-copying the whole state.
-    before_snapshot = {f: list(plan_state.get(f) or []) for f in ("tickets", "transport", "hotel", "itinerary", "tour")}
+    # Snapshot pre-mutation field lists for the trace diff. Cheap and
+    # taken from the original (not the working copy) so it survives
+    # regardless of what happens inside refine_plan.
+    before_snapshot = {
+        f: list(original.get(f) or [])
+        for f in ("tickets", "transport", "hotel", "itinerary", "tour")
+    }
 
-    # Run Lane 2 with history. Returns (state, reply, trace_context).
-    updated_state, reply, trace_ctx = await asyncio.to_thread(
-        refine_plan, plan_state, user_message, history,
-    )
+    working = copy.deepcopy(original)
+    try:
+        updated_state, reply, trace_ctx = await asyncio.to_thread(
+            refine_plan, working, user_message, history,
+        )
+    except ValueError as e:
+        # Known, user-actionable: surface plainly, keep session intact
+        await ws.send_json({"type": "error", "data": f"Refine failed: {e}"})
+        return
+    except Exception:
+        logger.exception("_handle_chat unexpected error")
+        await ws.send_json({
+            "type": "error",
+            "data": "Internal chat error. Your plan is unchanged — please try again.",
+        })
+        return
 
+    # Only reached on success — commit to session
     session["plan_state"] = updated_state
-
-    # Record this turn in conversation history
     append_turn(session, user_message, reply)
 
     await ws.send_json({"type": "reply", "data": reply})
     await ws.send_json({"type": "result", "data": _state_snapshot(updated_state)})
 
-    # Minimal trace for Lane 2 — updated_fields from refine trace_ctx is
-    # authoritative (tool actually wrote), which also covers the
-    # "3 hotels → 3 different hotels" case that pure count diff misses.
+    # updated_fields from refine trace_ctx is authoritative (tool
+    # actually wrote), which also covers the "3 hotels → 3 different
+    # hotels" case that pure count diff would miss.
     trace = _build_trace_events(
         before_snapshot,
         updated_state,

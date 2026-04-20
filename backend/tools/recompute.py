@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 from ._currency import convert, from_eur
+from ._trip_dates import trip_nights
 
 logger = logging.getLogger(__name__)
 
@@ -104,9 +105,11 @@ def recompute_budget(state: dict[str, Any]) -> dict:
         )
         per_night = _item_price_in(cheapest, target, "price_per_night")
         nights = cheapest.get("nights", 1) or 1
-        trip_days = 3 + int(state.get("extra_days", 0) or 0)
         if nights <= 1:
-            nights = trip_days
+            # Item didn't carry a nights count — use the canonical
+            # trip-length helper so this matches whatever dates the
+            # user picked (explicit depart/return or legacy extra_days).
+            nights = trip_nights(state)
         hotel_cost = per_night * nights
     else:
         hotel_cost = 0.0

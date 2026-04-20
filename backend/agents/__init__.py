@@ -27,9 +27,12 @@ def _msg(agent: str, text: str) -> dict:
     return {"agent": agent, "text": text, "type": "status"}
 
 
-def _trip_days(state: TravelPlanState) -> int:
-    """Standard race weekend (Fri/Sat/Sun) plus any extra days."""
-    return 3 + int(state.get("extra_days", 0) or 0)
+from tools._trip_dates import trip_nights as _trip_days  # noqa: E402
+# `trip_nights(state)` is the single source of truth for how many
+# nights a trip spans. It respects explicit depart_date/return_date
+# when the user set them, and falls back to the legacy
+# "3 weekend days + extra_days" formula otherwise. Keeping the local
+# alias `_trip_days` so the agents read naturally.
 
 
 # ── parse_input ──────────────────────────────────────────────────────
@@ -106,7 +109,12 @@ def transport_agent(state: TravelPlanState) -> dict:
     try:
         from tools.search_flights import search_flights
         from tools._trip_dates import compute_trip_dates
-        dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+        dates = compute_trip_dates(
+            state.get("gp_date", ""),
+            state.get("extra_days", 0),
+            state.get("depart_date", "") or "",
+            state.get("return_date", "") or "",
+        )
         transport, source_summary = search_flights(
             origin=origin, dest=city,
             date=dates["outbound_date"],
@@ -127,7 +135,7 @@ def transport_agent(state: TravelPlanState) -> dict:
 # ── hotel_agent ──────────────────────────────────────────────────────
 def _hotel_mock(state: TravelPlanState, budget_retry: bool = False) -> list[dict]:
     city = state.get("gp_city", "Monza")
-    days = 3 + state.get("extra_days", 2)
+    days = _trip_days(state)
     if budget_retry:
         return [
             {"name": f"Budget Hostel {city}", "price_per_night": 55,
@@ -165,7 +173,12 @@ def hotel_agent(state: TravelPlanState) -> dict:
     try:
         from tools.search_hotels import search_hotels
         from tools._trip_dates import compute_trip_dates
-        dates = compute_trip_dates(state.get("gp_date", ""), state.get("extra_days", 0))
+        dates = compute_trip_dates(
+            state.get("gp_date", ""),
+            state.get("extra_days", 0),
+            state.get("depart_date", "") or "",
+            state.get("return_date", "") or "",
+        )
         max_price = None
         if retry > 0:
             budget_remaining = float(state.get("budget", 2500)) * 0.3
