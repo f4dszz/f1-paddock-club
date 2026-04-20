@@ -1,0 +1,85 @@
+# Continuous integration for the F1 Paddock Club project.
+#
+# Intent:
+#   Every push and pull request must prove that the backend compiles
+#   and the frontend builds. This is the minimum signal before merging
+#   anything. It is deliberately small — it should grow naturally as
+#   we add tests, lints, and deploy steps, without needing a rewrite.
+#
+# Design choices (so future maintainers don't wonder):
+#   - Two jobs (backend / frontend) rather than one, because the
+#     toolchains are completely different (Python vs Node) and they
+#     can run in parallel for faster feedback.
+#   - Caching is on from day one because pip/npm installs dominate
+#     wall time for anything nontrivial.
+#   - Job names are human-readable on purpose — they appear in the
+#     GitHub checks UI for every PR.
+#
+# Where to add things later:
+#   - Tests: new step inside the matching job after its install step
+#     (e.g. `run: pytest backend/tests` once tests exist).
+#   - Lint / type-check: new step, same pattern.
+#   - Deploy: a new job gated with `if: github.ref == 'refs/heads/main'`
+#     and `needs: [backend, frontend]` so it only runs after checks pass.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # One run per branch at a time — cancel superseded runs to save minutes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend — compile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Byte-compile all modules
+        run: python -m compileall -q .
+
+      # Future steps go here: pytest, mypy, ruff. Each should be its
+      # own named step so the PR checks UI surfaces it individually.
+
+  frontend:
+    name: Frontend — build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+
+      # Future steps go here: npm run lint, npm test, bundle-size check.

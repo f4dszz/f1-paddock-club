@@ -184,7 +184,7 @@ function validateTripDates(depart, returnDate, raceDate){
   const d=new Date(depart+"T00:00:00");
   const r=new Date(returnDate+"T00:00:00");
   if(isNaN(d) || isNaN(r)) return { valid:false, error:"One of the dates is invalid.", warnings };
-  if(d>r) return { valid:false, error:"Depart date must be on or before return date.", warnings };
+  if(d>=r) return { valid:false, error:"Depart date must be strictly before return date (day-trips not yet supported).", warnings };
   const nights=Math.round((r-d)/(1000*60*60*24));
   if(nights>30) return { valid:false, error:"Trip longer than 30 nights.", warnings };
   if(raceDate){

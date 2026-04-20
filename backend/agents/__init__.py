@@ -82,17 +82,36 @@ def ticket_agent(state: TravelPlanState) -> dict:
 
 # ── transport_agent ──────────────────────────────────────────────────
 def _transport_mock(state: TravelPlanState) -> list[dict]:
-    origin = state.get("origin", "NYC")
-    city = state.get("gp_city", "Milan")
+    """Fallback transport options — shown when every external tool fails.
+
+    Must reflect the user's actual trip (city, dates) instead of
+    hardcoded Milan/Monza defaults. Fallback is product behavior:
+    when SerpAPI / LLM estimation both error, the user sees these
+    strings, so they have to be truthful.
+    """
+    from tools._trip_dates import compute_trip_dates
+    origin = state.get("origin", "") or "your origin"
+    city = state.get("gp_city", "") or "destination"
+    dates = compute_trip_dates(
+        state.get("gp_date", ""),
+        state.get("extra_days", 0),
+        state.get("depart_date", "") or "",
+        state.get("return_date", "") or "",
+    )
+    out_date = dates.get("outbound_date", "?")
+    ret_date = dates.get("return_date", "?")
     return [
-        {"tag": "OUT", "summary": f"{origin} -> {city} MXP",
-         "detail": "Direct - 8h20m - Sep 4", "price": 485, "currency": "EUR",
+        {"tag": "OUT", "summary": f"{origin} → {city}",
+         "detail": f"Estimated direct route · {out_date}",
+         "price": 485, "currency": "EUR",
          "link": "https://www.google.com/travel/flights"},
-        {"tag": "RET", "summary": f"{city} MXP -> {origin}",
-         "detail": "Direct - 9h45m - Sep 10", "price": 520, "currency": "EUR",
+        {"tag": "RET", "summary": f"{city} → {origin}",
+         "detail": f"Estimated direct route · {ret_date}",
+         "price": 520, "currency": "EUR",
          "link": "https://www.google.com/travel/flights"},
-        {"tag": "LOCAL", "summary": f"{city} <-> Circuit",
-         "detail": "Trenord S7 - 12min", "price": 5, "currency": "EUR",
+        {"tag": "LOCAL", "summary": f"{city} ↔ Circuit",
+         "detail": "Local transit (varies by circuit)",
+         "price": 5, "currency": "EUR",
          "link": ""},
     ]
 
@@ -208,13 +227,53 @@ def hotel_agent(state: TravelPlanState) -> dict:
 
 # ── itinerary_agent ──────────────────────────────────────────────────
 def _itinerary_mock(state: TravelPlanState) -> list[str]:
-    return [
-        "Day 1 (Fri): Arrive + settle in. Evening: explore old town.",
-        "Day 2 (Sat): FP3 + Qualifying. Afternoon: Parco di Monza.",
-        "Day 3 (Sun): Race Day! Arrive early. Post-race track walk.",
-        "Day 4 (Mon): Milan city day — Duomo, Galleria, Last Supper.",
-        "Day 5 (Tue): Lake Como day trip — Bellagio, boat tour.",
-    ]
+    """Fallback itinerary when the LLM is unavailable or fails.
+
+    Respects the user's actual trip length (not fixed at 5 days) and
+    stays generic about the destination (not Milan/Como specific) so
+    a Baku or Las Vegas trip doesn't get Monza tourism advice.
+
+    The caller labels this output as "generic fallback" in the status
+    message so the user knows they're seeing a placeholder rather
+    than a curated itinerary.
+    """
+    city = state.get("gp_city", "") or "the destination"
+    nights = _trip_days(state)
+    # itinerary slots = nights + 1 (the day you arrive counts)
+    days_count = max(nights + 1, 1)
+
+    # Anchor the race day relative to the trip. Convention: the race
+    # Sunday lands in the middle/later part — we take "the Sunday day"
+    # as the one aligned with gp_date when we can compute it, else
+    # put it at day min(3, days_count-1).
+    from tools._trip_dates import compute_trip_dates
+    try:
+        dates = compute_trip_dates(
+            state.get("gp_date", ""),
+            state.get("extra_days", 0),
+            state.get("depart_date", "") or "",
+            state.get("return_date", "") or "",
+        )
+        from datetime import date as _d
+        outbound = _d.fromisoformat(dates["outbound_date"])
+        race = _d.fromisoformat(dates["race_date"])
+        race_day_index = max((race - outbound).days, 0)
+    except Exception:
+        race_day_index = min(2, days_count - 1)
+
+    lines: list[str] = []
+    for i in range(days_count):
+        if i == 0:
+            lines.append(f"Day 1: Arrive in {city}. Settle in and get your bearings near the hotel.")
+        elif i == race_day_index - 1:
+            lines.append(f"Day {i+1}: FP3 + Qualifying at the circuit. Evening in {city}.")
+        elif i == race_day_index:
+            lines.append(f"Day {i+1}: Race Day. Arrive early, stay for podium, then dinner in {city}.")
+        elif i == days_count - 1:
+            lines.append(f"Day {i+1}: Check-out, last bites and souvenirs in {city}, depart.")
+        else:
+            lines.append(f"Day {i+1}: Explore {city} — a sight, a meal, and some downtime.")
+    return lines
 
 
 def itinerary_agent(state: TravelPlanState) -> dict:
@@ -279,12 +338,12 @@ def itinerary_agent(state: TravelPlanState) -> dict:
             days = _itinerary_mock(state)
             return {
                 "itinerary": days,
-                "messages": [_msg("plan", f"LLM failed ({e.__class__.__name__}), used mock itinerary")],
+                "messages": [_msg("plan", f"LLM failed ({e.__class__.__name__}), using generic mock itinerary")],
             }
     else:
         days = _itinerary_mock(state)
 
-    label = provider_label() if used_llm else "mock"
+    label = provider_label() if used_llm else "generic mock"
     return {
         "itinerary": days,
         "messages": [_msg("plan", f"Created {len(days)}-day itinerary ({label})")],

@@ -2,8 +2,9 @@
 
 ## Status
 
-- **Phase 1 (currency selector)**: shipped — see the Verification Matrix at the end.
-- **Phase 2 (editable trip dates)**: approved to start, in progress.
+- **Phase 1 (currency selector)**: shipped — end-to-end EUR/USD/CNY selection, validated at the API boundary.
+- **Phase 2 (editable trip dates)**: shipped — `depart_date` / `return_date` are first-class state fields, hard-validated at the API boundary (day-trips rejected), with client-side hard + soft validation in the form. The legacy `extra_days` slider has been removed; `extra_days` still works as a fallback when the new fields are empty, for backwards compatibility.
+- **Batch 3 follow-ups shipped alongside Phase 2**: grounded deterministic refine replies, opt-in debug trace with content-aware state_apply, copy-on-write state commit in `_handle_chat`, and fallback mocks (transport, itinerary) that respect the user's actual city and trip dates rather than demo defaults.
 
 ## Background
 

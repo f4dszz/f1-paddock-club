@@ -100,7 +100,7 @@ See `backend/state.py` for full typed definition. Key fields:
 - Agent outputs: tickets[], transport[], hotel[], itinerary[], tour[], budget_summary
 - Control: budget_ok, retry_count, messages[]
 
-`currency` (EUR/USD/CNY) was added in Batch 3 Phase 1. `depart_date` / `return_date` are coming in Batch 3 Phase 2 alongside the date-picker UI; until then `extra_days` remains the canonical driver of trip length.
+`currency` (EUR/USD/CNY) and explicit `depart_date` / `return_date` are all first-class state fields. The form has an editable date picker and a `validate_trip_dates` pass at the API boundary (day-trips are rejected — at least one night required). `extra_days` is kept for backwards compatibility: when the date fields are empty, the legacy "Friday-arrival + extra_days" derivation kicks in.
 
 Only `messages` uses `Annotated[list, operator.add]` — it's the one field every agent writes to in parallel. All other list fields (tickets, transport, hotel, itinerary, tour) are single-writer and use LangGraph's default replace-semantics, so the budget retry loop correctly replaces their previous attempt instead of accumulating.
 
@@ -125,7 +125,7 @@ All agents follow the same internal pattern: tools-first -> mock-fallback -> sou
 
 ### Screens
 1. **GP Select** — 22-round 2026 calendar grid, per-GP track SVG outlines, past GPs dimmed + click-disabled
-2. **Welcome + Form** — Concierge greets, structured form (origin, budget, currency EUR/USD/CNY, stand buttons, extra-days slider, merged special-requests textarea covering stops + dietary + accessibility)
+2. **Welcome + Form** — Concierge greets, structured form (origin, budget, currency EUR/USD/CNY, editable depart/return date pickers with inline validation and soft warnings, stand buttons, merged special-requests textarea covering stops + dietary + accessibility)
 3. **Planning** — Top-down map with 5 zones, concierge walks between them, zones light up, race-lights progress bar. Status messages stream live; planning trace collapses after done.
 4. **Results** — Themed cards with per-item selection, dynamic budget bar (in selected currency), per-card Book buttons. Unpriced items show "Price not provided" with an optional Check→ link to the provider and are excluded from budget totals.
 5. **Chat** — Bottom input for adjustments anytime (routed to Lane 2 supervisor). Replies are grounded against final persisted state when any tool ran, so the text never claims changes that didn't land.
@@ -216,7 +216,7 @@ f1-paddock-club/
 4. **Phase 4 — Frontend hookup + hardening + deployment** — IN PROGRESS.
    - 4.0 ✅ Hookup — `prototype.jsx` connected to `/ws`, dynamic GP calendar, live results rendering.
    - 4.1 ✅ Hardening — debug `?debug=1` toggle, status-vs-chat separation, ticket city/circuit disambiguation, port unification (8001), dated log files, README startup/health-check docs, supervisor reply constraint, card update highlight, merged stops/special form field, zero-price graceful display with provider jump, tour mode=none, flight mode=single.
-   - 4.2 🟡 In progress — **Batch 3**: currency selector end-to-end (EUR/USD/CNY) + editable trip dates + deterministic refine replies (grounded against final persisted state) + opt-in debug trace (plan-envelope `debug:true`, events: state_apply / tool_fail / budget_final). See `docs/batch3-plan-v3.md` for the full design; Phase 1 (currency) done, Phase 2 (dates) in progress.
+   - 4.2 ✅ Shipped — **Batch 3**: currency selector end-to-end (EUR/USD/CNY), editable trip dates with client + server validation (day-trips rejected), deterministic refine replies (grounded against final persisted state, not the LLM's self-report), opt-in debug trace (plan-envelope `debug:true`, events: state_apply / tool_fail / budget_final), and fallback mocks that respect state (dates, city, currency). See `docs/batch3-plan-v3.md` for the design.
    - 4.3 ⏳ Planned — deployment (Vercel frontend + Railway/Render backend), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install, responsive CSS pass. Next.js migration deferred — current Vite + React has proven sufficient.
 5. **Phase 5 — Multi-user + persistence** — PLANNED.
    - User accounts, session persistence (file-backed or Redis — pattern reference in `docs/debug-trace-productization.zh-CN.md` and the Hermes agent), per-user preferences, mobile-first re-design, city-exploration mode (when the user picks a past GP, plan a city trip instead of race weekend), tool registry if tool count grows, memory threat scanning.

@@ -68,8 +68,14 @@ def validate_trip_dates(
     except ValueError:
         return False, "dates must be in YYYY-MM-DD format"
 
-    if d_dt > r_dt:
-        return False, "depart_date must be on or before return_date"
+    # Reject same-day return (0 nights). A 0-night "trip" breaks
+    # downstream semantics: the hotel agent would need to produce a
+    # non-stay option, the budget line for hotels would be zero while
+    # items still carry a per-night price, and the booking links
+    # wouldn't work. Until we have a first-class day-trip mode, require
+    # at least one night on-site.
+    if d_dt >= r_dt:
+        return False, "depart_date must be strictly before return_date (day-trips not yet supported)"
 
     if (r_dt - d_dt).days > _MAX_REASONABLE_NIGHTS:
         return False, f"trip cannot exceed {_MAX_REASONABLE_NIGHTS} nights"

@@ -593,7 +593,7 @@ def refine_plan(
     state: dict,
     user_message: str,
     conversation_history: list[tuple[str, str]] | None = None,
-) -> tuple[dict, str]:
+) -> tuple[dict, str, dict]:
     """Universal entry point for chat-based interaction.
 
     Handles both initial planning (empty state) and refinement (existing plan).
@@ -606,11 +606,17 @@ def refine_plan(
             like "not that one" or "the cheaper option you showed."
 
     Returns:
-        (updated_state, reply_text)
+        Always a 3-tuple: (updated_state, reply_text, trace_ctx).
+        `trace_ctx` is a small dict the transport layer uses to emit
+        debug-trace events — `{failed_tools, updated_fields, tool_call_count}`.
+        Every early-return branch MUST also return a trace_ctx so the
+        caller can unpack without branching.
     """
+    _empty_trace: dict = {"failed_tools": [], "updated_fields": [], "tool_call_count": 0}
+
     llm = get_llm(temperature=0.3, max_tokens=2048)
     if llm is None:
-        return state, "LLM not configured — cannot process requests."
+        return state, "LLM not configured — cannot process requests.", _empty_trace
 
     # ── Detect mode ──────────────────────────────────────────────
     has_plan = bool(state.get("tickets") or state.get("transport") or state.get("hotel"))

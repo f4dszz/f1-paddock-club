@@ -79,7 +79,7 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` on the `messag
 | **1 — Graph + mock data** | ✅ Done | Full LangGraph wired up, all 7 agents return mock data, CLI test runs end-to-end, FastAPI endpoints work. |
 | **2 — Real LLM calls** | ✅ Done | `itinerary_agent` and `tour_agent` call real LLM via `with_structured_output`. Provider selectable (OpenAI/Anthropic). Mock fallback when no key. |
 | **3 — External data + supervisor** | ✅ Done | SerpAPI (flights/hotels), Firecrawl (tickets), supervisor agent for chat refinement, `/ws` dual-lane routing, currency conversion (EUR/USD/CNY), trip date computation. See details below. |
-| **4 — Frontend** | 🟡 In progress | 4.0 hookup done (`prototype.jsx` live on `/ws`). 4.1 hardening active. 4.2 deployment + PWA + Next.js migration planned. |
+| **4 — Frontend** | 🟡 In progress | 4.0 hookup done. 4.1 hardening done. 4.2 currency selector + editable trip dates + grounded replies + debug trace done. 4.3 deployment + PWA + responsive CSS planned. |
 | **5 — Polish + deploy** | ⏳ Planned | Security baseline, error handling, persistence, deploy. |
 
 ### Phase 3 — what was built
@@ -357,7 +357,7 @@ Bump verbosity with `LOG_LEVEL=DEBUG` in your `.env` (or `export`) to see LLM in
 
 ## Roadmap
 
-- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening: debug mode, status/chat split, ticket disambig, EUR refine summary (done). Next: currency selector, editable dates, Next.js migration.
+- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). Next: deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
 - **Phase 5** — security baseline, error handling, run persistence, deploy.
 
 ---
