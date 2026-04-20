@@ -7,7 +7,7 @@ import from here instead of maintaining their own date constants.
 Data source: Official F1 2026 calendar (formula1.com/en/racing/2026),
 cross-referenced with ESPN, Sky Sports. Last verified: 2026-04-15.
 
-Design principles (per supervisor Round 010):
+Design principles:
 - Static data only: gp_name, city, country, race_date, round
 - Runtime state (is_past, days_until) computed by helpers, never stored
 - calendar_note: optional, only for officially confirmed status changes

@@ -153,7 +153,7 @@ f1-paddock-club/
 ├── backend/
 │   ├── main.py                     # FastAPI: POST /plan, WS /ws (dual-lane), currency validator, trace emit
 │   ├── graph.py                    # Lane 1: LangGraph orchestrator + CLI test
-│   ├── refine.py                   # Lane 2: Supervisor agent + deterministic reply builder (E.1)
+│   ├── refine.py                   # Lane 2: Supervisor agent + deterministic reply builder (post-tool grounding)
 │   ├── state.py                    # TravelPlanState (typed shared state)
 │   ├── _session.py                 # Per-connection session state (plan_state + conversation_history)
 │   ├── llm.py                      # Pluggable LLM client (OpenAI/Anthropic + .env)
@@ -216,10 +216,10 @@ f1-paddock-club/
 4. **Phase 4 — Frontend hookup + hardening + deployment** — IN PROGRESS.
    - 4.0 ✅ Hookup — `prototype.jsx` connected to `/ws`, dynamic GP calendar, live results rendering.
    - 4.1 ✅ Hardening — debug `?debug=1` toggle, status-vs-chat separation, ticket city/circuit disambiguation, port unification (8001), dated log files, README startup/health-check docs, supervisor reply constraint, card update highlight, merged stops/special form field, zero-price graceful display with provider jump, tour mode=none, flight mode=single.
-   - 4.2 🟡 In progress — **Batch 3**: currency selector end-to-end (EUR/USD/CNY) + editable trip dates + E.1 deterministic refine replies (grounded against final state) + E.3 opt-in debug trace (plan-envelope `debug:true`, events: state_apply / tool_fail / budget_final). See `docs/batch3-plan-v3.md` for the full design; Phase 1 (currency) done, Phase 2 (dates) gated on reviewer sign-off.
+   - 4.2 🟡 In progress — **Batch 3**: currency selector end-to-end (EUR/USD/CNY) + editable trip dates + deterministic refine replies (grounded against final persisted state) + opt-in debug trace (plan-envelope `debug:true`, events: state_apply / tool_fail / budget_final). See `docs/batch3-plan-v3.md` for the full design; Phase 1 (currency) done, Phase 2 (dates) in progress.
    - 4.3 ⏳ Planned — deployment (Vercel frontend + Railway/Render backend), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install, responsive CSS pass. Next.js migration deferred — current Vite + React has proven sufficient.
 5. **Phase 5 — Multi-user + persistence** — PLANNED.
-   - User accounts, session persistence (file-backed or Redis — pattern reference in `docs/debug-trace-productization.zh-CN.md` and the Hermes agent), per-user preferences, mobile-first re-design, city-exploration mode (Q-010), tool registry if tool count grows, memory threat scanning.
+   - User accounts, session persistence (file-backed or Redis — pattern reference in `docs/debug-trace-productization.zh-CN.md` and the Hermes agent), per-user preferences, mobile-first re-design, city-exploration mode (when the user picks a past GP, plan a city trip instead of race weekend), tool registry if tool count grows, memory threat scanning.
 
 ### Current regression matrix
 

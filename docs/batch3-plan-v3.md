@@ -1,16 +1,18 @@
-# Batch 3 Implementation Plan — v3
+# Batch 3 Implementation Plan
 
-Date: 2026-04-16
-Status: Awaiting final reviewer approval before Phase 1 implementation
+## Status
+
+- **Phase 1 (currency selector)**: shipped — see the Verification Matrix at the end.
+- **Phase 2 (editable trip dates)**: approved to start, in progress.
 
 ## Background
 
-Batch 3 addresses two cross-cutting user-facing limitations that emerged in real demo usage:
+Batch 3 addresses two cross-cutting user-facing limitations surfaced in real demo usage:
 
-1. **Currency inconsistency**: frontend budget in EUR, but supervisor reply and some displays mix USD. Root cause — no per-session currency binding across the plan → recompute → refine → display chain.
-2. **Date rigidity**: users can only control return via an `extra_days` slider. Cannot arrive earlier (Wednesday instead of Friday) or stay shorter than the weekend.
+1. **Currency inconsistency**: frontend budget in EUR, but supervisor reply and some displays mixed USD. Root cause — no per-session currency binding across the plan → recompute → refine → display chain.
+2. **Date rigidity**: users could only control return via an `extra_days` slider. No way to arrive earlier (Wednesday instead of Friday) or stay shorter than the weekend.
 
-Design went through 3 iterations. v1 missed 5 cross-cutting points. v2 closed those but missed API boundary error handling + 4 frontend/chat edge cases. v3 below is the final version.
+The design below is the shipped version. Earlier drafts underestimated the cross-cutting footprint, the API-boundary error handling requirement, and several frontend/chat edge cases — those are folded into the principles and file list below.
 
 ## Design Principles
 

@@ -4,10 +4,12 @@ Maintains chat history separate from plan state (TravelPlanState).
 The supervisor reads history to resolve references like "not that one"
 or "the hotel you showed earlier."
 
-Design (per supervisor Round 008/010):
-- History lives at session level, NOT inside TravelPlanState
-- Max 6 turns (12 messages) to limit token usage
-- Helper functions for append/trim — ready for future Redis/persistence
+Design:
+- History lives at session level, NOT inside TravelPlanState — plan data
+  and chat context have different lifecycles and replay semantics.
+- Max 6 turns (12 messages) to limit token usage.
+- Helper functions for append/trim — the interface is ready for a future
+  Redis / file-backed store without changing callers.
 """
 
 from __future__ import annotations

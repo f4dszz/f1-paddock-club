@@ -184,7 +184,7 @@ def _build_trace_events(
 ) -> list[dict]:
     """Derive trace events from state before/after a handler run.
 
-    Emits three event kinds per reviewer Round 026 Step 1 scope:
+    Emits three event kinds (minimum viable observability surface):
       - state_apply  (one per changed list field — by content, not just count)
       - tool_fail    (one per failed Lane-2 tool call)
       - budget_final (once, from final budget_summary)
@@ -318,8 +318,8 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
     logger.info("/ws plan: %s", data.get("gp_name", "?"))
 
     # Debug opt-in: once set on a plan call, it stays on for subsequent
-    # chats in the same session. Reviewer Round 026 picked plan-envelope
-    # flag over ws query string.
+    # chats in the same session. Plan-envelope flag is preferred over a
+    # ws query string because it lets clients toggle per-request later.
     if data.get("debug") is True or data.get("_debug") is True:
         session["debug"] = True
 
