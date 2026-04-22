@@ -2,91 +2,99 @@
 
 _This document is the production-readiness design for getting the F1 Paddock Club out of a local demo and onto public hosting. It is a design doc — no deploy workflow is implemented here. Implementation follows once this design is accepted._
 
-Scope is intentionally narrow. Search-provider expansion (Tavily and friends), mobile/PWA polish, and session persistence are all deferred; see [Out of scope](#7-out-of-scope) for the explicit list.
+_中文版在 [`deployment-design.zh-CN.md`](./deployment-design.zh-CN.md)。_
+
+Scope is deliberately narrow. Search-provider expansion (Tavily and friends), mobile/PWA polish, session persistence, and user accounts are all deferred; see [Out of scope](#12-out-of-scope) for the explicit list.
 
 ## 1. Current runtime assumptions
 
-The system as it runs today, which the design below has to either preserve or replace cleanly.
+The system as it runs today. The design below either preserves or replaces each of these cleanly.
 
 ### Processes
 
 - **Backend**: FastAPI + Uvicorn on `127.0.0.1:8001`. Two surfaces — `/plan` (HTTP POST), `/ws` (WebSocket). State lives per WebSocket connection in in-process memory (`session = create_session()` in `main.py`). There is no database.
 - **Frontend**: Vite dev server on `localhost:3000`, serving `prototype.jsx` as a React app. Production build (`npm run build`) emits a plain static bundle in `frontend/dist/`.
 
-### Dev-time topology — **implicit same-origin**
+### Dev-time topology — implicit same-origin
 
-The frontend code currently has no notion of "which backend to talk to". It does:
+The frontend has no notion of "which backend to talk to":
 
 ```js
 const API_BASE = "";
 const WS_URL = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 ```
 
-Calls go to the same host the page was served from. In development this works because `vite.config.js` proxies `/api/*` and `/ws` to the backend:
-
-```js
-proxy: {
-  "/api": { target: "http://127.0.0.1:8001" },
-  "/ws":  { target: "ws://127.0.0.1:8001", ws: true, timeout: 120000 },
-},
-```
-
-This assumption breaks the moment the frontend and backend are hosted at different origins — which is exactly what a Vercel + Railway split does. [Section 4](#4-runtime-url--topology-assumptions-production-critical) is about that.
+Calls go to the same host that served the page. In development this works because `vite.config.js` proxies `/api/*` and `/ws` to the backend. The assumption breaks the moment frontend and backend are hosted on different origins; [Section 4](#4-runtime-url--topology-assumptions-production-critical) explicitly addresses that.
 
 ### Secrets
 
-`backend/.env` holds `OPENAI_API_KEY`, `SERPAPI_API_KEY`, `FIRECRAWL_API_KEY`, `LLM_PROVIDER`. It is gitignored. `backend/.env.example` documents the expected variables. There are no frontend-side secrets today.
+`backend/.env` holds `OPENAI_API_KEY`, `SERPAPI_API_KEY`, `FIRECRAWL_API_KEY`, `LLM_PROVIDER`. It is gitignored. `backend/.env.example` documents the expected variables. No frontend-side secrets exist today.
 
 ### CORS
 
-Currently set wide open in `backend/main.py`:
+Currently wide open in `backend/main.py`:
 
 ```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 ```
 
-The `tighten in production` comment is the design debt this document pays down.
+The `tighten in production` comment is the debt this document pays down.
 
-### Logging
+### WebSocket message loop
 
-Backend writes to `backend/logs/backend_YYYY-MM-DD.log` via `logging_config.setup_logging()`. One file per startup date, appended across restarts.
+The handler is a serial receive loop:
 
-### Concurrency
+```python
+while True:
+    raw = await ws.receive_text()
+    if msg_type == "plan":
+        await _handle_plan(ws, msg_data, session)
+    elif msg_type == "chat":
+        await _handle_chat(ws, msg_data, session)
+```
 
-No rate limiting. No per-session lock. No global concurrency cap. The only inbound-size limit is `MAX_WS_MESSAGE_SIZE = 16 * 1024`. A single user holding an open WebSocket can issue as many `plan` messages as they want; they run sequentially only because they go through the same connection's message loop.
+Because `_handle_plan` is awaited before the next `receive_text`, **a single WebSocket connection cannot process two plans in parallel**. Any second `plan` message waits in the socket buffer until the first finishes. This is relevant to [Section 8](#8-concurrency-and-rate-limiting).
+
+### Disk-backed state
+
+Two directories are written to local disk during normal operation:
+
+- `backend/logs/backend_YYYY-MM-DD.log` — runtime logs
+- `backend/tools/.cache/` — time-bound caches for SerpAPI / Firecrawl results
+
+Both are gitignored. Both sit on whatever filesystem the backend process runs on — fine on a developer laptop, **ephemeral on the platforms this design targets**. Section 9 covers what that means.
+
+### Concurrency today
+
+No rate limiting. No per-session lock. No global concurrency cap. The only inbound-size limit is `MAX_WS_MESSAGE_SIZE = 16 * 1024`. A single user holding an open WebSocket can issue as many `plan` messages as they want (though they run sequentially; see above).
 
 ## 2. Deployment target comparison
 
-Three realistic options. Assessed against seven productization criteria, not vibes.
+Three realistic options, compared against seven productization criteria.
 
-| Criterion | Vercel (frontend) + Railway (backend) | Fly.io single platform | Self-managed VPS (Hetzner / Oracle free) |
+| Criterion | Vercel (frontend) + Railway (backend) | Fly.io single platform | Self-managed VPS |
 |---|---|---|---|
-| Static frontend hosting | Native; global CDN, instant | Possible via static services | Manual — Nginx or similar |
-| WebSocket long connection | Backend on Railway is native; Vercel limits WS on its own functions | Native; persistent processes | Native; configure Nginx `proxy_read_timeout` |
-| Python backend deploy friction | Railway auto-detects from `requirements.txt`, `git push` deploys | Dockerfile required; `fly launch` generates one | Full stack to write (Dockerfile, systemd unit, HTTPS cert) |
-| Env / secret management | Two dashboards — Vercel env vars for frontend, Railway secrets for backend | One dashboard | Manual — `.env` files, secret injection via CI or operator |
-| Logs / rollback / observability | Each platform ships log viewer, one-click rollback per revision | Same idea on one platform | Ship your own (journalctl + SSH, or run Grafana/Loki) |
-| Cold-start behaviour on free tier | Vercel never cold-starts static; Railway $5 credit keeps one small service warm indefinitely | Fly has scale-to-zero; wake-up is 1–5 s | Always warm if the VM is on; you also always pay |
-| Operational cognitive load | Two platforms, but each simple | One platform, slightly more concepts (fly regions, machines) | Highest — you own OS patches, cert renewal, monitoring |
+| Static frontend hosting | Native; global CDN, instant | Possible via static services | Manual (Nginx or similar) |
+| WebSocket long connection | Backend on Railway is native; Vercel's own functions impose limits | Native; persistent processes | Native; configure Nginx `proxy_read_timeout` |
+| Python backend deploy friction | Railway auto-detects `requirements.txt`; `git push` deploys | Dockerfile required; `fly launch` generates one | Full stack to write (Dockerfile, systemd, TLS cert) |
+| Env / secret management | Two dashboards — Vercel env vars for frontend, Railway secrets for backend | One dashboard | Manual `.env` files, secret injection via CI or operator |
+| Logs / rollback / observability | Each platform ships a log viewer and per-revision rollback | Same on one platform | Ship your own (journalctl + SSH, or Grafana/Loki) |
+| Cold start on free tier | Vercel never cold-starts static; Railway Hobby keeps a small service continuously running as long as included usage isn't exceeded | Fly has scale-to-zero; wake-up is 1–5 s | Always warm if the VM is on; you also always pay |
+| Operational cognitive load | Two platforms, but each simple | One platform, slightly more concepts | Highest — OS patches, cert renewal, monitoring are yours |
 
 ### Recommendation
 
-**Vercel + Railway** is the chosen target for Phase 4.3a.
+**Vercel + Railway** is the chosen target for this phase.
 
 Reasons:
 
 1. The shape matches the app — static React on a CDN, long-running FastAPI behind HTTPS with native WebSocket support.
-2. Free-tier economics work for a portfolio project. Vercel's static tier is essentially unlimited; Railway's $5 monthly credit keeps one small web service continuously warm (the Render free tier's 15-minute idle spin-down would ruin first-impression demos).
+2. Free-tier economics are realistic for a portfolio-stage project. Vercel's static tier is essentially unlimited; Railway's Hobby plan includes $5 of usage per month, which is likely enough for a small continuously-running demo. **Actual consumption depends on CPU, memory, and egress — monitor usage during the first week after deploy; do not treat $5 as an indefinite guarantee.**
 3. `git push` triggers platform-side build and deploy on both, with per-deploy rollback available from the dashboard.
 
-**Fly.io** is a legitimate alternative — one platform, also good free tier, cleaner mental model. The only reason it is not the first pick is the Dockerfile / `fly.toml` learning curve, which is extra complexity this repo doesn't need today. If Railway pricing ever becomes a problem, migrating to Fly is a single-week job.
+**Fly.io** is a legitimate alternative — one platform, a good free tier, a cleaner mental model. The only reason it is not the first pick is the Dockerfile / `fly.toml` learning curve, which is extra complexity this repo doesn't need today. If Railway pricing ever becomes a problem, migrating to Fly is a week-sized job.
 
-**Self-managed VPS** is rejected for this phase. The operational surface (TLS renewal, OS updates, log shipping, monitoring) is not something we want to take on while the product itself is still moving.
+**Self-managed VPS** is rejected for this phase. The operational surface (TLS renewal, OS updates, log shipping, monitoring) is not something worth taking on while the product itself is still moving.
 
 ## 3. Minimum deployment architecture
 
@@ -107,33 +115,31 @@ Reasons:
                                           OpenAI / SerpAPI / Firecrawl
 ```
 
-- The frontend bundle is served by Vercel's CDN.
-- The backend is a single Railway service running `uvicorn main:app`. Same-process FastAPI handles both the REST `/api/*` routes and the WebSocket at `/ws`.
-- All API-key traffic (OpenAI, SerpAPI, Firecrawl) flows from Railway's backend outward — the frontend never sees or embeds those keys.
-- No database, no cache layer, no queue in this phase. In-process Python state per WebSocket is sufficient.
+- Frontend bundle served by Vercel's CDN.
+- Backend is a single Railway service running `uvicorn main:app`. Same-process FastAPI serves both REST `/api/*` routes and the WebSocket at `/ws`.
+- All external-provider traffic (OpenAI, SerpAPI, Firecrawl) flows outbound from Railway. The frontend never sees or embeds those keys.
+- No database, no cache layer, no queue in this phase. Per-WebSocket in-process state is sufficient.
 
 ## 4. Runtime URL / topology assumptions (production-critical)
 
-This section exists because the dev-time same-origin assumption silently breaks in production. Making it explicit is the only way to avoid a landmine.
-
 ### Problem
 
-Frontend code today derives the backend URL from the page's own host:
+The current frontend derives the backend URL from its own page host:
 
 ```js
 const WS_URL = `${...}://${window.location.host}/ws`;
 ```
 
-In production the frontend will be at `f1-paddock-club.vercel.app` and the backend at `f1-paddock-club-backend.railway.app` (or similar). The page cannot talk to its own host for the API — it has to address the backend explicitly.
+In production the frontend is at something like `f1-paddock-club.vercel.app` and the backend is at `f1-paddock-club-backend.up.railway.app`. The page cannot talk to its own host for the API; it has to address the backend explicitly.
 
 ### Decision
 
-Introduce two build-time environment variables in the frontend:
+Introduce two build-time environment variables for the frontend:
 
 - `VITE_BACKEND_URL` — e.g. `https://f1-paddock-club-backend.up.railway.app`
 - `VITE_WS_URL` — e.g. `wss://f1-paddock-club-backend.up.railway.app/ws`
 
-At runtime the frontend prefers these when set, and falls back to the current `window.location` derivation only for local development:
+At runtime the frontend prefers these when set, and falls back to the current `window.location` derivation for local development:
 
 ```js
 const BACKEND =
@@ -144,20 +150,20 @@ const WS_URL =
   import.meta.env.VITE_WS_URL ||
   `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
-fetch(`${BACKEND}/api/calendar`);  // was: fetch(`${API_BASE}/api/calendar`)
+fetch(`${BACKEND}/api/calendar`);
 new WebSocket(WS_URL);
 ```
 
-Vercel sets these two variables at build time; they land in the emitted JS bundle. They are **public values**, not secrets — exposing them in the bundle is expected and safe.
+Vercel sets these two variables at build time; they land in the emitted JS bundle. **They are public values, not secrets** — exposing them in the bundle is expected and safe.
 
 ### Why not a Vercel rewrite proxy?
 
-Vercel can rewrite `/api/*` on the frontend edge to the Railway backend, which would preserve the same-origin illusion. It is rejected here because:
+Vercel can rewrite `/api/*` on the edge to Railway, which would preserve the same-origin illusion. Rejected because:
 
-- It does not solve WebSockets — Vercel's rewrite rules don't proxy `wss://`.
-- It adds one more hop in the request path with no real benefit at this scale.
+- Rewrite rules don't proxy `wss://` — WebSockets would still need a direct URL.
+- It adds a hop with no meaningful benefit at this scale.
 
-Direct cross-origin to the backend is simpler and more honest about the topology.
+Direct cross-origin is simpler and more honest about the topology.
 
 ### Dev vs production
 
@@ -166,7 +172,7 @@ Direct cross-origin to the backend is simpler and more honest about the topology
 | Backend URL | Vite proxy to `127.0.0.1:8001` | Explicit `VITE_BACKEND_URL` |
 | WS URL | Same host + Vite ws proxy | Explicit `VITE_WS_URL` |
 | Origin | `http://localhost:3000` | `https://<vercel-domain>` |
-| CORS on backend | `["*"]` permissive | Strict allowlist (see [Section 6](#6-cors--websocket-origin--access-baseline)) |
+| CORS on backend | Permissive `["*"]` | Strict allowlist (Section 6) |
 
 ## 5. Environment, secrets, and configuration
 
@@ -178,27 +184,28 @@ Direct cross-origin to the backend is simpler and more honest about the topology
 | `ANTHROPIC_API_KEY` | Railway env | backend (`llm.py`) | **Yes** |
 | `SERPAPI_API_KEY` | Railway env | backend (`tools/search_*.py`) | **Yes** |
 | `FIRECRAWL_API_KEY` | Railway env | backend (`tools/search_tickets.py`) | **Yes** |
-| `LLM_PROVIDER` | Railway env | backend (`llm.py`) | No (value is `openai` or `anthropic`) |
-| `LOG_LEVEL` | Railway env | backend (`logging_config.py`) | No |
-| `ALLOWED_ORIGINS` | Railway env | backend (`main.py` CORS) | No; see [Section 6](#6-cors--websocket-origin--access-baseline) |
+| `LLM_PROVIDER` | Railway env | backend | No |
+| `LOG_LEVEL` | Railway env | backend | No |
+| `ALLOWED_ORIGINS` | Railway env | backend (`main.py` CORS / Origin check) | No |
+| `DEMO_ACCESS_TOKEN` | Railway env | backend (demo token gate, Section 7) | **Yes** |
 | `VITE_BACKEND_URL` | Vercel build env | frontend bundle | No; public by design |
 | `VITE_WS_URL` | Vercel build env | frontend bundle | No; public by design |
+| `VITE_DEMO_TOKEN` | Vercel build env | frontend bundle | No; intentionally baked into public bundle (see Section 7) |
 
 ### Rules
 
-1. **Secrets never enter the frontend bundle.** `VITE_*` variables are compiled into static JS at build time; anything prefixed `VITE_` is, in effect, published. Only non-secret URLs and flags go there.
-2. **Secrets never enter the git repository.** `.env` is gitignored; `.env.example` documents the keys without values.
-3. **Dev and production do not share secrets.** The OpenAI key used on Railway is a production-only key; developer machines use their own `.env`.
-4. **Config hierarchy:** `backend/.env.example` (in git, documents shape) → `backend/.env` (local, gitignored) → Railway environment (production).
+1. **Secrets never enter the frontend bundle.** Anything prefixed `VITE_` is, in effect, published — only non-secret values go there.
+2. **Secrets never enter the git repository.** `.env` is gitignored; `.env.example` documents shape without values.
+3. **Dev and production do not share secrets.** The OpenAI key on Railway is a production-only key; developer machines use their own `.env`.
+4. **Config hierarchy**: `backend/.env.example` (in git, documents shape) → `backend/.env` (local, gitignored) → Railway environment (production).
 
-## 6. CORS + WebSocket Origin + access baseline
+## 6. CORS and WebSocket Origin
 
 ### CORS
 
-Today's `allow_origins=["*"]` must become an allowlist in production.
+Today's `allow_origins=["*"]` becomes an allowlist in production, read from env:
 
 ```python
-# main.py
 import os
 
 _ALLOWED = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
@@ -207,18 +214,17 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED or ["http://localhost:3000"],  # dev fallback
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 ```
 
-Production `ALLOWED_ORIGINS` is set to exactly the Vercel frontend URL. Anything else is rejected at the CORS layer before it reaches our handlers.
+Production `ALLOWED_ORIGINS` is set to exactly the Vercel frontend URL. Anything else is rejected at the CORS layer before reaching the handlers.
 
 ### WebSocket Origin check
 
-CORS does not automatically protect WebSockets. The browser still sends an `Origin` header during the WS handshake (see RFC 6455 §4.2.1), but it is just an HTTP header — our handler has to inspect it ourselves.
+CORS does not automatically protect WebSockets. The browser sends an HTTP `Origin` header during the WS handshake (RFC 6455 §4.2.1), but the application has to inspect it:
 
 ```python
-# main.py
 @app.websocket("/ws")
 async def websocket_session(ws: WebSocket):
     origin = ws.headers.get("origin", "")
@@ -229,48 +235,213 @@ async def websocket_session(ws: WebSocket):
     ...
 ```
 
-**This is advisory browser-origin protection, not authentication.** A browser will send `Origin` honestly. A scripted client (curl, Python `websockets`, etc.) can send any value it wants. Origin gating raises the cost of casual scraping and stops most CSRF-style abuse from other sites; it does not stop a determined adversary. Treat it as a low-cost hygiene layer, not a security boundary.
+**This is advisory browser-origin protection, not authentication.** Browsers send `Origin` honestly. A scripted client (curl, Python `websockets`, etc.) can send any value. Origin gating raises the cost of casual cross-site abuse but does not stop a determined adversary that knows the backend URL. It is a hygiene layer, not a security boundary. The access control that actually matters to the backend is [Section 7](#7-minimum-access-baseline).
 
-### Access baseline (not user accounts)
+## 7. Minimum access baseline
 
-Phase 4.3a explicitly **does not** introduce user accounts, JWT, OAuth, or password login. Those belong to a later multi-user phase.
+This phase does **not** introduce user accounts, JWT, OAuth, or password login. Those belong to a later multi-user phase.
 
-However, "no user accounts" must not be confused with "no access control at all". A fully open `/ws` plus an agent chain that burns OpenAI + SerpAPI credits per request is a real cost-abuse surface. The design evaluates three minimal gate options for deployment, and picks one as the recommended baseline:
+It also does not leave the backend unprotected. A fully open `/ws` and `/plan` plus the agent chain that burns OpenAI + SerpAPI credits per request is a real cost-abuse surface. The frontend-side Vercel Deployment Protection does **not** solve this on its own — the Railway backend URL is a separate origin that browsers call directly, so anyone who learns the backend URL bypasses the frontend gate entirely.
 
-| Option | What it is | Pros | Cons |
-|---|---|---|---|
-| **A. Platform password protection** | Vercel "Deployment Protection" or Railway's env-gated basic auth on the public URL | Zero app code. You share the URL + a password with friends or hiring managers. | Only protects the entry surface; bots that already know the password don't slow down. |
-| **B. Shared demo token** | Single token in a Railway env var; frontend reads a public flag from a small `/config` endpoint or hardcodes a prompt for the token on first visit; WS handshake and `/plan` check the `Authorization` header. | Still trivial to implement (~20 lines). Can rotate without touching user accounts. | Token shared across all demo users — compromise equals everyone; no per-user attribution. |
-| **C. Pure origin gate + rate limit** | Nothing beyond Section 6's allowlist, plus Section 6's concurrency / rate limit below. | Minimum friction for legitimate visitors. | A curated bot that spoofs `Origin` and throttles below the rate limit can still drain API quota over time. |
+The baseline for this phase is therefore a **two-layer gate**:
 
-**Recommendation:** start with **A** (platform password) for the first public deployment. Vercel's built-in Deployment Protection is a single toggle; no code changes. If and when the project moves to a wider demo audience, promote to **B** (shared demo token) so friends don't need to type a password every visit. **C** is the long-term target only once real per-user identity exists (which is a Phase 5 problem, not a 4.3a one).
+### Layer 1: frontend — Vercel Deployment Protection
 
-This is a real decision, not a punt. `A` is what ships with the first deploy.
+Enable Vercel's built-in deployment protection on the project. This prompts any visitor to the Vercel URL for a password before the page renders. Zero application code; concrete scope and options depend on the Vercel plan, and Hobby-plan behavior is narrower than team plans. Treat this layer as "keep away the casually curious", not "secure the backend".
 
-### Concurrency protection (layered)
+### Layer 2: backend — shared demo token
 
-Four layers, from inside-out. Everything except the outermost layer is pure application code — no new dependencies.
+A single `DEMO_ACCESS_TOKEN` lives in Railway env. The backend accepts a request only when the token is presented correctly. Token mechanism differs between HTTP and WebSocket, because browser APIs differ.
 
-**1. Per-connection in-flight gate**
-_Where: `_handle_plan` in `main.py`._
-A single `asyncio.Lock` stored on the session dict. The same WebSocket cannot have two concurrent `plan` runs — the second message waits or is rejected with a clear error. This prevents a user double-clicking the Plan button from firing two LangGraph pipelines in parallel through the same session.
+**HTTP `/plan`** — standard bearer token:
 
-"Per-connection" is deliberate — the current session is one WebSocket, not a cross-device user identity. When a Redis-backed session store exists later, the lock will move accordingly; the interface does not change.
+```python
+@app.post("/plan")
+async def plan(request: TripRequest, authorization: str = Header(None)):
+    if authorization != f"Bearer {settings.DEMO_ACCESS_TOKEN}":
+        raise HTTPException(status_code=401)
+    ...
+```
 
-**2. Global concurrency cap**
-_Where: module-level `asyncio.Semaphore(N)` in `main.py`._
-Across the whole backend process, only N `plan_trip` invocations run simultaneously (N tunable via env, default 5). The N+1th request waits, or returns an explicit "server busy" message after a short timeout. Protects against a coordinated burst exhausting the LLM quota or pegging the single Railway process.
+The frontend reads `VITE_DEMO_TOKEN` from the build env and sends it in `Authorization: Bearer <token>` on every `/plan` call.
 
-**3. Per-IP rate limit (application-side)**
-_Where: `slowapi` middleware on `/plan` and on WS connection accept._
-Bucket per client IP: maximum M new `plan` requests per minute. The browser's `X-Forwarded-For` from Railway's proxy is authoritative here. Returns HTTP 429 / WS `close 1008` on breach.
+**WebSocket `/ws`** — token as query parameter:
 
-Application-side is chosen over edge / CDN rate limiting because we do not yet have a Cloudflare layer in front of Railway, and we do not want a design that presumes infra we haven't set up. If a Cloudflare front-door is added in a later hardening pass, per-IP limits can move there and the app-side slowapi becomes defense-in-depth or can be removed.
+```python
+@app.websocket("/ws")
+async def websocket_session(ws: WebSocket):
+    token = ws.query_params.get("demo_token", "")
+    if token != settings.DEMO_ACCESS_TOKEN:
+        await ws.close(code=1008)
+        return
+    # origin check, then accept
+```
 
-**4. Payload size limit**
-Already in place — `MAX_WS_MESSAGE_SIZE = 16 * 1024`. Unchanged.
+Why a query parameter rather than an `Authorization` header: the browser `WebSocket` constructor is `new WebSocket(url, protocols?)` (MDN). There is no parameter for arbitrary request headers. A query parameter is the only mechanism a pure-browser client can use to pass a credential on the initial handshake.
 
-## 7. CI/CD decisions
+### Trade-offs of a query-parameter WS token
+
+- **Token may appear in server access logs and browser history.** Mitigate by rotating the token if it leaks, keeping `LOG_LEVEL` at `INFO` (don't log raw URLs at `DEBUG`), and not sharing browser history on the demo device. Acceptable for a demo; not acceptable for a production auth system, which is why this is a demo baseline and not Phase 5's real auth.
+- **A single token is shared across all demo users.** Compromise of one friend's clipboard equals compromise of all visitors. This is explicitly a "trusted small demo group" model.
+- **Rotation is manual.** Change `DEMO_ACCESS_TOKEN` on Railway, change `VITE_DEMO_TOKEN` on Vercel, redeploy both. Documented in the README runbook.
+
+### Alternatives that were considered and deferred
+
+- **Cookie-based WS auth**: requires same-origin or CORS with credentials; adds friction for a demo-stage split-origin deployment.
+- **First-message auth (WS-level handshake after `accept`)**: cleaner in principle but requires a gating state machine to reject business messages before authentication. More code than a query param, for equivalent protection against the realistic threat model.
+- **`Sec-WebSocket-Protocol` subprotocol carrying a token**: works but is a semantic abuse of subprotocols. Not chosen.
+- **No token, rely only on origin + rate limit**: accepts cost-abuse risk if the backend URL leaks. Not chosen for this phase.
+
+### Explicit non-goals for this layer
+
+- Per-user identity. This is a shared-secret gate, not user authentication.
+- Role-based access. There is one level of access.
+- Auditability. Who made which request is not a question this layer can answer.
+
+These live in a later multi-user phase.
+
+## 8. Concurrency and rate limiting
+
+Four layers, from application-local to network-edge.
+
+### Layer A: per-connection serial handling (already in place)
+
+The WebSocket handler in `main.py` awaits each message handler before reading the next message:
+
+```python
+while True:
+    raw = await ws.receive_text()
+    await _handle_plan(...)   # must complete
+    # next receive_text only after handler returns
+```
+
+So **a single connection already processes plans serially** without any added locking. The correct product behavior on top of this:
+
+- Frontend disables the "Plan" button while a plan is in flight.
+- If a client somehow fires a second `plan` before the first returns (e.g., a scripted client), it waits in the socket buffer and runs after the first. No error, no race.
+
+No design change is needed here. The earlier draft's "second plan immediately rejected" is not how the current architecture behaves and is not a useful behavior for 4.3a to introduce. The semaphore in Layer B covers the real risk (cross-connection parallelism).
+
+### Layer B: global concurrency cap
+
+A module-level `asyncio.Semaphore(N)` guards `plan_trip` invocations across the entire backend process. `N` is read from `MAX_CONCURRENT_PLANS` env, default 5.
+
+```python
+_plan_semaphore = asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_PLANS", "5")))
+
+async def _handle_plan(ws, data, session):
+    try:
+        async with asyncio.timeout(5):
+            await _plan_semaphore.acquire()
+    except TimeoutError:
+        await ws.send_json({"type": "error", "data": "server busy, try again"})
+        return
+    try:
+        await asyncio.to_thread(plan_trip, data)
+    finally:
+        _plan_semaphore.release()
+```
+
+This prevents a burst of connections from pinning the single Railway process or draining LLM quota in the same instant.
+
+### Layer C: HTTP rate limit (library)
+
+For the HTTP `/plan` endpoint: `slowapi` with a per-IP limit (e.g., 10 per minute).
+
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/plan")
+@limiter.limit("10/minute")
+async def plan(request: Request, ...):
+    ...
+```
+
+`slowapi` is chosen over writing this ourselves because HTTP limiting is a well-understood pattern with a decent library. **`slowapi` does not currently support WebSocket endpoints**, which is why the next layer is hand-rolled.
+
+### Layer D: WebSocket rate limit (application-local, hand-rolled)
+
+Because `slowapi` does not cover WebSockets, a small in-memory sliding-window limiter runs on the WS accept path:
+
+```python
+class IPRateLimiter:
+    def __init__(self, max_per_window: int, window_seconds: int):
+        self.max = max_per_window
+        self.window = window_seconds
+        self._events: dict[str, deque[float]] = defaultdict(deque)
+
+    def allow(self, ip: str) -> bool:
+        now = time.monotonic()
+        events = self._events[ip]
+        cutoff = now - self.window
+        while events and events[0] < cutoff:
+            events.popleft()
+        if len(events) >= self.max:
+            return False
+        events.append(now)
+        return True
+
+_ws_connect_limiter = IPRateLimiter(max_per_window=20, window_seconds=60)
+
+@app.websocket("/ws")
+async def websocket_session(ws: WebSocket):
+    ip = ws.client.host if ws.client else "unknown"
+    if not _ws_connect_limiter.allow(ip):
+        await ws.close(code=1008)
+        return
+    # origin check, token check, then accept
+```
+
+Explicit limitations written into the design:
+
+- **Single-instance only.** The limiter state is in-process memory. If the backend ever scales to multiple Railway instances, per-IP counts are split across instances and the limit becomes weaker than advertised. A Redis-backed limiter (or moving to edge-layer rate limiting) is the natural next step — and a real Phase-5 concern once multi-instance is a thing.
+- **No global cap.** This limits one IP's connection rate, not overall concurrency. That is Layer B's job.
+- **Minimal surface.** Same-IP `plan` message rate on top of the connection rate is not separately limited in this phase — the global semaphore plus the connection rate is deemed sufficient for a demo. If a single IP opens 20 connections and fires 20 plans, Layer B's semaphore gates the execution anyway.
+
+### Layer E: payload size (already in place)
+
+`MAX_WS_MESSAGE_SIZE = 16 * 1024`. Unchanged. Rejects oversize messages before processing.
+
+## 9. Production limits of disk state (logs and caches)
+
+Both file-based paths the backend writes to — logs and tool cache — behave very differently on a developer laptop versus on managed platforms.
+
+### File logs
+
+`backend/logs/backend_YYYY-MM-DD.log` is a file on disk. On Railway, Render, and Fly, the container filesystem is ephemeral:
+
+- On redeploy, the filesystem is rebuilt from scratch. Log files do not persist across deploys.
+- On restart or autoscale, the same erasure happens.
+- On multi-instance deployments (not this phase but foreseeable), each instance writes to its own local file; there is no unified log view.
+
+Implications for this phase:
+
+- **File logs are short-term in-process diagnostics only.** They help when SSH-ing or `railway run`-ing into a live container to inspect recent behavior. They do not replace platform log aggregation.
+- **STDOUT / STDERR is the canonical log destination in production.** Railway captures it, Fly captures it, Vercel captures it. Every `logger.*(...)` call already reaches STDOUT through the root logger's default handler, so the platform already sees everything.
+- **The file handler stays in place** for simplicity — no refactor required — but it is understood to be a convenience, not a reliability layer.
+
+Structured log shipping (Logtail, Better Stack, self-hosted Loki) becomes interesting in a later phase when platform-native logs stop being sufficient.
+
+### Tool cache
+
+`backend/tools/.cache/` stores time-bound caches for SerpAPI and Firecrawl results (`_cache.py` decorator). Same ephemeral property:
+
+- Cache is lost on every redeploy.
+- Cache is lost on restart.
+- Across multiple instances, caches don't share.
+
+Implications:
+
+- **The cache is a best-effort performance optimization, not a source of truth.** A cache miss simply re-hits the upstream provider.
+- **The cache must never be treated as state or as a persistence layer.** Any code that assumes cached data has survived across deploys is wrong on a managed platform.
+- **Multi-instance cache consistency is not a goal for this phase.** If and when the app runs more than one Railway instance, a shared cache (Redis) is the right answer, and it belongs to that phase.
+
+A production-grade cache (Redis or equivalent) is a reasonable Phase-5 addition if cache hit rate becomes worth paying for. It is not needed now.
+
+## 10. CI/CD and rollback
 
 ### CI (already in place)
 
@@ -279,117 +450,117 @@ Already in place — `MAX_WS_MESSAGE_SIZE = 16 * 1024`. Unchanged.
 - `backend`: `python -m compileall -q .`
 - `frontend`: `npm ci` + `npm run build`
 
-This verifies the two things that absolutely must hold before anything ships. Future additions (tests, linting, security scans, deploy jobs) slot in as new steps without restructuring.
+This verifies the two things that must hold before anything ships. Future additions (tests, linting, security scans, deploy jobs) slot in as new steps without restructuring.
 
-### CD for 4.3a — do not build a repository-controlled CD pipeline
+### CD for this phase — no repository-controlled CD
 
-Vercel and Railway both run their own automatic deployments on `git push` to the configured branch. **This is "CD" in the practical sense**, just not CD controlled from a workflow file inside our repository.
+Vercel and Railway both run their own automatic deployments on `git push` to the configured branch. **This is "CD" in the practical sense**, just not CD controlled from a workflow file inside the repo.
 
-Phase 4.3a does **not** add a deploy job to GitHub Actions. The reasons:
+This phase does **not** add a deploy job to GitHub Actions. The reasons:
 
-1. Tag-gated deploy, preview environments, staging branches, and rollback policies are interesting but premature before the app has a real usage pattern.
-2. Relying on platform-native deploy for now keeps the failure surface small and legible. One git push, one platform build log, one deploy.
-3. A homegrown `actions/deploy@…` job would need platform secrets in the Actions environment — an extra secret management problem for no immediate gain.
+1. Tag-gated deploys, preview environments, staging branches, and rollback policies are interesting but premature before the app has a real usage pattern.
+2. Relying on platform-native deploy keeps the failure surface small and legible. One git push, one platform build log, one deploy.
+3. A homegrown `actions/deploy@…` job would need platform secrets in the Actions environment — extra secret management for no immediate gain.
 
-Later phases can reintroduce a repository-controlled deploy workflow with specific goals: tag-gated production (deploy only on `v*.*.*`), preview URLs for pull requests, or coordinated multi-service deploys. None of those are needed yet.
+Later phases can reintroduce a repository-controlled deploy workflow with specific goals: tag-gated production deploy (only on `v*.*.*`), preview URLs on pull requests, coordinated multi-service deploys. None are needed yet.
 
 ### Operational runbook (lives in README, written for humans)
 
-The `README` — not a workflow file — documents the steps to ship a change:
+The README — not a workflow file — documents the ship flow:
 
 1. Merge PR to `main` after CI is green.
 2. Vercel builds and promotes automatically; the new static bundle is live in roughly 60 seconds.
 3. Railway builds and deploys automatically; the new backend is live in roughly 2–3 minutes. The previous revision stays in the dashboard for one-click rollback.
-4. Verify via the smoke path in [Section 9.1](#91-post-deploy-smoke-check).
+4. Verify via the smoke path in [Section 11.1](#111-post-deploy-smoke-check).
 
 ### Rollback
 
 Both platforms expose a per-revision rollback button. Post-rollback:
 
-- Pull the commit locally (`git checkout <sha>`), confirm the problem is actually the new commit and not a config/env issue.
-- Re-run the smoke path in [Section 9.1](#91-post-deploy-smoke-check) against the rolled-back URL.
+- Pull the commit locally (`git checkout <sha>`), confirm the problem is actually the new commit and not a config / env issue.
+- Re-run the smoke path in [Section 11.1](#111-post-deploy-smoke-check) against the rolled-back URL.
 - If rollback happens in production, record it in `CHANGELOG.md` under the next `[Unreleased]` entry so the history stays honest.
 
-## 8. File logging limitations on managed platforms
+## 11. Acceptance criteria
 
-A piece of reality that the design must acknowledge.
+Everything below has to be demonstrable before this phase can be called done.
 
-Today's `backend/logs/backend_YYYY-MM-DD.log` is a file on disk. On a developer laptop this is fine. On Railway, Render, and Fly, the container filesystem is ephemeral:
+### 11.1 Post-deploy smoke check
 
-- On redeploy, the filesystem is rebuilt from scratch. Log files do not persist across deploys.
-- On autoscale or restart, the same erasure happens.
-- On platforms with multiple instances (not this phase, but foreseeable), each instance writes to its own local file — there is no unified log view.
+1. `curl https://<railway-domain>/api/calendar` with the right `Authorization: Bearer <DEMO_ACCESS_TOKEN>` → `200 OK` with the 2026 GP list.
+2. The same request without the header → `401`.
+3. Opening `https://<vercel-domain>` in a browser after passing Vercel Deployment Protection renders the form; the network tab shows the calendar fetch hitting Railway with the bearer token.
+4. Starting a plan from the UI opens a WebSocket to `wss://<railway-domain>/ws?demo_token=…`, receives at least one `message` event within 3 seconds, and completes a full `result → done` for a simple GP.
+5. A plan for a non-default GP (e.g. Azerbaijan) with explicit depart/return dates completes without crashing, even if an upstream provider (SerpAPI, Firecrawl) hits a limit — the three-tier fallback covers it.
 
-What this means for 4.3a:
+### 11.2 Backend-direct access protection
 
-- **File logs become short-term in-process diagnostics only.** They help if you are SSH-ing or `railway run`-ing into a live container to inspect recent behavior. They do not replace platform log aggregation.
-- **STDOUT / STDERR is the canonical log destination in production.** Railway captures it, Vercel captures it (for their Serverless Function runtimes), Fly captures it. Every level we `logger.info(...)` already reaches STDOUT via the root logger's default handler, so the platform already sees everything.
-- **The file handler is left in place** (simplicity, no refactor), but it is understood to be a convenience, not a reliability layer.
+1. `curl https://<railway-domain>/api/calendar` **without** the bearer token → `401`. Confirms the backend is not reachable by scripted clients who know the URL but not the token.
+2. `wscat -c "wss://<railway-domain>/ws"` (no `demo_token` query param) → server closes with code 1008. Confirms WS gate works independently of Vercel protection.
+3. `wscat -c "wss://<railway-domain>/ws?demo_token=<WRONG>"` → server closes with code 1008.
+4. `wscat -c "wss://<railway-domain>/ws?demo_token=<CORRECT>" --origin https://unknown.example.com` → server closes with code 1008 (origin check is independent of the token).
 
-A later phase can add structured log shipping (e.g. Logtail, Better Stack, or a self-hosted Loki) if and when platform-native logs become insufficient. For 4.3a the platform's own log view is sufficient.
+### 11.3 Security hygiene
 
-## 9. Acceptance criteria
+1. `ALLOWED_ORIGINS` env is set on Railway; `CORSMiddleware` reads it; no `["*"]` in production.
+2. `grep -r "OPENAI_API_KEY\|SERPAPI_API_KEY\|FIRECRAWL_API_KEY\|DEMO_ACCESS_TOKEN" frontend/dist/` returns nothing. Only `VITE_BACKEND_URL`, `VITE_WS_URL`, and `VITE_DEMO_TOKEN` appear (which are public by design).
+3. Platform-level access baseline (Vercel Deployment Protection) is enabled on the Vercel project.
 
-Everything below has to be demonstrable before 4.3a can be called done.
+### 11.4 Concurrency protection
 
-### 9.1 Post-deploy smoke check
+1. Global semaphore: with `MAX_CONCURRENT_PLANS=2` set, opening 5 WebSocket connections and submitting `plan` on each simultaneously results in at most 2 backend `plan_trip` runs active at any moment; the rest wait or receive the "server busy" message after the 5-second acquire timeout.
+2. HTTP rate limit: 12 `/plan` POSTs from the same IP within 60 seconds — the 11th and 12th return `429`.
+3. WS connection rate: 22 WebSocket connection attempts from the same IP within 60 seconds — the last two are closed with code 1008.
+4. Payload size: sending a 20 KB message over an accepted WebSocket → server rejects with the existing oversize error.
 
-Once the design is implemented and deploys land on both platforms, these must all pass:
+### 11.5 Production limits acknowledged (no code, but verified)
 
-1. `curl https://<railway-domain>/api/calendar` → `200 OK` with the 2026 GP list.
-2. Opening `https://<vercel-domain>` in a browser renders the form; network tab shows the calendar fetch succeeding against the Railway URL (not against the Vercel host).
-3. Starting a plan from the UI opens a WebSocket to `wss://<railway-domain>/ws`, receives at least one `message` event within 3 seconds, and completes a full `result → done` for a simple GP (e.g. Italian GP mocks).
-4. A plan for a non-default GP (e.g. Azerbaijan) with explicit depart/return dates completes without crashing, even if the SerpAPI tier hits a limit (fallbacks take over).
+1. After a Railway redeploy, `backend/logs/` is empty on the new revision — confirming file logs don't cross deploys. Platform log viewer still shows the STDOUT history.
+2. After a redeploy, `backend/tools/.cache/` is also empty — confirming the cache is purely best-effort.
+3. These are explicitly documented in the README deploy runbook as expected behavior, not bugs.
 
-### 9.2 Security hygiene
+### 11.6 Rollback drill
 
-1. `ALLOWED_ORIGINS` environment variable is set on Railway; `CORSMiddleware` reads it and no longer uses `["*"]` in production.
-2. The WebSocket endpoint rejects a handshake from an unapproved `Origin` (test with `wscat -o https://example.com ...`).
-3. `grep -r "OPENAI_API_KEY\|SERPAPI_API_KEY\|FIRECRAWL_API_KEY" frontend/dist/` finds nothing. Secrets stay on the backend.
-4. Platform-level access baseline (option A above, Vercel Deployment Protection) is enabled on the Vercel project.
-
-### 9.3 Concurrency protection
-
-1. A single WebSocket submitting `plan` twice quickly sees the second attempt rejected with a clear message (not a silent queue, not a parallel run).
-2. Fifteen concurrent WebSocket clients submitting `plan` simultaneously result in at most `N` (default 5) backend runs at any moment; the rest wait or receive an explicit "busy" signal.
-3. Sixty `plan` requests from the same IP in one minute trigger the slowapi rate limit (`429` or equivalent).
-
-### 9.4 Rollback drill
-
-1. Deploy a deliberately-broken commit (e.g. syntax error in a status message).
-2. Roll back via Railway dashboard to the previous revision.
-3. Re-run the Section 9.1 smoke check; all four steps pass on the rolled-back version.
+1. Deploy a deliberately broken commit (e.g., a syntax error in a status message).
+2. Roll back via the Railway dashboard to the previous revision.
+3. Re-run Section 11.1 smoke; all items pass on the rolled-back version.
 4. Record the drill outcome as a one-line note in `CHANGELOG.md` under `[Unreleased]`.
 
-## Out of scope
+## 12. Out of scope
 
-Explicit list of things this design does not cover and does not pretend to cover. Each is deferred to a named later phase.
+Explicit list of what this design does not cover and does not pretend to. Each is deferred to a named later phase.
 
-- **User accounts, JWT, OAuth, password login** — Phase 5 (multi-user + persistence).
-- **Session persistence across reconnects** — Phase 5. Current state is per-WebSocket in-memory; a reconnect starts fresh.
-- **Automatic deployment controlled from this repo** — considered again when there is reason to gate production on tag or branch.
-- **Preview / staging environments** — one production environment is enough for a portfolio-stage app. Preview URLs can be added once there are contributors beyond the project owner.
-- **Custom domain** — the Vercel and Railway default subdomains are fine for the first deploy. Registering a `.com` and configuring DNS is a 15-minute dashboard task when the project owner decides the subdomain is a hiring-impression issue.
-- **Tavily / `search_web` provider adapter** — separate design, separate phase (4.3b).
-- **PWA manifest, mobile responsive CSS, touch polish** — separate design, separate phase (4.3c).
-- **Mobile distribution strategy** — whether to stay PWA-only, wrap the web app with Capacitor for Play Store / App Store, or add a Telegram Mini App target is an orthogonal product decision. A dedicated short document will evaluate the options before Phase 4.3c commits to any of them. This deployment design intentionally does not presume a mobile form factor.
-- **Observability beyond platform defaults** — no APM, no distributed tracing, no external log aggregator in this phase. Platform log viewers and the existing `backend/logs/` file handler are enough for the first deploy.
+- **User accounts, JWT, OAuth, password login** — multi-user phase.
+- **Session persistence across reconnects** — multi-user phase. Current state is per-WebSocket in-memory; a reconnect starts fresh.
+- **Per-user quotas / attribution / audit** — multi-user phase.
+- **Preview / staging environments** — one production environment is enough at this stage.
+- **Custom domain** — Vercel and Railway default subdomains are fine for the first deploy; a `.com` is a 15-minute dashboard task later.
+- **Tavily / `search_web` provider adapter** — separate design, separate phase.
+- **PWA manifest, mobile-responsive CSS, touch polish** — separate design, separate phase.
+- **Mobile distribution strategy** — an orthogonal product decision. To be evaluated in a later dedicated document; this deployment design intentionally makes no assumption about mobile form factor.
+- **Repository-controlled CD pipeline** — deferred until tag-gated deploy or preview environments become worth building.
+- **Structured log shipping / APM / distributed tracing** — platform log viewers are sufficient for now.
+- **Redis or any shared cache / state store** — revisit when multi-instance is actually needed.
+- **Production-grade WS rate limit across instances** — same as above.
 
 ## Summary of decisions
 
 | # | Decision | Choice |
 |---|---|---|
 | Deployment target | Vercel (frontend) + Railway (backend) | ✅ |
-| Alternative considered | Fly.io single-platform — viable, not the first pick | ✅ |
+| Alternative considered | Fly.io single-platform — viable, not the first pick | — |
 | Rejected | Self-managed VPS — operational load not worth it at this phase | ❌ |
-| Production URL strategy | `VITE_BACKEND_URL` + `VITE_WS_URL` build-time injection; fall back to `window.location` only in dev | ✅ |
-| CORS | Explicit allowlist via `ALLOWED_ORIGINS`; no more `["*"]` in production | ✅ |
-| WebSocket Origin gate | `Origin` header check in `/ws` handler; understood as advisory, not authentication | ✅ |
-| Access baseline | Vercel Deployment Protection (platform password) for first deploy; shared demo token as a ready alternative | ✅ |
-| Per-connection in-flight gate | `asyncio.Lock` on session dict | ✅ |
+| Production URL strategy | `VITE_BACKEND_URL` + `VITE_WS_URL` at build; `window.location` only in dev | ✅ |
+| CORS | Explicit allowlist via `ALLOWED_ORIGINS`; no `["*"]` in production | ✅ |
+| WebSocket Origin gate | `Origin` header check on handshake; advisory, not authentication | ✅ |
+| Access baseline — frontend | Vercel Deployment Protection (plan-dependent) | ✅ |
+| Access baseline — backend | `DEMO_ACCESS_TOKEN`: `Authorization: Bearer` on HTTP, query param on WS | ✅ |
+| Per-connection behavior | Rely on current serial receive loop; frontend disables duplicate submit | ✅ |
 | Global concurrency cap | `asyncio.Semaphore(N)` at module scope, `N` from env | ✅ |
-| Per-IP rate limit | `slowapi` app-side; edge / CDN rate limit deferred | ✅ |
-| CD in this repo | Not in 4.3a — platform-native auto-deploy is the production path | ✅ |
-| Rollback | Platform per-revision rollback + README runbook + smoke check | ✅ |
-| Logging | File handler kept for convenience; STDOUT is the canonical source on Railway | ✅ |
-| Not in scope | User auth, persistence, Tavily, PWA, mobile wrappers, custom domain, staging | — |
+| HTTP rate limit | `slowapi` per-IP on `/plan` | ✅ |
+| WS rate limit | Hand-rolled in-memory per-IP sliding window on WS accept | ✅ |
+| CD in this repo | Not in this phase — platform-native auto-deploy is the production path | ✅ |
+| Rollback | Platform per-revision rollback + README runbook + drill | ✅ |
+| Logging | File handler kept for convenience; STDOUT is canonical on managed platforms | ✅ |
+| Tool cache | Best-effort only; not persistence, not source of truth | ✅ |
+| Mobile distribution | Orthogonal product decision, evaluated in a later dedicated document | — |
