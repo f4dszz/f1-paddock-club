@@ -25,8 +25,18 @@ const THINK = {
 };
 
 // ── Backend connection config ───────────────────────────────────────
-const API_BASE = "";
-const WS_URL = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+const cleanBase=(url)=>(url||"").replace(/\/+$/,"");
+const DEMO_TOKEN=import.meta.env.VITE_DEMO_TOKEN||"";
+const API_BASE=cleanBase(import.meta.env.VITE_BACKEND_URL||"");
+const DEFAULT_WS_URL=`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+const addDemoToken=(url)=>{
+  if(!DEMO_TOKEN) return url;
+  const sep=url.includes("?")?"&":"?";
+  return `${url}${sep}demo_token=${encodeURIComponent(DEMO_TOKEN)}`;
+};
+const WS_URL=addDemoToken(import.meta.env.VITE_WS_URL||DEFAULT_WS_URL);
+const WS_LOG_URL=WS_URL.replace(/demo_token=[^&]+/,"demo_token=***");
+const authHeaders=()=>DEMO_TOKEN?{Authorization:`Bearer ${DEMO_TOKEN}`}:{};
 
 // ── Transform backend data into card format ────────────────────────
 function transformResults(data) {
@@ -164,12 +174,29 @@ const CUR_SYMBOL={EUR:"€",USD:"$",CNY:"¥"};
 // Default "suggested" dates when the user first picks a GP: arrive
 // Friday of the race weekend, leave 3 days after race Sunday.
 // Users can edit both freely — these are just sensible defaults.
+const DAY_MS=24*60*60*1000;
+function toIsoDateUTC(date){
+  const y=date.getUTCFullYear();
+  const m=String(date.getUTCMonth()+1).padStart(2,"0");
+  const d=String(date.getUTCDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+function parseIsoDateUTC(iso){
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||"");
+  if(!m) return null;
+  const y=Number(m[1]), mo=Number(m[2]), d=Number(m[3]);
+  const utc=Date.UTC(y,mo-1,d);
+  if(toIsoDateUTC(new Date(utc))!==iso) return null;
+  return utc;
+}
+function addIsoDays(iso,days){
+  const utc=parseIsoDateUTC(iso);
+  if(utc===null) return "";
+  return toIsoDateUTC(new Date(utc+days*DAY_MS));
+}
 function defaultTripDates(raceDate){
   if(!raceDate) return { depart:"", ret:"" };
-  const rd=new Date(raceDate+"T00:00:00");
-  const dep=new Date(rd); dep.setDate(rd.getDate()-2);
-  const ret=new Date(rd); ret.setDate(rd.getDate()+3);
-  return { depart:dep.toISOString().slice(0,10), ret:ret.toISOString().slice(0,10) };
+  return { depart:addIsoDays(raceDate,-2), ret:addIsoDays(raceDate,3) };
 }
 
 // Client-side validation mirroring backend validate_trip_dates.
@@ -181,16 +208,16 @@ function validateTripDates(depart, returnDate, raceDate){
   if(!depart || !returnDate) return { valid:false, error:"Please set both depart and return dates.", warnings };
   const iso=/^\d{4}-\d{2}-\d{2}$/;
   if(!iso.test(depart) || !iso.test(returnDate)) return { valid:false, error:"Dates must be YYYY-MM-DD.", warnings };
-  const d=new Date(depart+"T00:00:00");
-  const r=new Date(returnDate+"T00:00:00");
-  if(isNaN(d) || isNaN(r)) return { valid:false, error:"One of the dates is invalid.", warnings };
+  const d=parseIsoDateUTC(depart);
+  const r=parseIsoDateUTC(returnDate);
+  if(d===null || r===null) return { valid:false, error:"One of the dates is invalid.", warnings };
   if(d>=r) return { valid:false, error:"Depart date must be strictly before return date (day-trips not yet supported).", warnings };
-  const nights=Math.round((r-d)/(1000*60*60*24));
+  const nights=Math.round((r-d)/DAY_MS);
   if(nights>30) return { valid:false, error:"Trip longer than 30 nights.", warnings };
   if(raceDate){
-    const rc=new Date(raceDate+"T00:00:00");
-    if(d>rc) warnings.push("You arrive after race day — you'll miss the Grand Prix.");
-    if(r<rc) warnings.push("You leave before race day — you won't see the race.");
+    const rc=parseIsoDateUTC(raceDate);
+    if(rc!==null&&d>rc) warnings.push("You arrive after race day — you'll miss the Grand Prix.");
+    if(rc!==null&&r<rc) warnings.push("You leave before race day — you won't see the race.");
   }
   if(nights>14) warnings.push(`Trip is ${nights} nights — that's a long F1 weekend.`);
   return { valid:true, error:"", warnings };
@@ -384,8 +411,9 @@ export default function App(){
 
   // Fetch GP calendar from backend on mount
   useEffect(()=>{
-    pushDebug("calendar.fetch.start", `${window.location.origin}/api/calendar`);
-    fetch(`${API_BASE}/api/calendar`)
+    const calendarUrl=`${API_BASE||window.location.origin}/api/calendar`;
+    pushDebug("calendar.fetch.start", calendarUrl);
+    fetch(`${API_BASE}/api/calendar`, {headers:authHeaders()})
       .then(r=>{
         pushDebug("calendar.fetch.response", { status:r.status, ok:r.ok });
         return r.json();
@@ -478,15 +506,15 @@ export default function App(){
   // ── Connect WebSocket (persistent, survives re-renders) ──────────
   const connectWs=useCallback(()=>{
     if(wsRef.current&&wsRef.current.readyState<=1) return wsRef.current;
-    pushDebug("ws.connect.start", WS_URL);
+    pushDebug("ws.connect.start", WS_LOG_URL);
     const ws=new WebSocket(WS_URL);
     wsRef.current=ws;
     ws.onmessage=handleWsMsg;
     ws.onopen=()=>{
-      pushDebug("ws.open", WS_URL);
+      pushDebug("ws.open", WS_LOG_URL);
     };
     ws.onerror=()=>{
-      pushDebug("ws.error", WS_URL);
+      pushDebug("ws.error", WS_LOG_URL);
       setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Backend or WebSocket proxy is unreachable."}]);
       setPhase(prev=>prev==="running"?"done":prev);setSpeaking(false);
     };
