@@ -46,6 +46,13 @@ class P0TrustFixTests(unittest.TestCase):
         self.assertTrue(filtered[0]["constraint_match"])
         self.assertNotIn("1 stop", filtered[0]["detail"])
 
+    def test_chinese_direct_flight_intent_is_detected(self):
+        from refine import _intent_max_stops
+        from agents import _direct_only_requested
+
+        self.assertEqual(_intent_max_stops("只要直航，不要中转"), 0)
+        self.assertTrue(_direct_only_requested("请安排直达航班"))
+
     def test_direct_flight_search_post_filter_enforces_real_sources(self):
         flights_module = importlib.import_module("tools.search_flights")
 
@@ -107,6 +114,24 @@ class P0TrustFixTests(unittest.TestCase):
         names = [item["name"] for item in filtered]
         self.assertEqual(names, ["Moxy Milan Linate", "Hilton Garden Inn Milan North"])
         self.assertTrue(all(item["constraint_match"] for item in filtered))
+
+    def test_chinese_hotel_brand_intent_and_filter(self):
+        from refine import _intent_allowed_brands
+        from agents import _requested_hotel_brands
+        from tools.search_hotels import _filter_by_allowed_brands
+
+        self.assertIn("万豪", _intent_allowed_brands("只要万豪或希尔顿，靠近赛道"))
+        self.assertIn("希尔顿", _requested_hotel_brands("只要万豪或希尔顿，靠近赛道"))
+
+        results = [
+            {"name": "Moxy Milan Linate"},
+            {"name": "Hilton Garden Inn Milan North"},
+            {"name": "B&B Hotel Milano"},
+        ]
+
+        filtered = _filter_by_allowed_brands(results, "万豪或希尔顿", True)
+        names = [item["name"] for item in filtered]
+        self.assertEqual(names, ["Moxy Milan Linate", "Hilton Garden Inn Milan North"])
 
     def test_hotel_search_strict_brand_post_filter_enforces_real_sources(self):
         hotels_module = importlib.import_module("tools.search_hotels")

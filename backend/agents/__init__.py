@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _DIRECT_ONLY_RE = re.compile(
     r"\b(only\s+direct|direct\s+only|non[-\s]?stop|no\s+stops?|without\s+stops?)\b"
-    r"|直飞|不转机|不要转机|无转机",
+    r"|直飞|直航|直达|直達|不转机|不要转机|无转机|不中转|不中轉",
     re.IGNORECASE,
 )
 
@@ -33,6 +33,14 @@ _KNOWN_HOTEL_BRANDS = (
     "courtyard",
     "holiday inn",
     "intercontinental",
+    "万豪",
+    "萬豪",
+    "希尔顿",
+    "希爾頓",
+    "凯悦",
+    "凱悅",
+    "洲际",
+    "洲際",
 )
 
 

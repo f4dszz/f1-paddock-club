@@ -28,10 +28,20 @@ logger = logging.getLogger(__name__)
 _TTL = 3 * 3600  # 3 hours
 
 _BRAND_ALIASES: dict[str, set[str]] = {
-    "marriott": {"marriott", "courtyard", "sheraton", "westin", "moxy", "ac hotel", "tribute portfolio", "renaissance"},
-    "hilton": {"hilton", "hampton", "doubletree", "curio", "canopy", "waldorf", "conrad", "tapestry"},
-    "hyatt": {"hyatt", "andaz", "thompson"},
-    "ihg": {"ihg", "holiday inn", "intercontinental", "voco", "crowne plaza"},
+    "marriott": {
+        "marriott", "jw marriott", "courtyard", "sheraton", "westin",
+        "moxy", "ac hotel", "tribute portfolio", "renaissance",
+        "fairfield", "residence inn", "万豪", "萬豪",
+    },
+    "hilton": {
+        "hilton", "hampton", "doubletree", "curio", "canopy",
+        "waldorf", "conrad", "tapestry", "希尔顿", "希爾頓",
+    },
+    "hyatt": {"hyatt", "andaz", "thompson", "凯悦", "凱悅"},
+    "ihg": {
+        "ihg", "holiday inn", "intercontinental", "voco",
+        "crowne plaza", "洲际", "洲際", "假日酒店",
+    },
 }
 
 
