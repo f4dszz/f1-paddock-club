@@ -17,14 +17,22 @@ echo ""
 # Start backend
 echo "[1/2] Starting backend on :8001..."
 cd backend
-PYTHONIOENCODING=utf-8 uvicorn main:app --reload --port 8001 &
+PYTHON_BIN="${PYTHON_BIN:-python}"
+if [ -x ".venv/bin/python" ]; then
+  PYTHON_BIN=".venv/bin/python"
+fi
+PYTHONIOENCODING=utf-8 "$PYTHON_BIN" -m uvicorn main:app --reload --port 8001 &
 BACKEND_PID=$!
 cd ..
 
 # Wait for backend to be ready
 echo "      Waiting for backend..."
 for i in $(seq 1 15); do
-  if curl -s http://localhost:8001/api/calendar > /dev/null 2>&1; then
+  CURL_AUTH=()
+  if [ -n "${DEMO_ACCESS_TOKEN:-}" ]; then
+    CURL_AUTH=(-H "Authorization: Bearer ${DEMO_ACCESS_TOKEN}")
+  fi
+  if curl -s "${CURL_AUTH[@]}" http://localhost:8001/api/calendar > /dev/null 2>&1; then
     echo "      Backend ready."
     break
   fi
