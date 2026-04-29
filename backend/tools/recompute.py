@@ -122,6 +122,7 @@ def recompute_budget(state: dict[str, Any]) -> dict:
     total = ticket_cost + transport_cost + hotel_cost + tour_cost + food_cost + misc_local
     budget = float(state.get("budget", 2500))
     within = total <= budget
+    retry_exhausted = not within and int(state.get("retry_count", 0) or 0) >= 2
 
     items = [
         {"name": "Tickets",         "amount": round(ticket_cost, 2),    "currency": target},
@@ -135,7 +136,13 @@ def recompute_budget(state: dict[str, Any]) -> dict:
     tip = ""
     if not within:
         over = total - budget
-        tip = f"Over budget by {target} {over:.0f}. Consider a cheaper hotel or GA tickets."
+        if retry_exhausted:
+            tip = (
+                f"No feasible plan under {target} {budget:.0f} was found after "
+                f"budget retries; current plan is over by {target} {over:.0f}."
+            )
+        else:
+            tip = f"Over budget by {target} {over:.0f}. Consider a cheaper hotel or GA tickets."
 
     return {
         "items": items,
@@ -143,5 +150,7 @@ def recompute_budget(state: dict[str, Any]) -> dict:
         "budget": budget,
         "currency": target,
         "within_budget": within,
+        "retry_exhausted": retry_exhausted,
+        "feasible_under_budget_found": within,
         "savings_tip": tip,
     }

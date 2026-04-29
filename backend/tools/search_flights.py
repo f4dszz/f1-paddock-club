@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pydantic import BaseModel, Field
 
 from ._cache import cached
@@ -26,6 +27,48 @@ from ._date_util import normalize_date
 logger = logging.getLogger(__name__)
 
 _TTL = 3 * 3600  # 3 hours
+
+
+def _infer_stop_count(item: dict) -> int | None:
+    """Infer stop count from structured fields or display text."""
+    if "stops" in item:
+        try:
+            return int(item.get("stops"))
+        except (TypeError, ValueError):
+            return None
+
+    text = f"{item.get('detail', '')} {item.get('summary', '')}".lower()
+    if "nonstop" in text or "non-stop" in text or "direct" in text:
+        return 0
+    match = re.search(r"(\d+)\s+stop", text)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _filter_by_max_stops(results: list[dict], max_stops: int | None) -> list[dict]:
+    """Deterministically enforce a max-stops constraint on flight results.
+
+    Provider query parameters are only hints. When the user says "only
+    direct", non-matching or unknown flight results must not enter state.
+    """
+    if max_stops is None:
+        return results
+
+    filtered: list[dict] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        if item.get("tag") == "INFO":
+            continue
+        count = _infer_stop_count(item)
+        if count is None or count > max_stops:
+            continue
+        next_item = dict(item)
+        next_item["stops"] = count
+        next_item["constraint_match"] = True
+        filtered.append(next_item)
+    return filtered
 
 
 # ── Pydantic schema for LLM estimation (structured output) ──────────
@@ -126,6 +169,8 @@ def _try_serpapi_google_flights(
         first_leg = flights_in_group[0]
         last_leg = flights_in_group[-1]
         num_stops = len(flights_in_group) - 1
+        if stops is not None and num_stops > stops:
+            continue
         duration = flight_group.get("total_duration", 0)
         price = flight_group.get("price", 0)
 
@@ -140,6 +185,7 @@ def _try_serpapi_google_flights(
             "currency": "USD",
             "link": "https://www.google.com/travel/flights",
             "airline": first_leg.get("airline", ""),
+            "stops": num_stops,
         })
 
     return results[:6]
@@ -305,6 +351,12 @@ def search_flights(
 
         results, report = query_parallel(sources, timeout=20)
 
+        if stops is not None:
+            results = _filter_by_max_stops(
+                [item for item in results if isinstance(item, dict)],
+                stops,
+            )
+
         if results:
             logger.info("search_flights: parallel success — %s", report.summary())
             degradation_msg = ""
@@ -318,6 +370,8 @@ def search_flights(
     # ── Layer 2: LLM estimation ──────────────────────────────────
     logger.info("search_flights: trying LLM estimation fallback")
     llm_results = _try_llm_estimate(origin, dest, date, stops, cabin)
+    if stops is not None:
+        llm_results = _filter_by_max_stops(llm_results, stops)
     if llm_results:
         logger.info("search_flights: LLM estimation returned %d results", len(llm_results))
         return llm_results, "source: llm_estimate (real-time data unavailable)"

@@ -36,6 +36,7 @@ Usage:
 from __future__ import annotations
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.tools import tool
@@ -52,6 +53,83 @@ from tools._trip_dates import compute_trip_dates
 from tools._currency import to_eur
 
 logger = logging.getLogger(__name__)
+
+
+_MODIFICATION_INTENT_RE = re.compile(
+    r"\b(update|change|move|switch|replace|swap|rearrange|rework|edit|modify|adjust|reschedule|shift)\b"
+    r"|改|更改|修改|换|替换|移动|挪|调整|重新安排|安排到|提前|延后",
+    re.IGNORECASE,
+)
+
+_UNPERSISTED_TARGET_RE = re.compile(
+    r"\b(itinerary|schedule|day|dinner|lunch|restaurant|meal|tour|explore|activity|activities|visit|sightseeing)\b"
+    r"|行程|日程|安排|晚餐|午餐|餐厅|饭|餐|景点|游览|活动|参观",
+    re.IGNORECASE,
+)
+
+_DIRECT_ONLY_RE = re.compile(
+    r"\b(only\s+direct|direct\s+only|non[-\s]?stop|no\s+stops?|without\s+stops?)\b"
+    r"|直飞|不转机|不要转机|无转机",
+    re.IGNORECASE,
+)
+
+_KNOWN_HOTEL_BRANDS = (
+    "marriott",
+    "hilton",
+    "hyatt",
+    "sheraton",
+    "westin",
+    "ritz",
+    "courtyard",
+    "holiday inn",
+    "intercontinental",
+)
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _requests_unpersisted_change(user_message: str) -> bool:
+    """Detect edit requests for fields Lane 2 cannot persist yet.
+
+    Hotels/flights/tickets have tools and state mappings. Itinerary/tour
+    edits currently do not, so a no-tool LLM answer must not claim the
+    cards changed.
+    """
+    text = user_message or ""
+    return bool(_MODIFICATION_INTENT_RE.search(text) and _UNPERSISTED_TARGET_RE.search(text))
+
+
+def _unapplied_change_reply(user_message: str) -> str:
+    if _has_cjk(user_message):
+        return (
+            "我理解这个修改请求，但当前版本没有把这类行程/探索文本改动写回结果卡片；"
+            "所以本次没有应用到当前计划。请重新规划，或改酒店、航班、票务这类当前可持久化的项目。"
+        )
+    return (
+        "I understood the requested itinerary/tour change, but this version "
+        "cannot persist that kind of edit to the result cards yet. No plan "
+        "cards were changed; please re-plan with the new requirement or edit "
+        "hotels, flights, or tickets instead."
+    )
+
+
+def _intent_max_stops(user_message: str) -> int | None:
+    return 0 if _DIRECT_ONLY_RE.search(user_message or "") else None
+
+
+def _intent_allowed_brands(user_message: str) -> list[str]:
+    text = (user_message or "").lower()
+    return [brand for brand in _KNOWN_HOTEL_BRANDS if brand in text]
+
+
+def _intent_strict_brand(user_message: str) -> bool:
+    text = user_message or ""
+    # In refinement, explicit vendor names are treated as a hard constraint:
+    # users expect "Marriott or Hilton" to change the actual hotel list, not
+    # merely bias a broad provider search.
+    return bool(_intent_allowed_brands(text))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -144,7 +222,7 @@ CRITICAL RULES for refinement:
 # the prompt instruction. Belt AND suspenders.
 # ═══════════════════════════════════════════════════════════════════════
 
-def _build_tools(state: dict) -> list:
+def _build_tools(state: dict, user_message: str = "") -> list:
     """Create state-aware tool instances for this invocation.
 
     Each tool auto-fills missing parameters from state, so the
@@ -168,6 +246,9 @@ def _build_tools(state: dict) -> list:
     _checkout = dates["hotel_checkout"]
     _outbound = dates["outbound_date"]
     _return = dates["return_date"]
+    _intent_stops = _intent_max_stops(user_message)
+    _intent_brands = _intent_allowed_brands(user_message)
+    _strict_brand = _intent_strict_brand(user_message)
 
     @tool
     def search_hotels_tool(
@@ -192,6 +273,10 @@ def _build_tools(state: dict) -> list:
             }
             if brand:
                 kwargs["brand"] = brand
+            elif _intent_brands:
+                kwargs["brand"] = " or ".join(_intent_brands)
+            if _strict_brand:
+                kwargs["strict_brand"] = True
             if stars > 0:
                 kwargs["stars"] = stars
             if max_price > 0:
@@ -227,8 +312,9 @@ def _build_tools(state: dict) -> list:
             effective_return = return_date or _return
             if effective_return:
                 kwargs["return_date"] = effective_return
-            if stops >= 0:
-                kwargs["stops"] = stops
+            effective_stops = stops if stops >= 0 else _intent_stops
+            if effective_stops is not None:
+                kwargs["stops"] = effective_stops
             if cabin:
                 kwargs["cabin"] = cabin
             logger.info("search_flights_tool called: %s", {k: v for k, v in kwargs.items() if v})
@@ -318,17 +404,20 @@ def _count_tool_messages(messages: list) -> int:
     return sum(1 for m in messages if isinstance(m, ToolMessage))
 
 
-def _collect_failed_tools(messages: list) -> list[str]:
-    failed = []
+def _collect_failed_tool_details(messages: list) -> dict[str, str]:
+    failed: dict[str, str] = {}
     for msg in messages:
         if not isinstance(msg, ToolMessage):
             continue
         content = (msg.content or "")
         if content.startswith(_TOOL_FAILURE_PREFIXES):
             name = getattr(msg, "name", "unknown_tool")
-            if name not in failed:
-                failed.append(name)
+            failed.setdefault(name, content)
     return failed
+
+
+def _collect_failed_tools(messages: list) -> list[str]:
+    return list(_collect_failed_tool_details(messages).keys())
 
 
 def _detect_date_override(messages: list, state: dict) -> bool:
@@ -368,6 +457,7 @@ def _build_deterministic_summary(
     updated_fields: dict[str, bool],
     failed_tools: list[str],
     date_override: bool,
+    failed_tool_details: dict[str, str] | None = None,
 ) -> str:
     cur = str(state.get("currency") or "EUR").upper()
     parts: list[str] = []
@@ -383,8 +473,21 @@ def _build_deterministic_summary(
             parts.append("Updated " + ", ".join(bits) + ".")
 
     if failed_tools:
-        nice = ", ".join(t.replace("_tool", "").replace("search_", "") for t in failed_tools)
-        parts.append(f"Tool call failed and did not update plan: {nice}.")
+        details = failed_tool_details or {}
+        entries = []
+        for tool_name in failed_tools:
+            nice = tool_name.replace("_tool", "").replace("search_", "")
+            detail = details.get(tool_name, "")
+            if detail:
+                # Keep the user-facing reply concise, but preserve the
+                # concrete failure reason (e.g. no required brand match).
+                entries.append(f"{nice} ({detail.split('. Try ', 1)[0]})")
+            else:
+                entries.append(nice)
+        parts.append(f"Tool call failed and did not update plan: {', '.join(entries)}.")
+
+    if (state.get("budget_summary") or {}).get("retry_exhausted"):
+        parts.append("No feasible plan under the requested budget was found after retries.")
 
     bs = state.get("budget_summary") or {}
     if bs:
@@ -634,7 +737,7 @@ def refine_plan(
     )
 
     # ── Create state-aware tools ─────────────────────────────────
-    tools = _build_tools(state)
+    tools = _build_tools(state, user_message)
 
     # ── Create and invoke supervisor ─────────────────────────────
     supervisor = create_react_agent(
@@ -688,11 +791,21 @@ def refine_plan(
     tool_call_count = _count_tool_messages(messages)
     failed_tools: list[str] = []
     if tool_call_count > 0:
-        failed_tools = _collect_failed_tools(messages)
+        failed_tool_details = _collect_failed_tool_details(messages)
+        failed_tools = list(failed_tool_details.keys())
         date_override = _detect_date_override(messages, state)
-        reply = _build_deterministic_summary(state, updated_fields, failed_tools, date_override)
+        reply = _build_deterministic_summary(
+            state,
+            updated_fields,
+            failed_tools,
+            date_override,
+            failed_tool_details,
+        )
         logger.info("refine_plan: deterministic reply used (tool_calls=%d, failed=%d, date_override=%s)",
                     tool_call_count, len(failed_tools), date_override)
+    elif not updated_fields and _requests_unpersisted_change(user_message):
+        reply = _unapplied_change_reply(user_message)
+        logger.info("refine_plan: unapplied change guard used for no-tool reply")
 
     # Return a small trace dict alongside (state, reply) so transport
     # layer can surface debug traces without re-scanning messages.

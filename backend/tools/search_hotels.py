@@ -27,6 +27,60 @@ logger = logging.getLogger(__name__)
 
 _TTL = 3 * 3600  # 3 hours
 
+_BRAND_ALIASES: dict[str, set[str]] = {
+    "marriott": {"marriott", "courtyard", "sheraton", "westin", "moxy", "ac hotel", "tribute portfolio", "renaissance"},
+    "hilton": {"hilton", "hampton", "doubletree", "curio", "canopy", "waldorf", "conrad", "tapestry"},
+    "hyatt": {"hyatt", "andaz", "thompson"},
+    "ihg": {"ihg", "holiday inn", "intercontinental", "voco", "crowne plaza"},
+}
+
+
+def _parse_allowed_brands(brand: str | None) -> list[str]:
+    """Parse a user/tool brand string into canonical allowed brands."""
+    if not brand:
+        return []
+    text = brand.lower()
+    allowed: list[str] = []
+    for canonical, aliases in _BRAND_ALIASES.items():
+        if canonical in text or any(alias in text for alias in aliases):
+            allowed.append(canonical)
+    if allowed:
+        return allowed
+
+    # Fallback for unknown vendor names: split a strict "A or B" style
+    # request into literal brand tokens.
+    parts = re.split(r"\bor\b|,|/|或|和", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _hotel_matches_brand(hotel: dict, allowed_brands: list[str]) -> bool:
+    name = str(hotel.get("name", "")).lower()
+    for brand in allowed_brands:
+        aliases = _BRAND_ALIASES.get(brand, {brand})
+        if any(alias in name for alias in aliases):
+            return True
+    return False
+
+
+def _filter_by_allowed_brands(results: list[dict], brand: str | None, strict_brand: bool) -> list[dict]:
+    """Deterministically enforce strict hotel-brand requests."""
+    if not strict_brand:
+        return results
+    allowed = _parse_allowed_brands(brand)
+    if not allowed:
+        return results
+
+    filtered: list[dict] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        if _hotel_matches_brand(item, allowed):
+            next_item = dict(item)
+            next_item["constraint_match"] = True
+            next_item["allowed_brands"] = allowed
+            filtered.append(next_item)
+    return filtered
+
 _HOTEL_LOCATION_ALIASES: dict[str, set[str]] = {
     "monza": {"monza", "milan", "brianza"},
     "monaco": {"monaco", "monte", "carlo", "nice"},
@@ -294,6 +348,7 @@ def search_hotels(
     checkin: str,
     checkout: str,
     brand: str | None = None,
+    strict_brand: bool = False,
     stars: int | None = None,
     max_price: float | None = None,
     near: str | None = None,
@@ -317,6 +372,7 @@ def search_hotels(
         results, report = query_parallel(sources, timeout=20)
         results = [item for item in results if isinstance(item, dict)]
         results = _filter_location_relevant_hotels(results, city, near)
+        results = _filter_by_allowed_brands(results, brand, strict_brand)
 
         if results:
             logger.info("search_hotels: parallel success — %s", report.summary())
@@ -330,8 +386,11 @@ def search_hotels(
     # ── Layer 2: LLM estimation ──────────────────────────────────
     logger.info("search_hotels: trying LLM estimation fallback")
     llm_results = _try_llm_estimate(city, checkin, checkout, brand, stars, max_price)
+    llm_results = _filter_by_allowed_brands(llm_results, brand, strict_brand)
     if llm_results:
         return llm_results, "source: llm_estimate (real-time data unavailable)"
 
     # ── Layer 3: Everything failed ───────────────────────────────
+    if strict_brand and brand:
+        raise RuntimeError(f"No hotel options matched required brand(s): {brand}")
     raise RuntimeError(f"All hotel data sources exhausted for {city}")

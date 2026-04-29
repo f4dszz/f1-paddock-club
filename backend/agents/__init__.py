@@ -10,11 +10,39 @@ Phase 2+: Replace mock with real LLM calls and tool invocations.
 
 from __future__ import annotations
 import logging
+import re
 
 from state import TravelPlanState
 from llm import get_llm, provider_label
 
 logger = logging.getLogger(__name__)
+
+
+_DIRECT_ONLY_RE = re.compile(
+    r"\b(only\s+direct|direct\s+only|non[-\s]?stop|no\s+stops?|without\s+stops?)\b"
+    r"|直飞|不转机|不要转机|无转机",
+    re.IGNORECASE,
+)
+
+_KNOWN_HOTEL_BRANDS = (
+    "marriott",
+    "hilton",
+    "hyatt",
+    "sheraton",
+    "westin",
+    "courtyard",
+    "holiday inn",
+    "intercontinental",
+)
+
+
+def _direct_only_requested(text: str) -> bool:
+    return bool(_DIRECT_ONLY_RE.search(text or ""))
+
+
+def _requested_hotel_brands(text: str) -> list[str]:
+    lowered = (text or "").lower()
+    return [brand for brand in _KNOWN_HOTEL_BRANDS if brand in lowered]
 
 
 def _msg(agent: str, text: str) -> dict:
@@ -124,6 +152,8 @@ def transport_agent(state: TravelPlanState) -> dict:
     origin = state.get("origin", "NYC")
     city = state.get("gp_city", "Milan")
     stops = state.get("stops", "")
+    request_text = f"{stops} {state.get('special_requests', '')}"
+    max_stops = 0 if _direct_only_requested(request_text) else None
 
     try:
         from tools.search_flights import search_flights
@@ -138,6 +168,7 @@ def transport_agent(state: TravelPlanState) -> dict:
             origin=origin, dest=city,
             date=dates["outbound_date"],
             return_date=dates["return_date"],
+            stops=max_stops,
         )
     except Exception:
         logger.exception("transport_agent: all tools failed, using mock")
@@ -147,6 +178,8 @@ def transport_agent(state: TravelPlanState) -> dict:
     msgs = [_msg("transport", f"Found flights {origin} <-> {city} ({source_summary})")]
     if stops:
         msgs.append(_msg("transport", f"Multi-stop route noted: {stops}"))
+    if max_stops == 0:
+        msgs.append(_msg("transport", "Applied hard constraint: direct flights only"))
 
     return {"transport": transport, "messages": msgs}
 
@@ -188,6 +221,9 @@ def hotel_agent(state: TravelPlanState) -> dict:
     retry = state.get("retry_count", 0)
     city = state.get("gp_city", "Monza")
     days = _trip_days(state)
+    requested_brands = _requested_hotel_brands(state.get("special_requests", ""))
+    strict_brand = bool(requested_brands)
+    brand = " or ".join(requested_brands)
 
     try:
         from tools.search_hotels import search_hotels
@@ -207,11 +243,17 @@ def hotel_agent(state: TravelPlanState) -> dict:
             checkin=dates["hotel_checkin"],
             checkout=dates["hotel_checkout"],
             max_price=max_price,
+            brand=brand or None,
+            strict_brand=strict_brand,
         )
     except Exception:
         logger.exception("hotel_agent: all tools failed, using mock")
-        hotel = _hotel_mock(state, budget_retry=(retry > 0))
-        source_summary = "source: mock (all data sources failed)"
+        if strict_brand:
+            hotel = []
+            source_summary = f"no hotel options matched required brand(s): {brand}"
+        else:
+            hotel = _hotel_mock(state, budget_retry=(retry > 0))
+            source_summary = "source: mock (all data sources failed)"
 
     if retry > 0:
         return {
@@ -451,11 +493,19 @@ def budget_agent(state: TravelPlanState) -> dict:
     budget = summary["budget"]
     within = summary["within_budget"]
     cur = summary.get("currency", "EUR")
+    retry_exhausted = not within and state.get("retry_count", 0) >= 2
 
+    if retry_exhausted:
+        text = (
+            f"Total {cur} {total:.0f} / {cur} {budget:.0f} — OVER BUDGET "
+            "(retries exhausted: no feasible plan found within budget yet)"
+        )
+    else:
+        text = f"Total {cur} {total:.0f} / {cur} {budget:.0f} — {'within budget' if within else 'OVER BUDGET'}"
     return {
         "budget_summary": summary,
         "budget_ok": within,
-        "messages": [_msg("budget", f"Total {cur} {total:.0f} / {cur} {budget:.0f} — {'within budget' if within else 'OVER BUDGET'}")],
+        "messages": [_msg("budget", text)],
     }
 
 
