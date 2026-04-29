@@ -14,6 +14,10 @@ const PIPELINE = [
   { zones:["plan","tour"], label:"Planning schedule + sights in parallel..." },
 ];
 
+// Map each backend agent name to the PIPELINE batch it belongs to,
+// so a streamed agent status message can drive the right ThinkPanel.
+const AGENT_TO_BATCH = { ticket:0, transport:1, hotel:1, plan:2, tour:2, budget:2 };
+
 const CONC_HOME = { x:46, y:46 };
 
 const THINK = {
@@ -65,6 +69,7 @@ function transformResults(data) {
           price: pv>0 ? `${t.currency||"USD"} ${t.price}` : "Price not provided",
           pv, priced: pv>0,
           currency:t.currency||"USD", link:t.link||"",
+          source:t._source||"mock", degraded:t._degraded===true||!t._source,
         };
       })
     };
@@ -79,6 +84,7 @@ function transformResults(data) {
           price: pv>0 ? `${h.currency||"USD"} ${h.price_per_night}/n` : "Price not provided",
           pv, priced: pv>0,
           currency:h.currency||"USD", link:h.link||"",
+          source:h._source||"mock", degraded:h._degraded===true||!h._source,
         };
       })
     };
@@ -169,6 +175,22 @@ function SingleThinkStream({lines,color,onDone}){
 
 // Currency symbol lookup (for cards which show source currency per plan A)
 const CUR_SYMBOL={EUR:"€",USD:"$",CNY:"¥"};
+
+// Provenance badge: where the data on a card came from. Lets a cold
+// visitor see at a glance whether a hotel/flight row is real-time, an
+// LLM estimate, or fallback mock data — so the UI never overclaims.
+const SOURCE_LABELS={
+  google_flights:{text:"Live · SerpAPI",color:"#22C55E"},
+  google_search:{text:"Live · SerpAPI",color:"#22C55E"},
+  google_hotels:{text:"Live · SerpAPI",color:"#22C55E"},
+  google_maps:{text:"Live · SerpAPI",color:"#22C55E"},
+  llm_estimate:{text:"Estimated · LLM",color:"#F59E0B"},
+  mock:{text:"Mock data",color:"#6B7280"},
+};
+function SourceBadge({source}){
+  const meta=SOURCE_LABELS[source]||SOURCE_LABELS.mock;
+  return <span title={`Data source: ${source||"mock"}`} style={{fontSize:7,fontWeight:600,color:meta.color,background:meta.color+"15",border:`1px solid ${meta.color}33`,padding:"1px 5px",borderRadius:8,letterSpacing:"0.02em",whiteSpace:"nowrap",flexShrink:0}}>{meta.text}</span>;
+}
 
 // ── Trip-date helpers ─────────────────────────────────────────────
 // Default "suggested" dates when the user first picks a GP: arrive
@@ -289,6 +311,7 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
               <div style={{fontSize:10.5,fontWeight:500,color:"#ddd"}}>{it.main}</div>
               {it.sub&&<div style={{fontSize:9,color:"#555"}}>{it.sub}</div>}
             </div>
+            {(zoneKey==="hotel"||zoneKey==="transport")&&it.source&&<SourceBadge source={it.source}/>}
             {it.price&&<span style={{fontSize:unpriced?9:10.5,fontWeight:unpriced?400:600,color:unpriced?"#666":(isSel?"#fff":"#888"),fontStyle:unpriced?"italic":"normal"}}>{it.price}</span>}
             {unpriced&&it.link&&<button onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>Check →</button>}
           </div>
@@ -458,6 +481,15 @@ export default function App(){
       if(zone){
         setZSt(prev=>({...prev,[zone]:"active"}));
         setTimeout(()=>setZSt(prev=>({...prev,[zone]:"done"})),800);
+      }
+      const batchIdx=AGENT_TO_BATCH[agent];
+      if(batchIdx!==undefined){
+        setPipeIdx(prev=>Math.max(prev,batchIdx));
+        setThinkBatch(prev=>{
+          const target=PIPELINE[batchIdx].zones;
+          const same=prev&&prev.length===target.length&&prev.every((z,i)=>z===target[i]);
+          return same?prev:target;
+        });
       }
     }
     if(msg.type==="result"){
