@@ -21,6 +21,9 @@ Thumbs.db
 # Claude Code local settings
 .claude/
 
+# Local multi-agent harness / scratch coordination
+.local_harness/
+
 # Backend log files
 backend/logs/
 
