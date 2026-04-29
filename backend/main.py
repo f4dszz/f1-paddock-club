@@ -25,12 +25,21 @@ import asyncio
 import copy
 import json
 import logging
+import os
+import time
 
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError, field_validator
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from logging_config import setup_logging
 from graph import plan_trip
@@ -41,6 +50,126 @@ from tools._trip_dates import validate_trip_dates
 
 
 logger = logging.getLogger(__name__)
+
+
+def _csv_env(name: str) -> list[str]:
+    return [v.strip() for v in os.environ.get(name, "").split(",") if v.strip()]
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+        return max(value, minimum)
+    except (TypeError, ValueError):
+        return default
+
+
+_APP_ENV = os.environ.get("APP_ENV") or os.environ.get("ENV") or "local"
+_IS_LOCAL_ENV = _APP_ENV.strip().lower() in {"", "local", "dev", "development", "test"}
+_DEV_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_ALLOWED_ORIGINS = _csv_env("ALLOWED_ORIGINS") or (_DEV_ORIGINS if _IS_LOCAL_ENV else [])
+_ALLOWED_ORIGINS_SET = set(_ALLOWED_ORIGINS)
+_DEMO_ACCESS_TOKEN = os.environ.get("DEMO_ACCESS_TOKEN", "").strip()
+_REQUIRE_DEMO_TOKEN = bool(_DEMO_ACCESS_TOKEN) or (
+    not _IS_LOCAL_ENV
+) or _env_flag("REQUIRE_DEMO_TOKEN", False)
+_MAX_CONCURRENT_PLANS = _int_env("MAX_CONCURRENT_PLANS", 5)
+_PLAN_ACQUIRE_TIMEOUT_SECONDS = _int_env("PLAN_ACQUIRE_TIMEOUT_SECONDS", 5)
+_HTTP_LIMIT_PER_MINUTE = _int_env("HTTP_RATE_LIMIT_PER_MINUTE", 60)
+_WS_LIMIT_PER_MINUTE = _int_env("WS_CONNECT_LIMIT_PER_MINUTE", 20)
+_plan_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_PLANS)
+
+
+class ServerBusyError(RuntimeError):
+    pass
+
+
+class IPRateLimiter:
+    """Small in-process sliding-window limiter for demo-stage abuse control."""
+
+    def __init__(self, max_per_window: int, window_seconds: int):
+        self.max_per_window = max_per_window
+        self.window_seconds = window_seconds
+        self._events: dict[str, deque[float]] = defaultdict(deque)
+
+    def allow(self, ip: str) -> bool:
+        if self.max_per_window <= 0:
+            return True
+        now = time.monotonic()
+        events = self._events[ip]
+        cutoff = now - self.window_seconds
+        while events and events[0] < cutoff:
+            events.popleft()
+        if len(events) >= self.max_per_window:
+            return False
+        events.append(now)
+        return True
+
+
+_http_rate_limiter = IPRateLimiter(_HTTP_LIMIT_PER_MINUTE, 60)
+_ws_connect_limiter = IPRateLimiter(_WS_LIMIT_PER_MINUTE, 60)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _ws_client_ip(ws: WebSocket) -> str:
+    forwarded = ws.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return ws.client.host if ws.client else "unknown"
+
+
+def _valid_http_token(authorization: str | None) -> bool:
+    if not _REQUIRE_DEMO_TOKEN:
+        return True
+    if not _DEMO_ACCESS_TOKEN:
+        return False
+    return authorization == f"Bearer {_DEMO_ACCESS_TOKEN}"
+
+
+def _valid_ws_token(token: str | None) -> bool:
+    if not _REQUIRE_DEMO_TOKEN:
+        return True
+    return bool(_DEMO_ACCESS_TOKEN and token == _DEMO_ACCESS_TOKEN)
+
+
+def _check_http_access(request: Request, authorization: str | None) -> None:
+    ip = _client_ip(request)
+    if not _http_rate_limiter.allow(ip):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    if not _valid_http_token(authorization):
+        raise HTTPException(status_code=401, detail="Missing or invalid demo token")
+
+
+def _ws_origin_allowed(ws: WebSocket) -> bool:
+    origin = ws.headers.get("origin", "")
+    if not origin or not _ALLOWED_ORIGINS_SET:
+        return True
+    return origin in _ALLOWED_ORIGINS_SET
+
+
+async def _run_plan_with_limit(payload: dict) -> dict:
+    try:
+        async with asyncio.timeout(_PLAN_ACQUIRE_TIMEOUT_SECONDS):
+            await _plan_semaphore.acquire()
+    except TimeoutError as exc:
+        raise ServerBusyError("Server is busy. Please try again shortly.") from exc
+    try:
+        return await asyncio.to_thread(plan_trip, payload)
+    finally:
+        _plan_semaphore.release()
 
 
 @asynccontextmanager
@@ -58,9 +187,9 @@ app = FastAPI(title="F1 Paddock Club", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -149,8 +278,12 @@ def _state_snapshot(state: dict) -> dict:
 # ── GET /api/calendar — GP list for frontend ────────────────────────
 
 @app.get("/api/calendar")
-async def get_calendar():
+async def get_calendar(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
     """Return the 2026 race calendar for the GP selection grid."""
+    _check_http_access(request, authorization)
     from datetime import date
     today = date.today()
     races = all_races()
@@ -171,18 +304,26 @@ async def get_calendar():
 # ── POST /plan (unchanged, backward compatible) ────────────────────
 
 @app.post("/plan")
-async def plan(payload: dict):
+async def plan(
+    payload: dict,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
     """Run the full planning pipeline and return the result.
 
     Validates explicitly via _validate_plan_payload so that invalid
     input (e.g. unsupported currency) surfaces as a clean 400 rather
     than Pydantic's default 422 or a downstream 500.
     """
+    _check_http_access(request, authorization)
     try:
         req = _validate_plan_payload(payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    result = await asyncio.to_thread(plan_trip, req.model_dump())
+    try:
+        result = await _run_plan_with_limit(req.model_dump())
+    except ServerBusyError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     snapshot = _state_snapshot(result)
     snapshot["messages"] = result.get("messages", [])
     return snapshot
@@ -276,6 +417,17 @@ async def websocket_session(ws: WebSocket):
     type=chat as the very first message goes to refine.py planning mode
     (produces 3/5 sections — no itinerary/tour).
     """
+    client_ip = _ws_client_ip(ws)
+    if not _ws_connect_limiter.allow(client_ip):
+        await ws.close(code=1008)
+        return
+    if not _ws_origin_allowed(ws):
+        await ws.close(code=1008)
+        return
+    if not _valid_ws_token(ws.query_params.get("demo_token")):
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     session = create_session()
 
@@ -332,12 +484,12 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
     sends a type=error without closing the socket, so the user can
     correct the input and try again.
     """
-    logger.info("/ws plan: %s", data.get("gp_name", "?"))
+    logger.info("/ws plan: %s", data.get("gp_name", "?") if isinstance(data, dict) else "?")
 
     # Debug opt-in: once set on a plan call, it stays on for subsequent
     # chats in the same session. Plan-envelope flag is preferred over a
     # ws query string because it lets clients toggle per-request later.
-    if data.get("debug") is True or data.get("_debug") is True:
+    if isinstance(data, dict) and (data.get("debug") is True or data.get("_debug") is True):
         session["debug"] = True
 
     try:
@@ -352,7 +504,11 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
     })
 
     before = session.get("plan_state") or {}
-    result = await asyncio.to_thread(plan_trip, req.model_dump())
+    try:
+        result = await _run_plan_with_limit(req.model_dump())
+    except ServerBusyError as e:
+        await ws.send_json({"type": "error", "data": str(e)})
+        return
 
     for msg in result.get("messages", []):
         await ws.send_json({"type": "message", "data": msg})

@@ -126,7 +126,7 @@ f1-paddock-club/
 
 ```bash
 # One-time setup
-cd backend && pip install -r requirements.txt && cp .env.example .env
+cd backend && python -m venv .venv && .venv/bin/python -m pip install -r requirements.txt && cp .env.example .env
 # Edit .env - at minimum set OPENAI_API_KEY
 cd ../frontend && npm install
 cd ..
@@ -137,9 +137,9 @@ cd ..
 # Frontend: http://localhost:3000 (Vite may open a browser tab automatically depending on environment)
 ```
 
-### Recommended: two-terminal dev workflow (Windows / Git Bash)
+### Recommended: two-terminal dev workflow (macOS / Linux / Windows Git Bash)
 
-`start.sh` only cleans up if you stop with `Ctrl+C` in the same terminal. For day-to-day development on Windows, use the dedicated scripts in `scripts/`:
+`start.sh` only cleans up if you stop with `Ctrl+C` in the same terminal. For day-to-day development, use the dedicated scripts in `scripts/`:
 
 ```bash
 # Terminal 1: backend on :8001
@@ -194,7 +194,8 @@ cd frontend
 
 ```bash
 cd backend
-pip install -r requirements.txt
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 #### 2. (Optional) Configure an LLM provider
@@ -235,6 +236,27 @@ OPENAI_MODEL=deepseek-chat
 ```
 
 > Prefer environment variables over a `.env` file? Just `export` the same names — `llm.py` reads both. The `.env` file is gitignored.
+
+#### 2b. Optional deployment/demo access gate
+
+Local dev defaults to no token gate. In deployed environments, set a shared demo token and explicit origins so public traffic cannot burn API/LLM quota:
+
+```ini
+APP_ENV=production
+ALLOWED_ORIGINS=https://your-frontend.example
+DEMO_ACCESS_TOKEN=change-me
+MAX_CONCURRENT_PLANS=5
+HTTP_RATE_LIMIT_PER_MINUTE=60
+WS_CONNECT_LIMIT_PER_MINUTE=20
+```
+
+For a split-origin frontend, copy `frontend/.env.example` to `frontend/.env.local` and set:
+
+```ini
+VITE_BACKEND_URL=https://your-backend.example
+VITE_WS_URL=wss://your-backend.example/ws
+VITE_DEMO_TOKEN=change-me
+```
 
 ### 3. Run the CLI test
 
