@@ -4,6 +4,12 @@
 
 [简体中文](./README.zh-CN.md) · English
 
+![F1 Paddock Club demo](docs/demo.gif)
+
+<!-- TODO: replace docs/demo.gif with a 5-second screen recording of:
+     GP card click → calendar load → plan generated → first refine.
+     Record at 1280x720, 8fps, ~3MB. -->
+
 ---
 
 ## Why this project
