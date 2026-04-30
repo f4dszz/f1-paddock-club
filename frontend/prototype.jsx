@@ -54,6 +54,8 @@ function transformResults(data) {
           price: pv>0 ? `${t.currency||"EUR"} ${t.price}` : "Price not provided",
           pv, priced: pv>0,
           currency:t.currency||"EUR", link:t.link||"",
+          provider:t.provider||"Formula 1", linkType:t.link_type||"official_ticket_page",
+          bookingConfidence:t.booking_confidence||"medium",
         };
       })
     };
@@ -70,6 +72,8 @@ function transformResults(data) {
           pv, priced: pv>0,
           currency:t.currency||"USD", link:t.link||"",
           source:t._source||"mock", degraded:t._degraded===true||!t._source,
+          provider:t.provider||"Google Flights", linkType:t.link_type||"flight_search",
+          bookingConfidence:t.booking_confidence||"search",
         };
       })
     };
@@ -85,6 +89,8 @@ function transformResults(data) {
           pv, priced: pv>0,
           currency:h.currency||"USD", link:h.link||"",
           source:h._source||"mock", degraded:h._degraded===true||!h._source,
+          provider:h.provider||"Hotel provider", linkType:h.link_type||"hotel_listing",
+          bookingConfidence:h.booking_confidence||"medium",
         };
       })
     };
@@ -192,6 +198,30 @@ function SourceBadge({source}){
   return <span title={`Data source: ${source||"mock"}`} style={{fontSize:7,fontWeight:600,color:meta.color,background:meta.color+"15",border:`1px solid ${meta.color}33`,padding:"1px 5px",borderRadius:8,letterSpacing:"0.02em",whiteSpace:"nowrap",flexShrink:0}}>{meta.text}</span>;
 }
 
+const LINK_LABELS={
+  official_ticket_page:"Open official ticket page",
+  flight_search:"Open flight search",
+  hotel_listing:"Open hotel listing",
+  maps_listing:"Open maps listing",
+  hotel_search:"Open hotel search",
+  provider_search:"Open provider search",
+  local_info:"Open local info",
+};
+function linkActionLabel(item){
+  return LINK_LABELS[item?.linkType]||"Open provider";
+}
+
+function constraintLabels(c){
+  const labels=[];
+  if(c?.direct_only)labels.push("Direct flights only");
+  if(c?.allowed_hotel_brands?.length)labels.push(`Hotels: ${c.allowed_hotel_brands.join(" / ")}`);
+  if(c?.dietary)labels.push(`Dietary: ${c.dietary}`);
+  if(c?.accessibility)labels.push("Accessibility");
+  if(c?.avoid_luxury)labels.push("Avoid luxury");
+  if(c?.budget_strategy&&c.budget_strategy!=="balanced")labels.push(`Budget: ${c.budget_strategy}`);
+  return labels;
+}
+
 // ── Trip-date helpers ─────────────────────────────────────────────
 // Default "suggested" dates when the user first picks a GP: arrive
 // Friday of the race weekend, leave 3 days after race Sunday.
@@ -252,8 +282,8 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
   const{mode,items,bookLabel,bookIcon}=data;
   const sel=selections[zoneKey]||[];
   const hasSelection=sel.length>0;
-  // Only priced items can be selected; unpriced items are shown as
-  // informational with optional click-through to the provider's site.
+  // Unpriced items are selectable now: the backend quote marks the
+  // budget incomplete instead of pretending the missing price is zero.
   const unpricedCount=items.filter(it=>it.priced===false&&it.pv===0&&(mode==="single"||mode==="multi")).length;
   // Chip logic: if all selected items share one currency, show that
   // total; if mixed (rare), show a neutral "N selected" instead of
@@ -265,14 +295,11 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
   const chipText=chipSameCur
     ?`${CUR_SYMBOL[chipSameCur]||(chipSameCur+" ")}${selectedTotal}`
     :`${sel.length} selected`;
-  // Only priced items with a link are truly bookable via the batch button.
-  // Unpriced items with links are still jumpable per-row (see render below).
-  const bookableItems=sel.filter(idx=>items[idx]?.link&&items[idx]?.priced!==false);
+  const bookableItems=sel.filter(idx=>items[idx]?.link);
 
   const toggle=(idx)=>{
     if(mode==="none")return;
     const it=items[idx];
-    if(it&&it.priced===false)return;  // can't add unpriced to budget selection
     if(mode==="single") onSelect(zoneKey,sel[0]===idx?[]:[idx]);
     else{
       const next=sel.includes(idx)?sel.filter(x=>x!==idx):[...sel,idx];
@@ -291,7 +318,7 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
       </div>
       {items.map((it,i)=>{
         const isSel=sel.includes(i);
-        const selectable=mode!=="none" && it.priced!==false;
+        const selectable=mode!=="none";
         const isRadio=mode==="single";
         const unpriced=it.priced===false && (mode==="single"||mode==="multi");
         return(
@@ -313,7 +340,7 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
             </div>
             {(zoneKey==="hotel"||zoneKey==="transport")&&it.source&&<SourceBadge source={it.source}/>}
             {it.price&&<span style={{fontSize:unpriced?9:10.5,fontWeight:unpriced?400:600,color:unpriced?"#666":(isSel?"#fff":"#888"),fontStyle:unpriced?"italic":"normal"}}>{it.price}</span>}
-            {unpriced&&it.link&&<button onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>Check →</button>}
+            {unpriced&&it.link&&<button onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>{linkActionLabel(it)} →</button>}
           </div>
         );
       })}
@@ -325,9 +352,9 @@ function ResultCard({zoneKey,selections,onSelect,liveResults}){
               if(url) window.open(url,"_blank");
             });
           }} style={{width:"100%",padding:"7px",borderRadius:5,border:"none",background:z.color,color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <span style={{fontSize:12}}>{bookIcon}</span> {bookLabel} ({bookableItems.length})
+            <span style={{fontSize:12}}>{bookIcon}</span> {bookableItems.length===1?linkActionLabel(items[bookableItems[0]]):`Open selected links (${bookableItems.length})`}
           </button>
-          <div style={{fontSize:8,color:"#444",textAlign:"center",marginTop:3}}>Opens the official booking site in a new tab</div>
+          <div style={{fontSize:8,color:"#444",textAlign:"center",marginTop:3}}>Opens provider/search pages; not a purchase confirmation.</div>
         </div>
       )}
     </div>
@@ -410,6 +437,9 @@ export default function App(){
   const[results,setResults]=useState([]);
   const[liveResults,setLiveResults]=useState({});
   const[budgetSummary,setBudgetSummary]=useState(null);
+  const[baselineBudgetSummary,setBaselineBudgetSummary]=useState(null);
+  const[selectedBudgetSummary,setSelectedBudgetSummary]=useState(null);
+  const[activeConstraints,setActiveConstraints]=useState({});
   const[chatInput,setChatInput]=useState("");
   const[chatMsgs,setChatMsgs]=useState([]);
   const[statusMsgs,setStatusMsgs]=useState([]);
@@ -424,6 +454,7 @@ export default function App(){
   const scrollRef=useRef(null);
   const resolveRef=useRef(null);
   const wsRef=useRef(null);
+  const quoteSeqRef=useRef(0);
 
   const pushDebug=useCallback((label, data) => {
     const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
@@ -510,8 +541,17 @@ export default function App(){
       prevResultsRef.current=transformed;
       RESULTS=transformed;
       setLiveResults(transformed);
+      setBaselineBudgetSummary(d.budget_summary);
+      setSelectedBudgetSummary(null);
       setBudgetSummary(d.budget_summary);
+      setActiveConstraints(d.active_constraints||{});
       setResults(Object.keys(transformed));
+    }
+    if(msg.type==="quote"){
+      const d=msg.data||{};
+      if(d.quote_id&&d.quote_id!==quoteSeqRef.current)return;
+      setSelectedBudgetSummary(d.budget_summary||null);
+      setBudgetSummary(d.budget_summary||baselineBudgetSummary);
     }
     if(msg.type==="reply"){
       setChatMsgs(prev=>[...prev,{from:"c",text:msg.data}]);
@@ -569,7 +609,7 @@ export default function App(){
       depart_date: form.departDate,
       return_date: form.returnDate,
     });
-    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setSelections({});setUpdatedCards(new Set());
+    cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setSelectedBudgetSummary(null);setActiveConstraints({});setSelections({});setUpdatedCards(new Set());
     prevResultsRef.current=null;
     setChatMsgs([]);setStatusMsgs([{agent:"concierge",text:"Welcome, VIP! Connecting to your team..."}]);setShowStatus(false);
     setPhase("running");setSpeaking(true);setPipeIdx(0);
@@ -601,11 +641,31 @@ export default function App(){
     }
   };
 
-  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());prevResultsRef.current=null;};
+  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setSelectedBudgetSummary(null);setActiveConstraints({});setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());prevResultsRef.current=null;};
   const backToSelect=()=>{reset();setScreen("select");setGp(null);};
 
   // ── WebSocket-driven chat ────────────────────────────────────────
   const wsAlive=()=>wsRef.current&&wsRef.current.readyState===WebSocket.OPEN;
+
+  const handleSelectionChange=(zone,arr)=>{
+    const next={...selections,[zone]:arr};
+    if(!arr.length) delete next[zone];
+    setSelections(next);
+    const hasAny=Object.values(next).some(v=>Array.isArray(v)&&v.length>0);
+    if(!hasAny){
+      setSelectedBudgetSummary(null);
+      setBudgetSummary(baselineBudgetSummary);
+      return;
+    }
+    if(!wsAlive()){
+      pushDebug("quote.blocked.no_ws");
+      return;
+    }
+    const quoteId=quoteSeqRef.current+1;
+    quoteSeqRef.current=quoteId;
+    pushDebug("quote.send", {quote_id:quoteId,selections:next});
+    wsRef.current.send(JSON.stringify({type:"quote",data:{quote_id:quoteId,selections:next}}));
+  };
 
   const handleChat=()=>{
     const t=chatInput.trim();if(!t)return;
@@ -797,10 +857,18 @@ export default function App(){
           </div>
         )}
 
+        {phase==="done"&&constraintLabels(activeConstraints).length>0&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+            {constraintLabels(activeConstraints).map(label=>(
+              <span key={label} style={{fontSize:8,color:"#93C5FD",border:"1px solid #2563EB44",background:"#1D4ED814",borderRadius:999,padding:"2px 7px"}}>{label}</span>
+            ))}
+          </div>
+        )}
+
         {/* Result cards — with highlight animation for updated cards after refine */}
         {results.map(key=>(
           <div key={key} style={{borderRadius:8,border:updatedCards.has(key)?"1px solid #E1060066":"1px solid transparent",transition:"border-color 0.5s",animation:updatedCards.has(key)?"cardPulse 1s ease-out":"none"}}>
-            <ResultCard zoneKey={key} selections={selections} onSelect={(zone,arr)=>setSelections(prev=>({...prev,[zone]:arr}))} liveResults={liveResults}/>
+            <ResultCard zoneKey={key} selections={selections} onSelect={handleSelectionChange} liveResults={liveResults}/>
           </div>
         ))}
 
@@ -809,6 +877,13 @@ export default function App(){
           const total=bs.total||0;
           const budget=bs.budget||+(form.budget||2500);
           const within=bs.within_budget;
+          const quoteComplete=bs.quote_complete!==false;
+          const isSelected=bs.basis==="selected";
+          const tone=quoteComplete?(within?"#22C55E":"#EF4444"):"#F59E0B";
+          const toneSoft=quoteComplete?(within?"#22C55E33":"#EF444433"):"#F59E0B44";
+          const toneGradient=quoteComplete
+            ?(within?"linear-gradient(90deg,#22C55E,#4ADE80)":"linear-gradient(90deg,#EF4444,#F87171)")
+            :"linear-gradient(90deg,#F59E0B,#FBBF24)";
           const items=bs.items||[];
           const cur=bs.currency||form.currency||"EUR";
           const sym=CUR_SYMBOL[cur]||(cur+" ");
@@ -817,8 +892,8 @@ export default function App(){
           const unpricedCount=Object.values(liveResults||{}).reduce((n,zone)=>
             n + (zone.items||[]).filter(it=>it.priced===false && (zone.mode==="single"||zone.mode==="multi")).length, 0);
           return(
-            <div style={{background:"#111",border:`1px solid ${within?"#22C55E33":"#EF444433"}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
-              <div style={{fontSize:9,color:"#666",marginBottom:6}}>Budget breakdown ({cur})</div>
+            <div style={{background:"#111",border:`1px solid ${toneSoft}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
+              <div style={{fontSize:9,color:"#666",marginBottom:6}}>{isSelected?"Your selected total":"Baseline estimate"} ({cur})</div>
               {items.map((it,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#aaa",padding:"2px 0"}}>
                   <span>{it.name}</span><span style={{color:"#ddd"}}>{sym}{Math.round(it.amount)}</span>
@@ -827,14 +902,16 @@ export default function App(){
               <div style={{borderTop:"1px solid #222",marginTop:4,paddingTop:4}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                   <span style={{fontSize:9,color:"#888"}}>Estimated total</span>
-                  <span style={{fontSize:13,fontWeight:700,color:within?"#22C55E":"#EF4444"}}>{sym}{Math.round(total).toLocaleString()} <span style={{fontSize:9,fontWeight:400,color:"#555"}}>/ {sym}{Math.round(budget).toLocaleString()}</span></span>
+                  <span style={{fontSize:13,fontWeight:700,color:tone}}>{quoteComplete?"": "Pending · "}{sym}{Math.round(total).toLocaleString()} <span style={{fontSize:9,fontWeight:400,color:"#555"}}>/ {sym}{Math.round(budget).toLocaleString()}</span></span>
                 </div>
                 <div style={{height:4,borderRadius:2,background:"#1a1a1a",overflow:"hidden"}}>
-                  <div style={{height:"100%",borderRadius:2,background:within?"linear-gradient(90deg,#22C55E,#4ADE80)":"linear-gradient(90deg,#EF4444,#F87171)",width:`${Math.min(total/budget*100,100)}%`,transition:"width .5s"}}/>
+                  <div style={{height:"100%",borderRadius:2,background:toneGradient,width:`${Math.min(total/budget*100,100)}%`,transition:"width .5s"}}/>
                 </div>
-                {bs.savings_tip&&<div style={{fontSize:8,color:"#EF4444",marginTop:4}}>{bs.savings_tip}</div>}
-                {unpricedCount>0&&<div style={{fontSize:8,color:"#666",marginTop:4,fontStyle:"italic"}}>{unpricedCount} option{unpricedCount>1?"s":""} without prices excluded. Budget based on cheapest available.</div>}
-                {unpricedCount===0&&<div style={{fontSize:8,color:"#444",marginTop:4,fontStyle:"italic"}}>Budget based on cheapest available options.</div>}
+                {bs.savings_tip&&<div style={{fontSize:8,color:quoteComplete?"#EF4444":"#F59E0B",marginTop:4}}>{bs.savings_tip}</div>}
+                {!quoteComplete&&<div style={{fontSize:8,color:"#F59E0B",marginTop:4}}>Incomplete quote: pending {bs.missing_price_categories?.join(", ")||"price"}.</div>}
+                {quoteComplete&&isSelected&&<div style={{fontSize:8,color:"#444",marginTop:4,fontStyle:"italic"}}>Budget based on your selected cards.</div>}
+                {quoteComplete&&!isSelected&&unpricedCount>0&&<div style={{fontSize:8,color:"#666",marginTop:4,fontStyle:"italic"}}>{unpricedCount} option{unpricedCount>1?"s":""} without prices available. Baseline uses cheapest priced options.</div>}
+                {quoteComplete&&!isSelected&&unpricedCount===0&&<div style={{fontSize:8,color:"#444",marginTop:4,fontStyle:"italic"}}>Budget based on cheapest available options.</div>}
               </div>
             </div>
           );
