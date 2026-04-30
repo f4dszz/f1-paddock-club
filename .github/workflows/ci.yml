@@ -57,8 +57,11 @@ jobs:
       - name: Byte-compile all modules
         run: python -m compileall -q .
 
-      # Future steps go here: pytest, mypy, ruff. Each should be its
-      # own named step so the PR checks UI surfaces it individually.
+      - name: Backend unit tests
+        run: python -m unittest discover -s tests -v
+
+      # Future steps go here: mypy, ruff. Each should be its own named
+      # step so the PR checks UI surfaces it individually.
 
   frontend:
     name: Frontend — build

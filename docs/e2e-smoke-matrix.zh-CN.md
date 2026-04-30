@@ -45,9 +45,9 @@ deferred; the document itself is the contract.
 
 | # | Scenario | Input | Expected | Status |
 |---|----------|-------|----------|--------|
-| 4.1 | Zero-price flight from SerpAPI | API returns `price=0` | card shows "Price not provided", checkbox disabled, excluded from budget, Check→ link shown if URL present | ✅ |
+| 4.1 | Zero-price flight from SerpAPI | API returns `price=0` | card shows "Price not provided"; if selected, quote turns amber/incomplete instead of treating price as zero | ✅ |
 | 4.2 | Zero-price hotel from SerpAPI | same as 4.1 | same treatment | ✅ |
-| 4.3 | Budget exclusion note | 2 unpriced items present | budget breakdown footer: "2 options without prices excluded" | ✅ |
+| 4.3 | Budget missing-price note | 2 unpriced items present | baseline notes missing prices; selected quote lists pending categories | ✅ |
 | 4.4 | All external APIs fail | `SERPAPI_API_KEY` unset | three-tier fallback to mock; demo does not crash | ✅ |
 
 ## 5. Selection / booking semantics
@@ -55,10 +55,22 @@ deferred; the document itself is the contract.
 | # | Scenario | Input | Expected | Status |
 |---|----------|-------|----------|--------|
 | 5.1 | Swap hotel selection | A → B | selected-row style updates, chip recomputes | ✅ |
-| 5.2 | Budget reacts to selection | pick a different hotel | budget bar should reflect the picked option | ❌ known product-semantics limitation: budget reflects the cheapest valid plan, not live selections; planned as a follow-up feature |
-| 5.3 | Book tickets | select + click Book | opens Formula1.com official page | ✅ |
-| 5.4 | Book flight | single pick + click Book | opens corresponding booking URL | ✅ |
-| 5.5 | Tour/Explore interaction | 6 suggestion rows visible | display-only (no selection) | ✅ |
+| 5.2 | Budget reacts to selection | pick a different hotel | WebSocket `quote` returns selected total; budget bar switches to "Your selected total" | ✅ |
+| 5.3 | Unpriced selected quote | select a "Price not provided" flight/hotel | item can be selected; budget turns amber and says quote is incomplete | ✅ |
+| 5.4 | Quote before plan | send `type=quote` before `type=plan` | backend returns error and does not crash socket | ✅ |
+| 5.5 | Book tickets | select + click Book | opens Formula1.com official page | ✅ |
+| 5.6 | Book flight | single pick + click Book | opens corresponding booking/search URL with honest link copy | ✅ |
+| 5.7 | Tour/Explore interaction | 6 suggestion rows visible | display-only unless changed by chat refinement | ✅ |
+
+## 5B. Constraint memory / editable content
+
+| # | Scenario | Input | Expected | Status |
+|---|----------|-------|----------|--------|
+| 5B.1 | Direct constraint persists | "only direct flights" → "make it cheaper" | active constraint chip still shows direct-only; later flight searches keep max stops 0 | ✅ |
+| 5B.2 | Hotel brand constraint persists | "只要万豪或希尔顿酒店" → "make it cheaper" | hotel brand chip persists; later hotel searches remain brand-filtered unless cleared | ✅ |
+| 5B.3 | Clear constraints | "connections are OK and any brand is fine" | direct-only and hotel-brand chips clear | ✅ |
+| 5B.4 | Itinerary persistence | "Move Saturday dinner to Brera vegetarian restaurant" | Schedule card text changes; reply can say itinerary was updated | ✅ |
+| 5B.5 | Tour persistence | "把景点改成米兰设计博物馆" | Explore card title/text changes without raw dict leakage; reply can say tour was updated | ✅ |
 
 ## 6. Observability / debugging
 
@@ -93,7 +105,8 @@ Run only the categories relevant to the changed code:
 
 - **Refine replies on partial-success**: the text now uses a deterministic summary built from final persisted state + final budget summary, so it no longer invents numbers or claims unsaved changes. The residual concern is date-change requests — see 2.3.
 - **Trip date editing**: depart and return date pickers are editable; the old `extra_days` slider has been removed. Client + server both validate (day-trips rejected, ≤ 30 nights, soft warnings for unusual choices). Chat-time date override runs a preview search but doesn't mutate the saved plan — that's intentional.
-- **Budget vs selection**: the budget bar reflects the cheapest valid plan the backend computed, not the user's live card selections. Recomputing per selection is a planned UX feature; the current build adds a clarifying caption ("Budget based on cheapest available options").
+- **Budget vs selection**: selected ticket/flight/hotel cards now trigger a backend `quote` recomputation. If any selected card has no price, the quote is explicitly incomplete and must not show green within-budget.
+- **Structured memory**: hard constraints now live in `active_constraints`, separate from the 6-turn conversation history. Browser checks should verify both the chips and the actual filtered results.
 - **Debug trace scope**: current events are `state_apply`, `tool_fail`, `budget_final`. Per-tool timing / argument previews are reserved for a later iteration.
 
 ## Automation track (deferred)
