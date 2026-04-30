@@ -14,6 +14,7 @@ import re
 
 from state import TravelPlanState
 from llm import get_llm, provider_label
+from tools._constraints import normalize_constraints
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +87,19 @@ def _ticket_mock(state: TravelPlanState) -> list[dict]:
     return [
         {"name": "General Admission", "price": 195, "currency": "EUR",
          "section": "Free roaming", "tag": "VALUE",
-         "link": "https://tickets.formula1.com"},
+         "link": "https://tickets.formula1.com",
+         "provider": "Formula 1", "link_type": "official_ticket_page",
+         "booking_confidence": "high"},
         {"name": "Tribuna 25", "price": 380, "currency": "EUR",
          "section": "T2 braking zone", "tag": "PICK",
-         "link": "https://tickets.formula1.com"},
+         "link": "https://tickets.formula1.com",
+         "provider": "Formula 1", "link_type": "official_ticket_page",
+         "booking_confidence": "high"},
         {"name": "Main Grandstand", "price": 620, "currency": "EUR",
          "section": "Pit lane + podium", "tag": "VIP",
-         "link": "https://tickets.formula1.com"},
+         "link": "https://tickets.formula1.com",
+         "provider": "Formula 1", "link_type": "official_ticket_page",
+         "booking_confidence": "high"},
     ]
 
 
@@ -140,15 +147,20 @@ def _transport_mock(state: TravelPlanState) -> list[dict]:
         {"tag": "OUT", "summary": f"{origin} → {city}",
          "detail": f"Estimated direct route · {out_date}",
          "price": 485, "currency": "EUR",
-         "link": "https://www.google.com/travel/flights"},
+         "link": "https://www.google.com/travel/flights",
+         "provider": "Google Flights", "link_type": "flight_search",
+         "booking_confidence": "search"},
         {"tag": "RET", "summary": f"{city} → {origin}",
          "detail": f"Estimated direct route · {ret_date}",
          "price": 520, "currency": "EUR",
-         "link": "https://www.google.com/travel/flights"},
+         "link": "https://www.google.com/travel/flights",
+         "provider": "Google Flights", "link_type": "flight_search",
+         "booking_confidence": "search"},
         {"tag": "LOCAL", "summary": f"{city} ↔ Circuit",
          "detail": "Local transit (varies by circuit)",
          "price": 5, "currency": "EUR",
-         "link": ""},
+         "link": "", "provider": "Local transit",
+         "link_type": "local_info", "booking_confidence": "low"},
     ]
 
 
@@ -160,8 +172,9 @@ def transport_agent(state: TravelPlanState) -> dict:
     origin = state.get("origin", "NYC")
     city = state.get("gp_city", "Milan")
     stops = state.get("stops", "")
+    constraints = normalize_constraints(state.get("active_constraints"))
     request_text = f"{stops} {state.get('special_requests', '')}"
-    max_stops = 0 if _direct_only_requested(request_text) else None
+    max_stops = 0 if constraints.get("direct_only") or _direct_only_requested(request_text) else None
 
     try:
         from tools.search_flights import search_flights
@@ -201,21 +214,29 @@ def _hotel_mock(state: TravelPlanState, budget_retry: bool = False) -> list[dict
             {"name": f"Budget Hostel {city}", "price_per_night": 55,
              "total_price": 55 * days, "currency": "EUR", "nights": days,
              "distance": "20min bus", "rating": "7.2", "tag": "BUDGET",
-             "link": "https://www.booking.com"},
+             "link": "https://www.booking.com",
+             "provider": "Booking.com", "link_type": "hotel_search",
+             "booking_confidence": "search"},
             {"name": f"Airbnb {city} Outskirts", "price_per_night": 65,
              "total_price": 65 * days, "currency": "EUR", "nights": days,
              "distance": "25min train", "rating": "4.3", "tag": "SAVE",
-             "link": "https://www.airbnb.com"},
+             "link": "https://www.airbnb.com",
+             "provider": "Airbnb", "link_type": "provider_search",
+             "booking_confidence": "search"},
         ]
     return [
         {"name": "Hotel de la Ville", "price_per_night": 135,
          "total_price": 135 * days, "currency": "EUR", "nights": days,
          "distance": "2km to circuit", "rating": "8.4", "tag": "NEAR",
-         "link": "https://www.booking.com"},
+         "link": "https://www.booking.com",
+         "provider": "Booking.com", "link_type": "hotel_search",
+         "booking_confidence": "search"},
         {"name": f"Airbnb {city} Central", "price_per_night": 95,
          "total_price": 95 * days, "currency": "EUR", "nights": days,
          "distance": "15min train", "rating": "4.6", "tag": "SAVE",
-         "link": "https://www.airbnb.com"},
+         "link": "https://www.airbnb.com",
+         "provider": "Airbnb", "link_type": "provider_search",
+         "booking_confidence": "search"},
     ]
 
 
@@ -229,7 +250,8 @@ def hotel_agent(state: TravelPlanState) -> dict:
     retry = state.get("retry_count", 0)
     city = state.get("gp_city", "Monza")
     days = _trip_days(state)
-    requested_brands = _requested_hotel_brands(state.get("special_requests", ""))
+    constraints = normalize_constraints(state.get("active_constraints"))
+    requested_brands = constraints.get("allowed_hotel_brands") or _requested_hotel_brands(state.get("special_requests", ""))
     strict_brand = bool(requested_brands)
     brand = " or ".join(requested_brands)
 

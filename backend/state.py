@@ -11,7 +11,7 @@ node runs again and should replace its previous output, not append.
 from __future__ import annotations
 import operator
 from typing import Annotated, Any
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 class TicketOption(TypedDict):
@@ -21,6 +21,9 @@ class TicketOption(TypedDict):
     section: str        # e.g. "T2 braking zone"
     tag: str            # e.g. "PICK"
     link: str           # booking URL
+    provider: NotRequired[str]
+    link_type: NotRequired[str]
+    booking_confidence: NotRequired[str]
 
 
 class TransportLeg(TypedDict):
@@ -30,6 +33,9 @@ class TransportLeg(TypedDict):
     price: float
     currency: str
     link: str
+    provider: NotRequired[str]
+    link_type: NotRequired[str]
+    booking_confidence: NotRequired[str]
 
 
 class HotelOption(TypedDict):
@@ -42,6 +48,9 @@ class HotelOption(TypedDict):
     rating: str         # e.g. "8.4★"
     tag: str            # e.g. "NEAR"
     link: str
+    provider: NotRequired[str]
+    link_type: NotRequired[str]
+    booking_confidence: NotRequired[str]
 
 
 class BudgetSummary(TypedDict):
@@ -51,6 +60,10 @@ class BudgetSummary(TypedDict):
     currency: str
     within_budget: bool
     savings_tip: str
+    basis: NotRequired[str]                    # baseline | selected
+    quote_complete: NotRequired[bool]
+    missing_price_categories: NotRequired[list[str]]
+    selected_indices: NotRequired[dict[str, list[int]]]
 
 
 class TravelPlanState(TypedDict):
@@ -67,6 +80,7 @@ class TravelPlanState(TypedDict):
     return_date: str         # ISO YYYY-MM-DD
     stops: str               # multi-stop route description
     special_requests: str
+    active_constraints: dict[str, Any]
 
     # ── Agent outputs ──
     # Single-writer fields: default replace-semantics. This is important

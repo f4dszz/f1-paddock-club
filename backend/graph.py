@@ -29,6 +29,7 @@ from langgraph.graph import StateGraph, START, END
 
 from logging_config import setup_logging
 from state import TravelPlanState
+from tools._constraints import empty_constraints, merge_constraints
 from agents import (
     parse_input,
     ticket_agent,
@@ -124,6 +125,12 @@ def plan_trip(user_input: dict) -> dict:
     """
     graph = build_graph()
 
+    constraint_text = " ".join(
+        str(user_input.get(k, "") or "")
+        for k in ("stops", "special_requests", "stand_pref")
+    )
+    active_constraints = merge_constraints(empty_constraints(), constraint_text)
+
     initial_state: TravelPlanState = {
         # User input
         "gp_name": user_input.get("gp_name", "Italian GP"),
@@ -141,6 +148,7 @@ def plan_trip(user_input: dict) -> dict:
         "return_date": user_input.get("return_date", "") or "",
         "stops": user_input.get("stops", ""),
         "special_requests": user_input.get("special_requests", ""),
+        "active_constraints": active_constraints,
         # Agent outputs (empty, will be filled)
         "tickets": [],
         "transport": [],
