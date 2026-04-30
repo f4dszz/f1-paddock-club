@@ -184,6 +184,9 @@ def _try_serpapi_google_flights(
             "price": float(price),
             "currency": "USD",
             "link": "https://www.google.com/travel/flights",
+            "provider": "Google Flights",
+            "link_type": "flight_search",
+            "booking_confidence": "search",
             "airline": first_leg.get("airline", ""),
             "stops": num_stops,
         })
@@ -235,6 +238,9 @@ def _try_serpapi_google_search_flights(
                 "price": 0,
                 "currency": "USD",
                 "link": link,
+                "provider": "Google Search",
+                "link_type": "provider_search",
+                "booking_confidence": "low",
             })
 
     return results
@@ -305,6 +311,10 @@ def _try_llm_estimate(
         if isinstance(leg, dict):
             leg["_source"] = "llm_estimate"
             leg["_degraded"] = True
+            leg.setdefault("provider", "LLM estimate")
+            leg.setdefault("link_type", "flight_search")
+            leg.setdefault("booking_confidence", "estimate")
+            leg.setdefault("link", "https://www.google.com/travel/flights")
     return [leg for leg in legs if isinstance(leg, dict)]
 
 

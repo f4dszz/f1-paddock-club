@@ -216,6 +216,9 @@ def _try_serpapi_google_hotels(
             "rating": str(p.get("overall_rating", "")),
             "tag": _classify_hotel(price_per_night, p.get("overall_rating", 0)),
             "link": p.get("link", "https://www.booking.com"),
+            "provider": "Google Hotels",
+            "link_type": "hotel_listing",
+            "booking_confidence": "medium",
         })
 
     return results[:5]
@@ -288,6 +291,9 @@ def _try_serpapi_google_maps_hotels(
             "rating": str(rating),
             "tag": _classify_hotel(price_num, rating),
             "link": p.get("website", p.get("link", "")),
+            "provider": "Google Maps",
+            "link_type": "maps_listing",
+            "booking_confidence": "low" if price_num <= 0 else "medium",
         })
 
     return results
@@ -349,6 +355,10 @@ def _try_llm_estimate(
         if isinstance(hotel, dict):
             hotel["_source"] = "llm_estimate"
             hotel["_degraded"] = True
+            hotel.setdefault("provider", "LLM estimate")
+            hotel.setdefault("link_type", "hotel_search")
+            hotel.setdefault("booking_confidence", "estimate")
+            hotel.setdefault("link", "https://www.booking.com")
     return [hotel for hotel in hotels if isinstance(hotel, dict)]
 
 

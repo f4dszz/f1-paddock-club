@@ -253,6 +253,9 @@ def _extract_with_llm(
         if isinstance(opt, dict):
             opt["_source"] = source_label
             opt["_degraded"] = False  # Real data, just LLM-extracted
+            opt.setdefault("provider", "Formula 1")
+            opt.setdefault("link_type", "official_ticket_page")
+            opt.setdefault("booking_confidence", "high")
     return [o for o in options if isinstance(o, dict)]
 
 
@@ -309,6 +312,9 @@ def _try_llm_estimate(
         if isinstance(opt, dict):
             opt["_source"] = "llm_estimate"
             opt["_degraded"] = True
+            opt.setdefault("provider", "Formula 1")
+            opt.setdefault("link_type", "official_ticket_page")
+            opt.setdefault("booking_confidence", "estimate")
     return [o for o in options if isinstance(o, dict)]
 
 
