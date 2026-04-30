@@ -52,7 +52,51 @@ def _pick_cheapest_in(items: list[dict], tag_filter: str, target: str) -> float:
     return min(candidates)
 
 
-def recompute_budget(state: dict[str, Any]) -> dict:
+def _display_items(items: list[dict]) -> list[dict]:
+    return [item for item in items if isinstance(item, dict) and item.get("tag") != "INFO"]
+
+
+def _normalize_selections(selections: dict[str, Any] | None) -> dict[str, list[int]]:
+    normalized: dict[str, list[int]] = {}
+    if not selections:
+        return normalized
+    for key in ("ticket", "transport", "hotel"):
+        raw = selections.get(key, [])
+        if isinstance(raw, int):
+            raw = [raw]
+        if not isinstance(raw, list):
+            continue
+        values = [int(idx) for idx in raw]
+        if values:
+            normalized[key] = values
+    return normalized
+
+
+def _selected_items(items: list[dict], selections: dict[str, list[int]], key: str) -> list[dict]:
+    if key not in selections:
+        return []
+    picked: list[dict] = []
+    for idx in selections.get(key, []):
+        if idx < 0 or idx >= len(items):
+            raise ValueError(f"Invalid selection index for {key}: {idx}")
+        picked.append(items[idx])
+    return picked
+
+
+def _price_or_missing(
+    item: dict,
+    target: str,
+    missing: set[str],
+    category: str,
+    price_key: str = "price",
+) -> float:
+    amount = _item_price_in(item, target, price_key)
+    if amount <= 0:
+        missing.add(category)
+    return amount
+
+
+def recompute_budget(state: dict[str, Any], selections: dict[str, Any] | None = None) -> dict:
     """Recompute the budget summary from current state fields.
 
     All prices are converted to the user-selected currency (state.currency,
@@ -64,55 +108,95 @@ def recompute_budget(state: dict[str, Any]) -> dict:
     items annotated with the target currency, and total in target.
     """
     target = str(state.get("currency") or "EUR").upper()
+    normalized_selections = _normalize_selections(selections)
+    basis = "selected" if normalized_selections else "baseline"
+    missing_categories: set[str] = set()
 
     # ── Tickets: pick the PICK-tagged option, or cheapest ────────
-    tickets = [t for t in (state.get("tickets") or []) if isinstance(t, dict)]
-    real_tickets = [t for t in tickets if t.get("tag") != "INFO" and t.get("price", 0) > 0]
-    if real_tickets:
-        pick = next((t for t in real_tickets if t.get("tag") == "PICK"), None)
-        chosen = pick or min(real_tickets, key=lambda t: _item_price_in(t, target))
-        ticket_cost = _item_price_in(chosen, target)
+    tickets = _display_items(state.get("tickets") or [])
+    selected_tickets = _selected_items(tickets, normalized_selections, "ticket")
+    if selected_tickets:
+        ticket_cost = sum(
+            _price_or_missing(t, target, missing_categories, "Tickets")
+            for t in selected_tickets
+        )
     else:
-        ticket_cost = 0.0
+        real_tickets = [t for t in tickets if t.get("price", 0) > 0]
+        if real_tickets:
+            pick = next((t for t in real_tickets if t.get("tag") == "PICK"), None)
+            chosen = pick or min(real_tickets, key=lambda t: _item_price_in(t, target))
+            ticket_cost = _item_price_in(chosen, target)
+        else:
+            ticket_cost = 0.0
+            if tickets:
+                missing_categories.add("Tickets")
 
     # ── Transport: handle ROUNDTRIP (single price) or OUT+RET ────
-    transport = [t for t in (state.get("transport") or []) if isinstance(t, dict)]
-    roundtrip_cost = _pick_cheapest_in(transport, "ROUNDTRIP", target)
-    if roundtrip_cost > 0:
-        # google_flights round-trip: price already covers both directions
-        flight_cost = roundtrip_cost
+    transport = _display_items(state.get("transport") or [])
+    selected_transport = _selected_items(transport, normalized_selections, "transport")
+    local_items = [t for t in transport if t.get("tag") == "LOCAL" and t.get("price", 0) > 0]
+    selected_local = [t for t in selected_transport if t.get("tag") == "LOCAL"]
+    selected_flights = [t for t in selected_transport if t.get("tag") != "LOCAL"]
+    if selected_transport:
+        flight_cost = sum(
+            _price_or_missing(t, target, missing_categories, "Flights")
+            for t in selected_flights
+        )
+        # Keep local transit in the quote even when the user only selects
+        # a flight row. If they explicitly selected LOCAL, use that instead.
+        local_source = selected_local or local_items
+        local_cost = sum(_item_price_in(t, target) for t in local_source)
     else:
-        # One-way searches or mock data: separate OUT + RET
-        out_cost = _pick_cheapest_in(transport, "OUT", target)
-        ret_cost = _pick_cheapest_in(transport, "RET", target)
-        flight_cost = out_cost + ret_cost
-    local_cost = sum(
-        _item_price_in(t, target) for t in transport
-        if t.get("tag") == "LOCAL" and t.get("price", 0) > 0
-    )
+        roundtrip_cost = _pick_cheapest_in(transport, "ROUNDTRIP", target)
+        if roundtrip_cost > 0:
+            # google_flights round-trip: price already covers both directions
+            flight_cost = roundtrip_cost
+        else:
+            # One-way searches or mock data: separate OUT + RET
+            out_cost = _pick_cheapest_in(transport, "OUT", target)
+            ret_cost = _pick_cheapest_in(transport, "RET", target)
+            flight_cost = out_cost + ret_cost
+        if flight_cost <= 0 and transport:
+            missing_categories.add("Flights")
+        local_cost = sum(_item_price_in(t, target) for t in local_items)
     transport_cost = flight_cost + local_cost
 
     # ── Hotel: cheapest real hotel × nights ──────────────────────
-    hotel_list = [h for h in (state.get("hotel") or []) if isinstance(h, dict)]
-    real_hotels = [
-        h for h in hotel_list
-        if h.get("tag") != "INFO" and h.get("price_per_night", 0) > 0
-    ]
-    if real_hotels:
-        cheapest = min(
-            real_hotels,
-            key=lambda h: _item_price_in(h, target, "price_per_night"),
-        )
-        per_night = _item_price_in(cheapest, target, "price_per_night")
-        nights = cheapest.get("nights", 1) or 1
-        if nights <= 1:
-            # Item didn't carry a nights count — use the canonical
-            # trip-length helper so this matches whatever dates the
-            # user picked (explicit depart/return or legacy extra_days).
-            nights = trip_nights(state)
-        hotel_cost = per_night * nights
-    else:
+    hotel_list = _display_items(state.get("hotel") or [])
+    selected_hotels = _selected_items(hotel_list, normalized_selections, "hotel")
+    if selected_hotels:
         hotel_cost = 0.0
+        for hotel in selected_hotels:
+            per_night = _price_or_missing(
+                hotel,
+                target,
+                missing_categories,
+                "Hotel",
+                "price_per_night",
+            )
+            nights = hotel.get("nights", 1) or 1
+            if nights <= 1:
+                nights = trip_nights(state)
+            hotel_cost += per_night * nights
+    else:
+        real_hotels = [h for h in hotel_list if h.get("price_per_night", 0) > 0]
+        if real_hotels:
+            cheapest = min(
+                real_hotels,
+                key=lambda h: _item_price_in(h, target, "price_per_night"),
+            )
+            per_night = _item_price_in(cheapest, target, "price_per_night")
+            nights = cheapest.get("nights", 1) or 1
+            if nights <= 1:
+                # Item didn't carry a nights count — use the canonical
+                # trip-length helper so this matches whatever dates the
+                # user picked (explicit depart/return or legacy extra_days).
+                nights = trip_nights(state)
+            hotel_cost = per_night * nights
+        else:
+            hotel_cost = 0.0
+            if hotel_list:
+                missing_categories.add("Hotel")
 
     # ── Estimated costs (EUR baselines → convert to target) ──────
     tour_cost = from_eur(_TOUR_EUR, target)
@@ -121,7 +205,8 @@ def recompute_budget(state: dict[str, Any]) -> dict:
 
     total = ticket_cost + transport_cost + hotel_cost + tour_cost + food_cost + misc_local
     budget = float(state.get("budget", 2500))
-    within = total <= budget
+    quote_complete = not missing_categories
+    within = total <= budget and quote_complete
     retry_exhausted = not within and int(state.get("retry_count", 0) or 0) >= 2
 
     items = [
@@ -134,7 +219,10 @@ def recompute_budget(state: dict[str, Any]) -> dict:
     ]
 
     tip = ""
-    if not within:
+    if not quote_complete:
+        missing = ", ".join(sorted(missing_categories))
+        tip = f"Quote incomplete: pending price for {missing}. Budget status is not final."
+    elif not within:
         over = total - budget
         if retry_exhausted:
             tip = (
@@ -152,5 +240,9 @@ def recompute_budget(state: dict[str, Any]) -> dict:
         "within_budget": within,
         "retry_exhausted": retry_exhausted,
         "feasible_under_budget_found": within,
+        "basis": basis,
+        "quote_complete": quote_complete,
+        "missing_price_categories": sorted(missing_categories),
+        "selected_indices": normalized_selections,
         "savings_tip": tip,
     }

@@ -11,10 +11,12 @@ WebSocket message protocol:
   Client → Server:
     {"type": "plan", "data": {TripRequest fields}}   — start/restart full plan
     {"type": "chat", "data": "user message text"}     — refine existing plan
+    {"type": "quote", "data": {"selections": {...}}}  — recompute selected total
 
   Server → Client:
     {"type": "message", "data": {"agent": "...", "text": "..."}}  — status update
     {"type": "result",  "data": {tickets, transport, hotel, ...}} — full state snapshot
+    {"type": "quote",   "data": {quote_id, budget_summary}}       — selected quote
     {"type": "reply",   "data": "supervisor text response"}       — Lane 2 text reply
     {"type": "done"}                                               — request complete
     {"type": "error",   "data": "error description"}              — error
@@ -46,6 +48,7 @@ from graph import plan_trip
 from refine import refine_plan
 from _session import create_session, append_turn, clear_history, get_history
 from tools._race_calendar import all_races, upcoming_races, is_past
+from tools.recompute import recompute_budget
 from tools._trip_dates import validate_trip_dates
 
 
@@ -272,6 +275,7 @@ def _state_snapshot(state: dict) -> dict:
         "itinerary": state.get("itinerary", []),
         "tour": state.get("tour", []),
         "budget_summary": state.get("budget_summary"),
+        "active_constraints": state.get("active_constraints", {}),
     }
 
 
@@ -460,10 +464,13 @@ async def websocket_session(ws: WebSocket):
             elif msg_type == "chat":
                 await _handle_chat(ws, msg_data, session)
 
+            elif msg_type == "quote":
+                await _handle_quote(ws, msg_data, session)
+
             else:
                 await ws.send_json({
                     "type": "error",
-                    "data": f"Unknown message type: {msg_type}. Use 'plan' or 'chat'.",
+                    "data": f"Unknown message type: {msg_type}. Use 'plan', 'chat', or 'quote'.",
                 })
 
     except WebSocketDisconnect:
@@ -592,6 +599,31 @@ async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
     await _send_trace(ws, trace, session.get("debug", False))
 
     await ws.send_json({"type": "done"})
+
+
+async def _handle_quote(ws: WebSocket, data, session: dict) -> None:
+    """Recompute budget against frontend selections without mutating state."""
+    if not isinstance(data, dict):
+        await ws.send_json({"type": "error", "data": "quote payload must be a JSON object"})
+        return
+
+    state = session.get("plan_state") or {}
+    if not state:
+        await ws.send_json({"type": "error", "data": "No active plan to quote. Run planning first."})
+        return
+
+    selections = data.get("selections") or {}
+    quote_id = data.get("quote_id")
+    try:
+        summary = recompute_budget(state, selections=selections)
+    except ValueError as e:
+        await ws.send_json({"type": "error", "data": f"Invalid quote selection: {e}"})
+        return
+
+    await ws.send_json({
+        "type": "quote",
+        "data": {"quote_id": quote_id, "budget_summary": summary},
+    })
 
 
 if __name__ == "__main__":
