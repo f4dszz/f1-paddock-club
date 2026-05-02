@@ -6,7 +6,35 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-_Nothing yet. Changes in progress will land here before the next tagged release._
+### Added
+- Selection-aware WebSocket quote previews. Choosing ticket, flight, or hotel cards now recomputes a selected total without mutating the saved plan.
+- Quote completeness metadata. Unpriced selections produce an incomplete amber quote with pending categories instead of a false within-budget result.
+- Structured `active_constraints` memory for direct-only flights, hotel brands, dietary needs, accessibility, avoid-luxury, and budget strategy.
+- Persistent itinerary and tour refinement tools, so Schedule and Explore card edits can be written back to state.
+- Provider/link metadata (`provider`, `link_type`, `booking_confidence`) for tickets, flights, and hotels.
+- "Why this card?" explainability for ticket, flight, and hotel cards, including reasons, matched constraints, source path, and trade-offs.
+- Backend feature-completion tests and CI execution of `python -m unittest discover -s tests -v`.
+- Maintainer architecture map in `docs/architecture-map.zh-CN.md`, covering state flow, memory layers, quote semantics, hard constraints, explainability, and module boundaries.
+
+### Changed
+- Booking buttons now describe the real link type, such as official ticket page, flight search, hotel listing, maps listing, or provider search.
+- Unpriced ticket/flight/hotel options are selectable, but selecting them marks the quote incomplete rather than treating missing price as zero.
+- Lane 2 constraints now live outside the rolling conversation history, so hard constraints can survive multi-turn refinement.
+- Explainability copy now says "source path" instead of implying a complete runtime attempt log.
+- Frontend prototype structure is split into `components/` and `domain/` modules while preserving the current Vite + React app behavior.
+- Backend planning agents are split into per-domain modules under `backend/agents/`, with `agents/__init__.py` kept as the public import facade.
+- Refinement helpers are split so itinerary/tour editing and hard-constraint reconciliation no longer live inline inside `refine.py`.
+
+### Fixed
+- Quote validation rejects malformed selections, unknown categories, numeric strings, nulls, negative indexes, and out-of-range indexes while keeping the WebSocket open.
+- Itinerary/tour update tools no longer accept LLM-supplied current-state JSON; they edit only the server-side session state captured by the tool closure.
+- If the WebSocket is disconnected, frontend card selection no longer silently changes the UI budget; it shows a visible restart-planning message.
+- Native date inputs now update React state on both input and change events, so automated and manual edits reliably trigger date validation before submit.
+- Hard-constraint reconciliation now runs only when constraints change or transport/hotel data changes, avoiding unrelated chat turns that silently refresh result cards.
+- Hotel brand filtering now uses canonical brand aliases rather than broad substring matching.
+- Duplicate selected card indices are deduped before budget recomputation, and WebSocket `selections: null` is rejected explicitly.
+- Direct-flight filtering now distrusts contradictory structured `stops: 0` fields when the visible card text says `1 stop`, `via`, `connection`, or `layover`.
+- Extracted date inputs now capture event values before React state updates, preventing a `currentTarget` null crash during Browser Use/manual date edits.
 
 ## [0.3.0] — 2026-04-20
 

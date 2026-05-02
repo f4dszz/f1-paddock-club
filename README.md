@@ -74,24 +74,24 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` on the `messag
 | LLM | **Pluggable** — OpenAI (default) or Anthropic, switchable via `LLM_PROVIDER` env var. Also supports any OpenAI-compatible proxy via `OPENAI_BASE_URL`. |
 | Backend | **Python 3.12** (the version tested in CI; 3.13+ works but emits a Pydantic V1 deprecation warning from LangChain — not blocking) + **FastAPI** + **Uvicorn** |
 | Streaming | **WebSocket** (`/ws`) for real-time agent status |
-| Frontend | React prototype (`frontend/prototype.jsx`) → Next.js (planned) |
+| Frontend | Vite + React prototype. `frontend/prototype.jsx` now orchestrates state/WebSocket flow, with UI split into `frontend/components/` and pure display rules in `frontend/domain/`. Next.js remains a future option, not a current dependency. |
 
 ---
 
-## Current State (Phase 3 complete)
+## Current State (Phase 4 functional build in progress)
 
 | Phase | Status | What's in it |
 |---|---|---|
 | **1 — Graph + mock data** | ✅ Done | Full LangGraph wired up, all 7 agents return mock data, CLI test runs end-to-end, FastAPI endpoints work. |
 | **2 — Real LLM calls** | ✅ Done | `itinerary_agent` and `tour_agent` call real LLM via `with_structured_output`. Provider selectable (OpenAI/Anthropic). Mock fallback when no key. |
 | **3 — External data + supervisor** | ✅ Done | SerpAPI (flights/hotels), Firecrawl (tickets), supervisor agent for chat refinement, `/ws` dual-lane routing, currency conversion (EUR/USD/CNY), trip date computation. See details below. |
-| **4 — Frontend** | 🟡 In progress | 4.0 hookup done. 4.1 hardening done. 4.2 currency selector + editable trip dates + grounded replies + debug trace done. 4.3 deployment + PWA + responsive CSS planned. |
-| **5 — Polish + deploy** | ⏳ Planned | Security baseline, error handling, persistence, deploy. |
+| **4 — Frontend + trust layer** | 🟡 In progress | Hookup, hardening, currency/date controls, selected quote previews, structured constraints, itinerary/tour card edits, ticket/flight/hotel explainability, and the first frontend/backend file split are done. Next: strict E2E automation, iCal export, and deployment hardening. |
+| **5 — Polish + deploy** | ⏳ Planned | Security baseline, persistence, production deployment, PWA/mobile polish. |
 
 ### Phase 3 — what was built
 
 - **Tools layer** (`backend/tools/`): `search_flights` (SerpAPI google_flights + google_search), `search_hotels` (SerpAPI google_hotels + google_maps), `search_tickets` (Firecrawl scraping + google_search + LLM extraction). All with 3-layer fallback: real APIs → LLM estimation → agent mock. Disk-cached with TTL.
-- **Supervisor agent** (`backend/refine.py`): Dual-mode — planning from natural language + refinement of existing plans. State-aware tool factory auto-fills parameters from existing plan context.
+- **Supervisor agent** (`backend/refine.py`): Dual-mode — planning from natural language + refinement of existing plans. State-aware tool factory auto-fills parameters from existing plan context. Editing helpers and hard-constraint reconciliation now live in separate modules so `refine.py` stays focused on orchestration.
 - **`/ws` dual-lane routing**: `type=plan` → Lane 1 (full parallel DAG), `type=chat` → Lane 2 (supervisor refinement). Session state maintained per connection.
 - **Budget accuracy**: Multi-currency conversion (EUR/USD/CNY), correct trip date computation (outbound/return/checkin/checkout), round-trip flight handling.
 
@@ -109,14 +109,18 @@ f1-paddock-club/
 │   ├── graph.py               # LangGraph orchestrator + CLI test
 │   ├── state.py               # TravelPlanState (typed shared state)
 │   ├── llm.py                 # Pluggable LLM client wrapper (Phase 2)
-│   ├── agents/__init__.py     # All 7 agent node functions
-│   ├── refine.py              # Lane 2: Supervisor agent (dual-mode planning + refinement)
+│   ├── agents/                # Lane 1 agent nodes split by domain; __init__.py is a public facade
+│   ├── refine.py              # Lane 2 supervisor orchestration
+│   ├── refine_editing.py      # Itinerary/tour card update helpers
+│   ├── refine_constraints.py  # Hard constraint reconciler after tool output
 │   ├── tools/                 # External data tools (SerpAPI, Firecrawl, cache, currency, dates)
 │   ├── logging_config.py      # File logger setup (writes to logs/)
 │   ├── requirements.txt
 │   └── .env.example           # Documents all supported env vars
 ├── frontend/
-│   ├── prototype.jsx          # Paddock Club React app (connected to /ws)
+│   ├── prototype.jsx          # React app orchestrator (state, WebSocket, page composition)
+│   ├── components/            # Render-only UI components
+│   ├── domain/                # Pure display/transform/date/constraint rules
 │   ├── src/main.jsx           # Vite entry point
 │   ├── index.html             # HTML shell
 │   ├── vite.config.js         # Vite dev server config (port 3000)
@@ -328,10 +332,17 @@ The WebSocket supports multi-message sessions with two lanes:
 {"type": "chat", "data": "I want Marriott hotels near the circuit"}
 ```
 
+**Preview the current card selection without mutating the plan:**
+```json
+{"type": "quote", "data": {"quote_id": 1, "selections": {"ticket": [0], "transport": [1], "hotel": [2]}}}
+```
+
 Server responses:
 - `{"type": "message", "data": {"agent": "...", "text": "..."}}` — status updates
 - `{"type": "result", "data": {...}}` — full state snapshot (after each lane completes)
+- `{"type": "quote", "data": {"quote_id": 1, "budget_summary": {...}}}` — selected-card budget preview
 - `{"type": "reply", "data": "..."}` — supervisor's text reply (Lane 2 only)
+- `{"type": "error", "data": "..."}` — invalid input or recoverable request failure
 - `{"type": "done"}` — current request finished
 
 > **Backward compat:** raw TripRequest JSON (without `{type, data}` envelope) is auto-detected and routed to Lane 1.
@@ -355,7 +366,7 @@ Windows PowerShell note:
 - If `npm` fails with `npm.ps1 cannot be loaded because running scripts is disabled`, run `npm.cmd` instead.
 - Example: `& 'C:\Program Files\nodejs\npm.cmd' run dev`
 
-The frontend loads the GP calendar from `/api/calendar`, connects to `/ws` for live planning, and renders real agent results. Past GPs are dimmed in the selection grid.
+The frontend loads the GP calendar from `/api/calendar`, connects to `/ws` for live planning, and renders real agent results. Past GPs are dimmed in the selection grid. Result-card selections trigger `type=quote` previews, so the budget changes from a baseline estimate to "Your selected total" without mutating the saved plan. If a selected item has no price, the quote turns amber and stays incomplete instead of pretending the trip is within budget. Active constraints (direct flights, hotel brands, dietary, accessibility, budget strategy) appear as chips, and itinerary/tour chat edits can persist back to the Schedule and Explore cards. Ticket, flight, and hotel cards can also show a "Why this card?" panel with the reasons, matched constraints, source path, and trade-offs behind the recommendation. The source path is an explanation of the configured data ladder inferred from the final card source; it is not a full runtime attempt log.
 
 ### Logs
 
@@ -389,13 +400,15 @@ Each node runs in a predetermined position in the LangGraph pipeline. There is n
 
 The three "tool-backed" nodes (`ticket_agent`, `transport_agent`, `hotel_agent`) wrap the tools layer with a three-tier fallback (real API → LLM estimate → mock). The two "LLM workflow" nodes (`itinerary_agent`, `tour_agent`) make a single structured-output call to an LLM and fall back to a generic mock. The source folder is still `backend/agents/` because the names are entrenched in the LangGraph wiring; renaming is deferred until it buys more than it costs.
 
+Ticket, transport, and hotel nodes attach a deterministic `_rationale` object to each user-visible card. This powers the "Why this card?" panel and stays deliberately simple: it explains visible data such as price, distance, provider, active constraints, and trade-offs against sibling cards. Tour and itinerary rationale are not fully productionized yet because those cards are still text-first LLM outputs.
+
 ### Lane 2 — supervisor agent
 
 | Component | Input | Output | Data source |
 |---|---|---|---|
 | `refine.refine_plan` | existing plan state + user chat | updated plan state + short grounded reply | ReAct agent (LangGraph) with dynamic tool selection |
 
-The supervisor is a real agent: it reads the conversation, chooses whether and which of the search tools to invoke, reasons over tool output, and decides when to stop. Replies are post-processed into a deterministic summary of what actually persisted, so the agent can never silently invent budget numbers.
+The supervisor is a real agent: it reads the conversation, chooses whether and which of the search/update tools to invoke, reasons over tool output, and decides when to stop. Replies are post-processed into a deterministic summary of what actually persisted, so the agent can never silently invent budget numbers. Durable hard constraints are stored in `active_constraints`, separate from short rolling chat history.
 
 ### Tools / providers (shared layer)
 
@@ -405,13 +418,13 @@ The supervisor is a real agent: it reads the conversation, chooses whether and w
 | `search_hotels` | SerpAPI Google Hotels + Google Maps (parallel) | `hotel_agent`, supervisor |
 | `search_tickets` | Firecrawl + SerpAPI Google Search + LLM extraction | `ticket_agent`, supervisor |
 | `search_web` | Tavily / DuckDuckGo (provider adapter; currently stubbed) | future: tour_agent, supervisor |
-| `recompute_budget` | pure function over state | `budget_agent`, supervisor |
+| `recompute_budget` | pure function over state + optional selections | `budget_agent`, supervisor, `type=quote` |
 
 ---
 
 ## Roadmap
 
-- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). Next: deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
+- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (in progress). Next: strict E2E automation, iCal export, deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
 - **Phase 5** — security baseline, error handling, run persistence, deploy.
 
 ---

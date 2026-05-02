@@ -70,24 +70,24 @@
 | 大模型 | **可插拔** —— 默认 OpenAI，也可切到 Anthropic，通过 `LLM_PROVIDER` 环境变量切换。同时支持任意 OpenAI 兼容代理（设置 `OPENAI_BASE_URL`） |
 | 后端 | **Python 3.12**（CI 测试的版本；3.13+ 也能跑，但 LangChain 会报 Pydantic V1 弃用警告，不阻塞） + **FastAPI** + **Uvicorn** |
 | 流式推送 | **WebSocket**（`/ws`），把每个智能体的状态实时推给前端 |
-| 前端 | React 原型（`frontend/prototype.jsx`），后续迁移到 Next.js |
+| 前端 | Vite + React 原型。`frontend/prototype.jsx` 现在主要负责状态、WebSocket 和页面编排，UI 拆到 `frontend/components/`，纯展示/转换规则拆到 `frontend/domain/`。Next.js 仍是未来选项，不是当前依赖。 |
 
 ---
 
-## 当前进度（Phase 3 已完成）
+## 当前进度（Phase 4 功能建设中）
 
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | **1 — 图 + Mock 数据** | ✅ 已完成 | LangGraph 完整接好，7 个智能体返回 mock 数据，CLI 端到端跑通，FastAPI 端点可用。 |
 | **2 — 真实大模型调用** | ✅ 已完成 | `itinerary_agent` 与 `tour_agent` 调用真实大模型（`with_structured_output`）。Provider 可切换（OpenAI/Anthropic）。无 key 时自动回退 mock。 |
 | **3 — 外部数据 + Supervisor** | ✅ 已完成 | SerpAPI（机票/酒店）、Firecrawl（门票抓取）、Supervisor 对话式调整、`/ws` 双通道路由、多币种预算（EUR/USD/CNY）、行程日期计算。详见下方。 |
-| **4 — 前端** | 🟡 进行中 | 4.0 已完成。4.1 加固完成。4.2 币种选择器 + 可编辑日期 + grounded 回复 + debug trace 完成。4.3 部署 + PWA + 响应式 CSS 计划中。 |
-| **5 — 打磨与部署** | ⏳ 待定 | 安全基线、错误处理、持久化、部署。 |
+| **4 — 前端 + 信任层** | 🟡 进行中 | 接入、加固、币种/日期、selected quote、结构化约束、itinerary/tour 卡片编辑、票/航班/酒店 explainability、第一轮前后端文件拆分已完成。下一步是严格 E2E 自动化、iCal 和部署加固。 |
+| **5 — 打磨与部署** | ⏳ 待定 | 安全基线、持久化、生产部署、PWA/移动端打磨。 |
 
 ### Phase 3 —— 具体做了什么
 
 - **工具层**（`backend/tools/`）：`search_flights`（SerpAPI google_flights + google_search 并行）、`search_hotels`（SerpAPI google_hotels + google_maps 并行）、`search_tickets`（Firecrawl 抓取 + google_search + LLM 提取）。全部三层降级：真实 API → LLM 估算 → mock。磁盘缓存 + TTL。
-- **Supervisor 智能体**（`backend/refine.py`）：双模式——从自然语言规划 + 对已有计划做精细化调整。State-aware 工具工厂自动从已有计划上下文填充参数。
+- **Supervisor 智能体**（`backend/refine.py`）：双模式——从自然语言规划 + 对已有计划做精细化调整。State-aware 工具工厂自动从已有计划上下文填充参数。行程/探索编辑 helper 和硬约束 reconciler 已拆到独立模块，`refine.py` 主要保留编排职责。
 - **`/ws` 双通道路由**：`type=plan` → Lane 1（完整并行 DAG），`type=chat` → Lane 2（Supervisor 调整）。连接级会话状态维持。
 - **预算精度**：多币种转换（EUR/USD/CNY）、正确的行程日期计算（出发/返回/入住/退房）、往返机票处理。
 
@@ -105,15 +105,19 @@ f1-paddock-club/
 │   ├── graph.py               # LangGraph 编排器 + CLI 测试
 │   ├── state.py               # TravelPlanState（强类型共享状态）
 │   ├── llm.py                 # 可插拔大模型客户端封装（Phase 2 新增）
-│   ├── agents/__init__.py     # 7 个智能体节点函数
-│   ├── refine.py              # Lane 2：Supervisor 智能体（双模式规划 + 调整）
+│   ├── agents/                # Lane 1 agent 节点，按领域拆分；__init__.py 是 public facade
+│   ├── refine.py              # Lane 2 supervisor 编排入口
+│   ├── refine_editing.py      # Itinerary/tour 卡片更新 helper
+│   ├── refine_constraints.py  # 工具返回后的硬约束 reconciler
 │   ├── _session.py            # WebSocket 会话管理（对话记忆 + plan state 分层）
 │   ├── tools/                 # 外部数据工具（SerpAPI、Firecrawl、缓存、币种、日期、赛历）
 │   ├── logging_config.py      # 文件日志配置（写到 logs/）
 │   ├── requirements.txt
 │   └── .env.example           # 列出所有支持的环境变量
 ├── frontend/
-│   ├── prototype.jsx          # Paddock Club React 应用（已接 /ws）
+│   ├── prototype.jsx          # React 应用编排器（状态、WebSocket、页面组合）
+│   ├── components/            # 只负责渲染的 UI 组件
+│   ├── domain/                # 纯展示/转换/日期/约束规则
 │   ├── src/main.jsx           # Vite 入口
 │   ├── index.html             # HTML 壳
 │   ├── vite.config.js         # Vite 开发服务器配置（端口 3000）
@@ -303,10 +307,17 @@ WebSocket 支持多轮会话，分两条通道：
 {"type": "chat", "data": "我想住万豪，靠近赛道"}
 ```
 
+**预览当前卡片选择的报价（不修改已保存计划）：**
+```json
+{"type": "quote", "data": {"quote_id": 1, "selections": {"ticket": [0], "transport": [1], "hotel": [2]}}}
+```
+
 服务端返回：
 - `{"type": "message", "data": {"agent": "...", "text": "..."}}` —— 状态更新
 - `{"type": "result", "data": {...}}` —— 完整状态快照（每条通道完成后）
+- `{"type": "quote", "data": {"quote_id": 1, "budget_summary": {...}}}` —— 基于用户当前选择的预算预览
 - `{"type": "reply", "data": "..."}` —— Supervisor 的文字回复（仅 Lane 2）
+- `{"type": "error", "data": "..."}` —— 输入无效或可恢复的请求失败
 - `{"type": "done"}` —— 当前请求完成
 
 > **向后兼容**：直接发送 raw TripRequest JSON（不带 `{type, data}` 包装）会被自动识别并路由到 Lane 1。
@@ -330,7 +341,7 @@ Windows PowerShell 说明：
 - 如果出现 `npm.ps1 cannot be loaded because running scripts is disabled`，请改用 `npm.cmd`
 - 例如：`& 'C:\Program Files\nodejs\npm.cmd' run dev`
 
-前端从 `/api/calendar` 加载 GP 赛历，通过 `/ws` 连接实时规划，渲染真实智能体结果。已结束的 GP 在选择网格中显示为半透明。
+前端从 `/api/calendar` 加载 GP 赛历，通过 `/ws` 连接实时规划，渲染真实智能体结果。已结束的 GP 在选择网格中显示为半透明。结果卡片选择会触发 `type=quote` 预览，所以预算会从 baseline estimate 切换成 "Your selected total"，但不会修改已保存的 plan state。若用户选中的项目没有价格，预算会变成 amber/incomplete，而不是假装仍然是完整可行报价。前端也会显示 active constraint chips（直飞、酒店品牌、饮食、无障碍、预算策略），itinerary/tour 的聊天修改可以真实写回 Schedule / Explore 卡片。票、航班、酒店卡片还可以打开 "Why this card?" 面板，解释推荐原因、命中的约束、数据来源路径和与其他选项的取舍。这里的来源路径是根据最终卡片来源推断出的系统数据梯队，不是完整的运行尝试日志。
 
 ### 日志
 
@@ -364,13 +375,15 @@ tail -f backend/logs/backend_$(date +%F).log   # 实时跟踪今天的日志
 
 其中 `ticket_agent` / `transport_agent` / `hotel_agent` 是 tool-backed workflow node —— 对工具层做了三层降级（真实 API → LLM 估算 → mock）。`itinerary_agent` / `tour_agent` 是 LLM workflow node —— 单次 structured-output 调用后失败则退 generic mock。代码目录沿用 `backend/agents/` 是因为旧名字已经嵌入 LangGraph 接线，批量 rename 的成本 > 收益，暂不动。
 
+票、航班、酒店节点会给每张用户可见卡片附上确定性的 `_rationale` 对象，前端用它渲染 "Why this card?" 面板。它解释的是卡片已有事实：价格、距离、provider、当前硬约束、以及相对同类选项的 trade-off。行程和探索卡片目前还是文本型 LLM 输出，尚未做完整生产级 rationale。
+
 ### Lane 2 —— Supervisor agent
 
 | 组件 | 输入 | 输出 | 数据来源 |
 |---|---|---|---|
 | `refine.refine_plan` | 现有 plan state + 用户聊天 | 更新后的 plan state + 简短 grounded 回复 | ReAct agent（LangGraph），动态选择工具 |
 
-Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索工具、调哪一个、参数是什么，再根据工具返回继续推理并决定何时停止。回复经过 deterministic 改写，基于最终持久化的 state 生成，所以不会出现"文案说改了但实际没改"的情况。
+Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索或更新工具、调哪一个、参数是什么，再根据工具返回继续推理并决定何时停止。回复经过 deterministic 改写，基于最终持久化的 state 生成，所以不会出现"文案说改了但实际没改"的情况。硬约束会写入 `active_constraints`，和短期 rolling chat history 分开保存。
 
 ### Tools / providers（共享工具层）
 
@@ -380,13 +393,13 @@ Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索工
 | `search_hotels` | SerpAPI Google Hotels + Google Maps（并行） | `hotel_agent`、supervisor |
 | `search_tickets` | Firecrawl + SerpAPI Google Search + LLM 提取 | `ticket_agent`、supervisor |
 | `search_web` | Tavily / DuckDuckGo（provider adapter，当前为桩） | 未来：tour_agent、supervisor |
-| `recompute_budget` | 纯函数，作用于 state | `budget_agent`、supervisor |
+| `recompute_budget` | 纯函数，作用于 state + 可选 selections | `budget_agent`、supervisor、`type=quote` |
 
 ---
 
 ## 后续路线图
 
-- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。后续：部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
+- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（进行中）。后续：严格 E2E 自动化、iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
 - **Phase 5** —— 安全基线、错误处理、运行结果持久化、部署上线。
 
 ---

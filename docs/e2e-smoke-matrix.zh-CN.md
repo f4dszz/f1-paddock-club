@@ -61,6 +61,9 @@ deferred; the document itself is the contract.
 | 5.5 | Book tickets | select + click Book | opens Formula1.com official page | ✅ |
 | 5.6 | Book flight | single pick + click Book | opens corresponding booking/search URL with honest link copy | ✅ |
 | 5.7 | Tour/Explore interaction | 6 suggestion rows visible | display-only unless changed by chat refinement | ✅ |
+| 5.8 | Why-this-card panel | click `i` on ticket/flight/hotel card | side panel opens with reasons, matched constraints, source path, and trade-offs; Escape/backdrop closes it | ✅ |
+| 5.9 | Source path wording | card comes from mock or LLM estimate | panel calls it source/data path, not an exact runtime attempt log | ✅ |
+| 5.10 | Quote payload hardening | malformed `selections` shape, duplicate indices, `null` | bad shapes return WS error without socket crash; duplicate indices do not double-count | ✅ |
 
 ## 5B. Constraint memory / editable content
 
@@ -90,6 +93,8 @@ deferred; the document itself is the contract.
 | 7.2 | Stop | `./scripts/dev-stop.sh` | listeners on 3000/3001/8000/8001 killed | ✅ |
 | 7.3 | Library import does not create log | `python -c "from graph import plan_trip"` | no log file created (setup_logging is runtime-only) | ✅ |
 | 7.4 | Health check | `curl http://127.0.0.1:8001/api/calendar` and `curl http://localhost:3000/api/calendar` | both return 200 | ✅ |
+| 7.5 | Refactored frontend build | `npm run build` after component/domain split | Vite production build succeeds; no user-visible behavior changes expected | ✅ |
+| 7.6 | Refactored backend imports | `python -m unittest discover -s backend/tests -v` after agent/refine split | graph imports still work through `agents` facade; all unit tests pass | ✅ |
 
 ## Sampling guide
 
@@ -108,6 +113,7 @@ Run only the categories relevant to the changed code:
 - **Budget vs selection**: selected ticket/flight/hotel cards now trigger a backend `quote` recomputation. If any selected card has no price, the quote is explicitly incomplete and must not show green within-budget.
 - **Structured memory**: hard constraints now live in `active_constraints`, separate from the 6-turn conversation history. Browser checks should verify both the chips and the actual filtered results.
 - **Debug trace scope**: current events are `state_apply`, `tool_fail`, `budget_final`. Per-tool timing / argument previews are reserved for a later iteration.
+- **Source path scope**: the explainability panel describes the final card's configured data path. It is not a full runtime attempt log unless a future trace layer records exact provider attempts.
 
 ## Automation track (deferred)
 
