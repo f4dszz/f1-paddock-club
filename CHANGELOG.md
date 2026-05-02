@@ -35,6 +35,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Duplicate selected card indices are deduped before budget recomputation, and WebSocket `selections: null` is rejected explicitly.
 - Direct-flight filtering now distrusts contradictory structured `stops: 0` fields when the visible card text says `1 stop`, `via`, `connection`, or `layover`.
 - Extracted date inputs now capture event values before React state updates, preventing a `currentTarget` null crash during Browser Use/manual date edits.
+- English Explore-card replacements using `Replace X with Y` now target the named tour item and put the replacement in the card title instead of only appending a note.
 
 ## [0.3.0] — 2026-04-20
 

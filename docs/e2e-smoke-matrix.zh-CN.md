@@ -74,6 +74,7 @@ deferred; the document itself is the contract.
 | 5B.3 | Clear constraints | "connections are OK and any brand is fine" | direct-only and hotel-brand chips clear | ✅ |
 | 5B.4 | Itinerary persistence | "Move Saturday dinner to Brera vegetarian restaurant" | Schedule card text changes; reply can say itinerary was updated | ✅ |
 | 5B.5 | Tour persistence | "把景点改成米兰设计博物馆" | Explore card title/text changes without raw dict leakage; reply can say tour was updated | ✅ |
+| 5B.6 | English Explore replacement | "In the Explore card, replace Gardens by the Bay with National Gallery Singapore" | Explore card replaces the targeted title; it does not merely append a note to the wrong card | ✅ |
 
 ## 6. Observability / debugging
 

@@ -81,7 +81,7 @@ notes, real `.env` files, and local harness records.
 ## Verification Summary
 
 - Backend compile passed: `backend/.venv/bin/python -m compileall -q backend`.
-- Backend unit tests passed: `backend/.venv/bin/python -m unittest discover -s backend/tests -v` with 41 tests.
+- Backend unit tests passed: `backend/.venv/bin/python -m unittest discover -s backend/tests -v` with 42 tests.
 - Frontend production build passed: `npm run build`.
 - Frontend dependency audit passed: `npm audit --audit-level=moderate`.
 - Browser Use E2E was rerun against restarted local services:
@@ -94,11 +94,15 @@ notes, real `.env` files, and local harness records.
   - Canadian GP: default dates `2026-05-22` -> `2026-05-27`, same-day rejection,
     >30-night rejection, and no new console errors during the date-boundary
     interactions.
-- Browser testing found and fixed two regressions during this batch:
+- Browser testing found and fixed three regressions during this batch:
   - Direct-only refinement could keep a card whose text said `1 stop` when a
     bad structured field said `stops: 0`.
   - The extracted `WelcomeForm` date input used `e.currentTarget.value` inside
     an async state updater, which could null out and blank the page.
+  - English Explore-card replacements such as `Replace Gardens by the Bay with
+    National Gallery Singapore` could append text instead of replacing the
+    targeted tour title; the edit helper now recognizes `with` replacements
+    and prioritizes the named source item.
 
 ## Remaining Functional Gaps
 
