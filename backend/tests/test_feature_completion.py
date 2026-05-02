@@ -296,6 +296,24 @@ class FeatureCompletionTests(unittest.TestCase):
         self.assertEqual(data[0], "Autodromo Nazionale Monza (€30) — race museum")
         self.assertTrue(data[1].startswith("米兰设计博物馆 —"))
 
+    def test_update_tour_tool_replaces_english_with_targeted_item(self):
+        from refine import _build_tools
+
+        state = _sample_state()
+        state["tour"] = [
+            "Singapore F1 Pit Building & Circuit Park Walk (€0) — motorsport walk",
+            "Gardens by the Bay (€0-€12) — accessible waterfront paths",
+        ]
+        tool = next(t for t in _build_tools(state, "Replace Gardens by the Bay with National Gallery Singapore") if t.name == "update_tour_tool")
+        content = tool.invoke({
+            "request": "Replace Gardens by the Bay with National Gallery Singapore in the Singapore GP trip recommendations"
+        })
+        data = json.loads(content)
+
+        self.assertEqual(data[0], "Singapore F1 Pit Building & Circuit Park Walk (€0) — motorsport walk")
+        self.assertTrue(data[1].startswith("National Gallery Singapore —"))
+        self.assertEqual(data[1].split(" — ", 1)[0], "National Gallery Singapore")
+
     def test_link_metadata_defaults_are_present_in_agent_mocks(self):
         from agents import _hotel_mock, _ticket_mock, _transport_mock
 

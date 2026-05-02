@@ -52,9 +52,15 @@ def entry_to_line(entry: Any, label: str) -> str:
 
 def target_index(lines: list[str], request: str) -> int:
     lowered = request.lower()
+    requested_target = replacement_target_name(request).lower()
     for idx, line in enumerate(lines):
         candidate = re.split(r"\s+[—–-]\s+|:", line, maxsplit=1)[0]
         candidate = re.sub(r"\([^)]*\)", "", candidate).strip()
+        candidate_lower = candidate.lower()
+        if requested_target and (
+            requested_target in candidate_lower or candidate_lower in requested_target
+        ):
+            return idx
         if len(candidate) >= 4 and candidate.lower() in lowered:
             return idx
 
@@ -93,15 +99,28 @@ def target_index(lines: list[str], request: str) -> int:
     return 0
 
 
-def replacement_name(request: str) -> str:
+def replacement_target_name(request: str) -> str:
     patterns = [
-        r"(?:改成|改为|换成|替换为)\s*([^，。,.;；]+)",
-        r"(?:replace|change|switch).{0,80}?\bto\s+([^,.;]+)",
+        r"(?:replace|change|switch)\s+(.{2,100}?)\s+(?:with|to)\s+",
+        r"把\s*([^，。,.;；]+?)\s*(?:改成|改为|换成|替换为)",
     ]
     for pattern in patterns:
         match = re.search(pattern, request, re.IGNORECASE)
         if match:
             return match.group(1).strip(" \"'")
+    return ""
+
+
+def replacement_name(request: str) -> str:
+    patterns = [
+        r"(?:改成|改为|换成|替换为)\s*([^，。,.;；]+)",
+        r"(?:replace|change|switch).{0,120}?\b(?:to|with)\s+([^,.;]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, request, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" \"'")
+            return re.split(r"\s+(?:in|for)\s+the\b", value, maxsplit=1, flags=re.IGNORECASE)[0].strip()
     return ""
 
 
