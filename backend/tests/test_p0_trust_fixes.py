@@ -46,6 +46,19 @@ class P0TrustFixTests(unittest.TestCase):
         self.assertTrue(filtered[0]["constraint_match"])
         self.assertNotIn("1 stop", filtered[0]["detail"])
 
+    def test_direct_flight_filter_distrusts_bad_structured_zero_stops(self):
+        from tools.search_flights import _filter_by_max_stops
+
+        results = [
+            {"tag": "ROUNDTRIP", "detail": "1 stop on Emirates via Dubai", "stops": 0, "price": 300},
+            {"tag": "ROUNDTRIP", "detail": "Direct - 2h30m", "stops": 0, "price": 500},
+        ]
+
+        filtered = _filter_by_max_stops(results, 0)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["detail"], "Direct - 2h30m")
+
     def test_chinese_direct_flight_intent_is_detected(self):
         from refine import _intent_max_stops
         from agents import _direct_only_requested

@@ -31,13 +31,32 @@ _FOOD_EUR = 240.0
 _MISC_LOCAL_EUR = 40.0
 
 
+def _positive_float(value: Any) -> float:
+    """Return a positive float, or 0.0 for missing/unpriced values."""
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return amount if amount > 0 else 0.0
+
+
+def _item_nights(item: dict, state: dict[str, Any]) -> int:
+    try:
+        nights = int(item.get("nights", 1) or 1)
+    except (TypeError, ValueError):
+        nights = 1
+    if nights <= 1:
+        nights = trip_nights(state)
+    return nights
+
+
 def _item_price_in(item: dict, target: str, price_key: str = "price") -> float:
     """Extract price from an item and convert to target currency."""
-    price = item.get(price_key, 0)
-    if not price or price <= 0:
+    price = _positive_float(item.get(price_key, 0))
+    if price <= 0:
         return 0.0
     source = item.get("currency", "EUR")
-    return convert(float(price), source, target)
+    return convert(price, source, target)
 
 
 def _pick_cheapest_in(items: list[dict], tag_filter: str, target: str) -> float:
@@ -45,7 +64,7 @@ def _pick_cheapest_in(items: list[dict], tag_filter: str, target: str) -> float:
     candidates = [
         _item_price_in(t, target)
         for t in items
-        if t.get("tag") == tag_filter and t.get("price", 0) > 0
+        if t.get("tag") == tag_filter and _positive_float(t.get("price", 0)) > 0
     ]
     if not candidates:
         return 0.0
@@ -56,17 +75,36 @@ def _display_items(items: list[dict]) -> list[dict]:
     return [item for item in items if isinstance(item, dict) and item.get("tag") != "INFO"]
 
 
+_SELECTION_KEYS = {"ticket", "transport", "hotel"}
+
+
 def _normalize_selections(selections: dict[str, Any] | None) -> dict[str, list[int]]:
     normalized: dict[str, list[int]] = {}
+    if selections is None:
+        return normalized
+    if not isinstance(selections, dict):
+        raise ValueError("selections must be an object")
     if not selections:
         return normalized
+    unknown = sorted(set(selections) - _SELECTION_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown selection category: {', '.join(unknown)}")
     for key in ("ticket", "transport", "hotel"):
         raw = selections.get(key, [])
+        if isinstance(raw, bool):
+            raise ValueError(f"Selection index for {key} must be an integer")
         if isinstance(raw, int):
             raw = [raw]
         if not isinstance(raw, list):
-            continue
-        values = [int(idx) for idx in raw]
+            raise ValueError(f"Selections for {key} must be an integer or list of integers")
+        values = []
+        for idx in raw:
+            if isinstance(idx, bool) or not isinstance(idx, int):
+                raise ValueError(f"Selection index for {key} must be an integer")
+            if idx < 0:
+                raise ValueError(f"Selection index for {key} must be non-negative")
+            if idx not in values:
+                values.append(idx)
         if values:
             normalized[key] = values
     return normalized
@@ -121,7 +159,7 @@ def recompute_budget(state: dict[str, Any], selections: dict[str, Any] | None = 
             for t in selected_tickets
         )
     else:
-        real_tickets = [t for t in tickets if t.get("price", 0) > 0]
+        real_tickets = [t for t in tickets if _positive_float(t.get("price", 0)) > 0]
         if real_tickets:
             pick = next((t for t in real_tickets if t.get("tag") == "PICK"), None)
             chosen = pick or min(real_tickets, key=lambda t: _item_price_in(t, target))
@@ -134,7 +172,7 @@ def recompute_budget(state: dict[str, Any], selections: dict[str, Any] | None = 
     # ── Transport: handle ROUNDTRIP (single price) or OUT+RET ────
     transport = _display_items(state.get("transport") or [])
     selected_transport = _selected_items(transport, normalized_selections, "transport")
-    local_items = [t for t in transport if t.get("tag") == "LOCAL" and t.get("price", 0) > 0]
+    local_items = [t for t in transport if t.get("tag") == "LOCAL" and _positive_float(t.get("price", 0)) > 0]
     selected_local = [t for t in selected_transport if t.get("tag") == "LOCAL"]
     selected_flights = [t for t in selected_transport if t.get("tag") != "LOCAL"]
     if selected_transport:
@@ -174,24 +212,19 @@ def recompute_budget(state: dict[str, Any], selections: dict[str, Any] | None = 
                 "Hotel",
                 "price_per_night",
             )
-            nights = hotel.get("nights", 1) or 1
-            if nights <= 1:
-                nights = trip_nights(state)
+            nights = _item_nights(hotel, state)
             hotel_cost += per_night * nights
     else:
-        real_hotels = [h for h in hotel_list if h.get("price_per_night", 0) > 0]
+        real_hotels = [h for h in hotel_list if _positive_float(h.get("price_per_night", 0)) > 0]
         if real_hotels:
             cheapest = min(
                 real_hotels,
                 key=lambda h: _item_price_in(h, target, "price_per_night"),
             )
             per_night = _item_price_in(cheapest, target, "price_per_night")
-            nights = cheapest.get("nights", 1) or 1
-            if nights <= 1:
-                # Item didn't carry a nights count — use the canonical
-                # trip-length helper so this matches whatever dates the
-                # user picked (explicit depart/return or legacy extra_days).
-                nights = trip_nights(state)
+            # Item may not carry a valid nights count. Use the canonical
+            # helper so this matches the user's explicit dates.
+            nights = _item_nights(cheapest, state)
             hotel_cost = per_night * nights
         else:
             hotel_cost = 0.0

@@ -612,12 +612,23 @@ async def _handle_quote(ws: WebSocket, data, session: dict) -> None:
         await ws.send_json({"type": "error", "data": "No active plan to quote. Run planning first."})
         return
 
-    selections = data.get("selections") or {}
+    if "selections" in data and data["selections"] is None:
+        await ws.send_json({"type": "error", "data": "Invalid quote selection: selections must be an object"})
+        return
+
+    selections = data["selections"] if "selections" in data else {}
     quote_id = data.get("quote_id")
     try:
         summary = recompute_budget(state, selections=selections)
     except ValueError as e:
         await ws.send_json({"type": "error", "data": f"Invalid quote selection: {e}"})
+        return
+    except Exception:
+        logger.exception("quote recomputation failed")
+        await ws.send_json({
+            "type": "error",
+            "data": "Quote recomputation failed. Your plan is unchanged.",
+        })
         return
 
     await ws.send_json({

@@ -31,18 +31,20 @@ _TTL = 3 * 3600  # 3 hours
 
 def _infer_stop_count(item: dict) -> int | None:
     """Infer stop count from structured fields or display text."""
+    text = f"{item.get('detail', '')} {item.get('summary', '')}".lower()
+    explicit_stop = re.search(r"\b([1-9]\d*)\s+stops?\b", text)
+    if explicit_stop:
+        return int(explicit_stop.group(1))
+    if re.search(r"\b(connection|layover|via)\b|转机|中转|轉機|中轉", text):
+        return 1
+    if "nonstop" in text or "non-stop" in text or "direct" in text or "no stops" in text:
+        return 0
+
     if "stops" in item:
         try:
             return int(item.get("stops"))
         except (TypeError, ValueError):
             return None
-
-    text = f"{item.get('detail', '')} {item.get('summary', '')}".lower()
-    if "nonstop" in text or "non-stop" in text or "direct" in text:
-        return 0
-    match = re.search(r"(\d+)\s+stop", text)
-    if match:
-        return int(match.group(1))
     return None
 
 

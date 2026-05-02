@@ -75,15 +75,30 @@ def empty_constraints() -> dict[str, Any]:
     }
 
 
+def _canonical_brand_values(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    found: list[str] = []
+    for value in values:
+        lowered = str(value).strip().lower()
+        if not lowered:
+            continue
+        for canonical, aliases in _BRAND_ALIASES.items():
+            if lowered == canonical.lower() or lowered in aliases:
+                if canonical not in found:
+                    found.append(canonical)
+                break
+    return found
+
+
 def normalize_constraints(raw: dict[str, Any] | None) -> dict[str, Any]:
     constraints = empty_constraints()
     if not isinstance(raw, dict):
         return constraints
     constraints.update({k: v for k, v in raw.items() if k in constraints})
-    brands = constraints.get("allowed_hotel_brands") or []
-    constraints["allowed_hotel_brands"] = [
-        str(b) for b in brands if str(b).strip()
-    ]
+    constraints["allowed_hotel_brands"] = _canonical_brand_values(
+        constraints.get("allowed_hotel_brands") or []
+    )
     constraints["direct_only"] = bool(constraints.get("direct_only"))
     constraints["accessibility"] = bool(constraints.get("accessibility"))
     constraints["avoid_luxury"] = bool(constraints.get("avoid_luxury"))

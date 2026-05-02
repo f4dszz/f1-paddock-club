@@ -44,12 +44,14 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from llm import get_llm
+from refine_constraints import _apply_constraint_filters
+from refine_editing import apply_line_update
 
 from tools.search_hotels import search_hotels as _raw_search_hotels
 from tools.search_flights import search_flights as _raw_search_flights
 from tools.search_tickets import search_tickets as _raw_search_tickets
 from tools.recompute import recompute_budget as _raw_recompute_budget
-from tools._constraints import extract_hotel_brands, merge_constraints, normalize_constraints
+from tools._constraints import merge_constraints, normalize_constraints
 from tools._trip_dates import compute_trip_dates
 from tools._currency import to_eur
 
@@ -263,113 +265,6 @@ def _build_tools(state: dict, user_message: str = "") -> list:
     _intent_brands = _constraints.get("allowed_hotel_brands") or _intent_allowed_brands(user_message)
     _strict_brand = bool(_intent_brands) or _intent_strict_brand(user_message)
 
-    def _bounded_request(text: str) -> str:
-        text = (text or user_message or "").strip()
-        return text[:500] if len(text) > 500 else text
-
-    def _entry_to_line(entry: Any, label: str) -> str:
-        """Normalize LLM/tool-shaped entries into frontend-friendly strings."""
-        if isinstance(entry, str):
-            return entry.strip()
-        if isinstance(entry, dict):
-            if label == "Itinerary":
-                day = entry.get("day") or entry.get("day_number") or entry.get("index")
-                title = entry.get("title") or entry.get("weekday") or entry.get("date") or ""
-                items = entry.get("items") or entry.get("activities") or entry.get("plan") or entry.get("summary") or ""
-                if isinstance(items, list):
-                    body = "; ".join(str(item).strip() for item in items if str(item).strip())
-                else:
-                    body = str(items).strip()
-                if day and body:
-                    day_text = str(day).strip()
-                    day_prefix = day_text if re.match(r"^day\b", day_text, re.IGNORECASE) else f"Day {day_text}"
-                    title_part = f" ({title})" if title else ""
-                    return f"{day_prefix}{title_part}: {body}"
-                if body:
-                    return body
-            name = entry.get("name") or entry.get("title") or entry.get("place") or entry.get("activity") or ""
-            price = entry.get("price") or entry.get("cost") or entry.get("price_range") or ""
-            desc = entry.get("description") or entry.get("summary") or entry.get("reason") or entry.get("notes") or ""
-            if name and desc:
-                price_part = f" ({price})" if price else ""
-                return f"{name}{price_part} — {desc}"
-            if name:
-                return str(name).strip()
-            if desc:
-                return str(desc).strip()
-            return json.dumps(entry, ensure_ascii=False)
-        return str(entry).strip()
-
-    def _target_index(lines: list[str], request: str) -> int:
-        lowered = request.lower()
-        for idx, line in enumerate(lines):
-            candidate = re.split(r"\s+[—–-]\s+|:", line, maxsplit=1)[0]
-            candidate = re.sub(r"\([^)]*\)", "", candidate).strip()
-            if len(candidate) >= 4 and candidate.lower() in lowered:
-                return idx
-
-        weekday_aliases = [
-            (("monday", "mon", "周一", "星期一"), ("monday", "mon", "周一", "星期一")),
-            (("tuesday", "tue", "周二", "星期二"), ("tuesday", "tue", "周二", "星期二")),
-            (("wednesday", "wed", "周三", "星期三"), ("wednesday", "wed", "周三", "星期三")),
-            (("thursday", "thu", "周四", "星期四"), ("thursday", "thu", "周四", "星期四")),
-            (("friday", "fri", "周五", "星期五"), ("friday", "fri", "周五", "星期五")),
-            (("saturday", "sat", "周六", "星期六"), ("saturday", "sat", "周六", "星期六")),
-            (("sunday", "sun", "周日", "星期日"), ("sunday", "sun", "周日", "星期日")),
-        ]
-        for request_terms, line_terms in weekday_aliases:
-            if any(term in lowered or term in request for term in request_terms):
-                for idx, line in enumerate(lines):
-                    ll = line.lower()
-                    if any(term in ll or term in line for term in line_terms):
-                        return idx
-
-        day_match = re.search(r"\bday\s*(\d+)\b|第\s*(\d+)\s*天", request, re.IGNORECASE)
-        if day_match:
-            day_num = int(next(g for g in day_match.groups() if g))
-            if 1 <= day_num <= len(lines):
-                return day_num - 1
-
-        for idx, line in enumerate(lines):
-            ll = line.lower()
-            if any(token in lowered for token in ("dinner", "restaurant", "meal", "晚餐", "餐厅", "吃饭")) and any(
-                token in ll or token in line for token in ("dinner", "restaurant", "meal", "晚餐", "餐厅", "吃饭")
-            ):
-                return idx
-            if any(token in lowered or token in request for token in ("museum", "design", "景点", "博物馆", "设计")) and any(
-                token in ll or token in line for token in ("museum", "gallery", "design", "景点", "博物馆", "美术馆", "设计")
-            ):
-                return idx
-        return 0
-
-    def _replacement_name(request: str) -> str:
-        patterns = [
-            r"(?:改成|改为|换成|替换为)\s*([^，。,.;；]+)",
-            r"(?:replace|change|switch).{0,80}?\bto\s+([^,.;]+)",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, request, re.IGNORECASE)
-            if match:
-                return match.group(1).strip(" \"'")
-        return ""
-
-    def _apply_line_update(lines: list[Any], request: str, label: str) -> list[str]:
-        request = _bounded_request(request)
-        clean_lines = [_entry_to_line(line, label) for line in (lines or []) if _entry_to_line(line, label)]
-        if not clean_lines:
-            return [f"{label} update requested: {request}"]
-        target = _target_index(clean_lines, request)
-        updated = list(clean_lines)
-        replacement = _replacement_name(request) if label == "Tour" else ""
-        if replacement:
-            parts = re.split(r"\s+[—–-]\s+", updated[target], maxsplit=1)
-            detail = parts[1] if len(parts) > 1 else "Updated recommendation"
-            updated[target] = f"{replacement} — {detail}; Requested update: {request}"
-            return updated
-        separator = "; " if ":" in updated[target] else " — "
-        updated[target] = f"{updated[target]}{separator}Requested update: {request}"
-        return updated
-
     @tool
     def search_hotels_tool(
         city: str = "",
@@ -469,12 +364,29 @@ def _build_tools(state: dict, user_message: str = "") -> list:
             return f"Ticket search failed: {e}. Try checking tickets.formula1.com directly."
 
     @tool
-    def recompute_budget_tool(state_json: str) -> str:
+    def recompute_budget_tool(state_json: Any = "") -> str:
         """Recompute the total budget after any change to hotels, flights, or tickets.
         ALWAYS call this after making changes to verify the plan is within budget.
-        Pass the FULL current state as a JSON string."""
+        Prefer no argument. If passing state, only currency override is honored."""
         try:
-            s = json.loads(state_json)
+            def _budget_state_from_arg(raw: Any) -> dict:
+                s = dict(state)
+                parsed: dict[str, Any] = {}
+                if isinstance(raw, dict):
+                    parsed = raw
+                elif isinstance(raw, str) and raw.strip():
+                    loaded = json.loads(raw)
+                    if not isinstance(loaded, dict):
+                        raise ValueError("state_json must be a JSON object")
+                    parsed = loaded
+                elif raw:
+                    raise ValueError("state_json must be empty, a JSON string, or an object")
+
+                if "currency" in parsed:
+                    s["currency"] = parsed["currency"]
+                return s
+
+            s = _budget_state_from_arg(state_json)
             # Inherit session currency if supervisor passed partial state
             # without it. Prevents silent fallback to EUR when the
             # actual plan was USD / CNY.
@@ -487,19 +399,15 @@ def _build_tools(state: dict, user_message: str = "") -> list:
             return f"Budget recomputation failed: {e}"
 
     @tool
-    def update_itinerary_tool(request: str = "", current_itinerary_json: str = "") -> str:
+    def update_itinerary_tool(request: str = "") -> str:
         """Persist a schedule/itinerary/day-plan/restaurant change.
         Use this when the user asks to move, replace, add, or adjust a day,
         meal, restaurant, timing, or race-weekend schedule item. Returns the
         full updated itinerary JSON array."""
         try:
             current = state.get("itinerary") or []
-            if current_itinerary_json:
-                parsed = json.loads(current_itinerary_json)
-                if isinstance(parsed, list):
-                    current = parsed
             return json.dumps(
-                _apply_line_update(current, request or user_message, "Itinerary"),
+                apply_line_update(current, request, "Itinerary", user_message),
                 ensure_ascii=False,
             )
         except Exception as e:
@@ -507,19 +415,15 @@ def _build_tools(state: dict, user_message: str = "") -> list:
             return f"Itinerary update failed: {e}"
 
     @tool
-    def update_tour_tool(request: str = "", current_tour_json: str = "") -> str:
+    def update_tour_tool(request: str = "") -> str:
         """Persist a tour/explore/activity/sightseeing recommendation change.
         Use this when the user asks to change attractions, tours, local
         experiences, restaurants as recommendations, or exploration cards.
         Returns the full updated tour JSON array."""
         try:
             current = state.get("tour") or []
-            if current_tour_json:
-                parsed = json.loads(current_tour_json)
-                if isinstance(parsed, list):
-                    current = parsed
             return json.dumps(
-                _apply_line_update(current, request or user_message, "Tour"),
+                apply_line_update(current, request, "Tour", user_message),
                 ensure_ascii=False,
             )
         except Exception as e:
@@ -571,7 +475,6 @@ _FIELD_LABELS: dict[str, str] = {
     "itinerary": "itinerary",
     "tour": "tour",
 }
-
 
 def _count_tool_messages(messages: list) -> int:
     return sum(1 for m in messages if isinstance(m, ToolMessage))
@@ -922,7 +825,9 @@ def refine_plan(
 
     # Durable structured memory: keep hard constraints outside the
     # short rolling conversation history so they survive long chats.
+    previous_constraints = normalize_constraints(state.get("active_constraints"))
     state["active_constraints"] = merge_constraints(state.get("active_constraints"), user_message)
+    constraints_changed = normalize_constraints(state.get("active_constraints")) != previous_constraints
 
     # ── Detect mode ──────────────────────────────────────────────
     has_plan = bool(state.get("tickets") or state.get("transport") or state.get("hotel"))
@@ -979,6 +884,12 @@ def refine_plan(
 
     # ── Apply state mutations from tool results ──────────────────
     updated_fields = _apply_tool_updates(state, messages)
+    constraint_filtered = _apply_constraint_filters(
+        state,
+        updated_fields,
+        force=constraints_changed,
+    )
+    updated_fields.update(constraint_filtered)
 
     if updated_fields:
         logger.info("refine_plan: state fields updated: %s", list(updated_fields.keys()))
