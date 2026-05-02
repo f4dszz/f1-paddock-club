@@ -24,6 +24,7 @@ class TicketOption(TypedDict):
     provider: NotRequired[str]
     link_type: NotRequired[str]
     booking_confidence: NotRequired[str]
+    _rationale: NotRequired[dict[str, Any]]
 
 
 class TransportLeg(TypedDict):
@@ -36,6 +37,7 @@ class TransportLeg(TypedDict):
     provider: NotRequired[str]
     link_type: NotRequired[str]
     booking_confidence: NotRequired[str]
+    _rationale: NotRequired[dict[str, Any]]
 
 
 class HotelOption(TypedDict):
@@ -51,6 +53,7 @@ class HotelOption(TypedDict):
     provider: NotRequired[str]
     link_type: NotRequired[str]
     booking_confidence: NotRequired[str]
+    _rationale: NotRequired[dict[str, Any]]
 
 
 class BudgetSummary(TypedDict):
