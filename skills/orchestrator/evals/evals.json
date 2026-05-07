@@ -1,0 +1,23 @@
+{
+  "skill_name": "orchestrator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Audit our payment processing code and produce a roadmap for migrating off Stripe to Adyen. I want file-level change clarity and an honest risk profile, not a hand-wave.",
+      "expected_output": "The skill should trigger. The agent should clarify scope (which payment surfaces: checkout, webhooks, subscriptions, refunds), then dispatch parallel fact-check subagents partitioned by surface or directory, consolidate into a roadmap doc with current-state and per-file change sections, run a verification subagent that spot-checks file:line references, and finish with a short executive summary in chat linking to the full doc. The final output should contain real file:line citations from the fact-check phase, not fabricated ones.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我想给这个项目加上 i18n 支持，先帮我事实核查现状（哪些文件有硬编码字符串、组件层级怎么组织的、有没有现成的 i18n 库痕迹），再给我一个分阶段的实施方案。不要凭印象编 file 路径。",
+      "expected_output": "Skill triggers. Agent confirms scope (frontend only? backend errors too? which languages?) and output language preference, then dispatches at least two parallel fact-check subagents (e.g. one for component string usage, one for build/config/dependency state), consolidates into a phased implementation plan with verified file references, runs a spot-check verifier, and reports a bilingual or Chinese executive summary. The deliverable should explicitly distinguish what was verified versus what is recommended.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "We have four backend services and the error handling feels inconsistent. Plan the migration from per-service ad-hoc errors to a shared error-handling convention. Verify what's actually there across all four services first — I don't want a plan based on what you assume the code looks like.",
+      "expected_output": "Skill triggers. Agent clarifies the dimensions of inconsistency that matter (surface format, retry, logging) and the target convention's flexibility, then dispatches four parallel fact-check subagents (one per service) with identical structured headings so the reports are mergeable. Consolidator produces a comparison matrix plus a phased convergence plan. Verifier spot-checks several matrix cells against actual code. Executive summary identifies the largest divergences and recommends a target convention. References must be real file:line cites carried through from the fact-check phase.",
+      "files": []
+    }
+  ]
+}
