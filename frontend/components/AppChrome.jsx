@@ -37,7 +37,7 @@ export function PaddockMap({ zSt, conPos, speaking }) {
 
 export function DebugTrace({ debugLog, copyStatus, setCopyStatus }) {
   return (
-    <div style={{padding:"6px 14px 10px",borderTop:"1px solid #141414",background:"#0b0b0b",flexShrink:0}}>
+    <div data-testid="debug-trace" style={{padding:"6px 14px 10px",borderTop:"1px solid #141414",background:"#0b0b0b",flexShrink:0}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <div style={{fontSize:8,color:"#555"}}>Debug trace</div>
         <button

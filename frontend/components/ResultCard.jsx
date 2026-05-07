@@ -10,14 +10,15 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
   const{mode,items,bookLabel,bookIcon}=data;
   const sel=selections[zoneKey]||[];
   const hasSelection=sel.length>0;
-  const selectedItems=sel.map(idx=>items[idx]).filter(Boolean);
+  const selectionValue=(it,i)=>it.selectionIndex ?? i;
+  const selectedItems=items.filter((it,i)=>sel.includes(selectionValue(it,i)));
   const selectedCurs=new Set(selectedItems.filter(it=>it.priced!==false).map(it=>it.currency||"").filter(Boolean));
   const selectedTotal=selectedItems.filter(it=>it.priced!==false).reduce((s,it)=>(it.pv||0)+s,0);
   const chipSameCur=selectedCurs.size===1?[...selectedCurs][0]:null;
   const chipText=chipSameCur
     ?`${CUR_SYMBOL[chipSameCur]||(chipSameCur+" ")}${selectedTotal}`
     :`${sel.length} selected`;
-  const bookableItems=sel.filter(idx=>items[idx]?.link);
+  const bookableItems=selectedItems.filter(it=>it?.link);
 
   const toggle=(idx)=>{
     if(mode==="none")return;
@@ -29,7 +30,7 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
   };
 
   return(
-    <div style={{background:"#111",border:`1px solid ${hasSelection?z.color+"55":z.color+"33"}`,borderRadius:8,overflow:"hidden",animation:"cardSlide .4s cubic-bezier(0.16,1,0.3,1)",marginBottom:6,transition:"border-color .3s"}}>
+    <div data-testid={`result-card-${zoneKey}`} style={{background:"#111",border:`1px solid ${hasSelection?z.color+"55":z.color+"33"}`,borderRadius:8,overflow:"hidden",animation:"cardSlide .4s cubic-bezier(0.16,1,0.3,1)",marginBottom:6,transition:"border-color .3s"}}>
       <div style={{padding:"6px 10px",borderBottom:`1px solid ${z.color}15`,display:"flex",alignItems:"center",gap:6}}>
         <PxChar type={zoneKey} size={16}/>
         <span style={{fontSize:10,fontWeight:600,color:"#ccc"}}>{z.label}</span>
@@ -38,12 +39,13 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
         {!hasSelection&&<div style={{marginLeft:"auto",width:4,height:4,borderRadius:"50%",background:z.color,boxShadow:`0 0 5px ${z.color}`}}/>}
       </div>
       {items.map((it,i)=>{
-        const isSel=sel.includes(i);
+        const value=selectionValue(it,i);
+        const isSel=sel.includes(value);
         const selectable=mode!=="none";
         const isRadio=mode==="single";
         const unpriced=it.priced===false && (mode==="single"||mode==="multi");
         return(
-          <div key={i} onClick={()=>selectable&&toggle(i)}
+          <div key={i} data-testid={`result-item-${zoneKey}-${i}`} onClick={()=>selectable&&toggle(value)}
             style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",borderBottom:i<items.length-1?"1px solid #1a1a1a":"none",
               cursor:selectable?"pointer":"default",
               background:isSel?z.color+"12":"transparent",
@@ -71,19 +73,19 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
               </button>
             )}
             {it.price&&<span style={{fontSize:unpriced?9:10.5,fontWeight:unpriced?400:600,color:unpriced?"#666":(isSel?"#fff":"#888"),fontStyle:unpriced?"italic":"normal"}}>{it.price}</span>}
-            {unpriced&&it.link&&<button onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>{linkActionLabel(it)} →</button>}
+            {unpriced&&it.link&&<button data-testid={`book-unpriced-${zoneKey}-${i}`} onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>{linkActionLabel(it)} →</button>}
           </div>
         );
       })}
       {bookLabel&&hasSelection&&bookableItems.length>0&&(
         <div style={{padding:"6px 10px",borderTop:`1px solid ${z.color}22`}}>
-          <button onClick={(e)=>{e.stopPropagation();
-            bookableItems.forEach(idx=>{
-              const url=items[idx].link;
+          <button data-testid={`book-button-${zoneKey}`} onClick={(e)=>{e.stopPropagation();
+            bookableItems.forEach(item=>{
+              const url=item.link;
               if(url) window.open(url,"_blank");
             });
           }} style={{width:"100%",padding:"7px",borderRadius:5,border:"none",background:z.color,color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <span style={{fontSize:12}}>{bookIcon}</span> {bookableItems.length===1?linkActionLabel(items[bookableItems[0]]):`Open selected links (${bookableItems.length})`}
+            <span style={{fontSize:12}}>{bookIcon}</span> {bookableItems.length===1?linkActionLabel(bookableItems[0]):`Open selected links (${bookableItems.length})`}
           </button>
           <div style={{fontSize:8,color:"#444",textAlign:"center",marginTop:3}}>Opens provider/search pages; not a purchase confirmation.</div>
         </div>

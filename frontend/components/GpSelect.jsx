@@ -22,6 +22,7 @@ export function GpSelect({ gpList, onSelectGp, pushDebug }) {
           return (
             <div
               key={g.gp_name}
+              data-testid={`gp-card-${g.gp_name.replace(/\s+/g,"-").toLowerCase()}`}
               onClick={() => {
                 pushDebug("card.click", { gp:g.gp_name, is_past:g.is_past });
                 if (!g.is_past) onSelectGp({ ...g, hero, track });

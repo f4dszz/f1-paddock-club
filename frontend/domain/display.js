@@ -18,6 +18,9 @@ export function sourceColor(src){
 }
 
 const LINK_LABELS={
+  deeplink:"Open direct provider link",
+  search:"Open provider search",
+  homepage:"Open provider homepage",
   official_ticket_page:"Open official ticket page",
   flight_search:"Open flight search",
   hotel_listing:"Open hotel listing",
@@ -28,6 +31,9 @@ const LINK_LABELS={
 };
 
 export function linkActionLabel(item){
+  if(item?.linkType==="homepage"&&item?.bookingConfidence==="medium"){
+    return "Open external provider site";
+  }
   return LINK_LABELS[item?.linkType]||"Open provider";
 }
 

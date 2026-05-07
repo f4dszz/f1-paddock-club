@@ -20,7 +20,7 @@ export function BudgetPanel({budgetSummary, formBudget, formCurrency, liveResult
     n + (zone.items||[]).filter(it=>it.priced===false && (zone.mode==="single"||zone.mode==="multi")).length, 0);
 
   return(
-    <div style={{background:"#111",border:`1px solid ${toneSoft}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
+    <div data-testid="budget-panel" style={{background:"#111",border:`1px solid ${toneSoft}`,borderRadius:8,padding:"10px 14px",marginBottom:6,animation:"cardSlide .4s ease-out"}}>
       <div style={{fontSize:9,color:"#666",marginBottom:6}}>{isSelected?"Your selected total":"Baseline estimate"} ({cur})</div>
       {items.map((it,i)=>(
         <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#aaa",padding:"2px 0"}}>

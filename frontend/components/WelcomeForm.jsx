@@ -3,7 +3,10 @@ import { PxChar } from "./PaddockVisuals.jsx";
 
 export function WelcomeForm({ form, setForm, gp, onSubmit }) {
   const dateValidation = validateTripDates(form.departDate, form.returnDate, gp?.race_date);
-  const disabled = !dateValidation.valid;
+  const budgetFilled = String(form.budget ?? "").trim() !== "";
+  const budgetValue = Number(form.budget);
+  const budgetInvalid = budgetFilled && (!Number.isFinite(budgetValue) || budgetValue <= 0);
+  const disabled = !dateValidation.valid || budgetInvalid;
   const errBorder = dateValidation.error ? "#EF4444" : "#222";
 
   return (
@@ -21,6 +24,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
             <div key={f.k}>
               <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>{f.l}</label>
               <input
+                data-testid={f.k==="origin"?"origin-input":"budget-input"}
                 value={form[f.k]}
                 onChange={e => {
                   const value = e.target.value;
@@ -28,10 +32,13 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
                 }}
                 placeholder={f.p}
                 type={f.t}
+                min={f.k==="budget" ? "1" : undefined}
+                step={f.k==="budget" ? "1" : undefined}
                 style={{width:"100%",padding:"6px 9px",borderRadius:5,border:"1px solid #222",background:"#0a0a0a",color:"#eee",fontSize:11,outline:"none",fontFamily:"inherit",boxSizing:"border-box"}}
                 onFocus={e => e.target.style.borderColor="#E10600"}
-                onBlur={e => e.target.style.borderColor="#222"}
+                onBlur={e => e.target.style.borderColor=f.k==="budget"&&budgetInvalid?"#EF4444":"#222"}
               />
+              {f.k==="budget"&&budgetInvalid&&<div style={{fontSize:8,color:"#EF4444",marginTop:3}}>Budget must be greater than 0.</div>}
             </div>
           ))}
         </div>
@@ -42,6 +49,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
             {["EUR","USD","CNY"].map(c => (
               <button
                 key={c}
+                data-testid={`currency-${c}`}
                 onClick={() => setForm(prev => ({...prev,currency:c}))}
                 style={{flex:1,padding:"4px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",border:`1px solid ${form.currency===c?"#E10600":"#222"}`,background:form.currency===c?"#E1060015":"transparent",color:form.currency===c?"#E10600":"#555"}}
               >
@@ -55,6 +63,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
           <div>
             <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Depart date</label>
             <input
+              data-testid="depart-date-input"
               type="date"
               value={form.departDate}
               onChange={e => {
@@ -71,6 +80,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
           <div>
             <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Return date</label>
             <input
+              data-testid="return-date-input"
               type="date"
               value={form.returnDate}
               onChange={e => {
@@ -98,6 +108,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
             {[["any","Any"],["ga","GA"],["mid","Mid"],["vip","VIP"]].map(([v,l]) => (
               <button
                 key={v}
+                data-testid={`stand-${v}`}
                 onClick={() => setForm(prev => ({...prev,stand:v}))}
                 style={{flex:1,padding:"4px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",border:`1px solid ${form.stand===v?"#E10600":"#222"}`,background:form.stand===v?"#E1060015":"transparent",color:form.stand===v?"#E10600":"#555"}}
               >
@@ -110,6 +121,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
         <div>
           <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Special requests <span style={{color:"#333"}}>(optional)</span></label>
           <textarea
+            data-testid="special-requests-input"
             value={form.special}
             onChange={e => {
               const value = e.target.value;
@@ -122,11 +134,12 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
           />
         </div>
         <div style={{fontSize:8,color:"#555",lineHeight:1.5,marginTop:6}}>
-          Describe any stops, dietary needs, accessibility, or experiences you want. After results, use the chat to refine.
+          Describe any stops, dietary needs, accessibility, or experiences you want. Trips must stay between 1 and 30 nights; after results, use the chat to refine.
         </div>
       </div>
 
       <button
+        data-testid="plan-submit"
         onClick={onSubmit}
         disabled={disabled}
         style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:disabled?"#333":"#E10600",color:disabled?"#777":"#fff",fontSize:12,fontWeight:700,cursor:disabled?"not-allowed":"pointer",letterSpacing:"0.03em",transition:"all .15s"}}
