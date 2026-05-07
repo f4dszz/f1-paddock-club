@@ -46,6 +46,16 @@ from langgraph.prebuilt import create_react_agent
 from llm import get_llm
 from refine_constraints import _apply_constraint_filters
 from refine_editing import apply_line_update
+from refine_reply import (
+    build_deterministic_summary as _build_deterministic_summary,
+    detect_date_override as _detect_date_override,
+)
+from refine_state import (
+    apply_tool_updates as _apply_tool_updates,
+    collect_failed_tool_details as _collect_failed_tool_details,
+    collect_failed_tools as _collect_failed_tools,
+    count_tool_messages as _count_tool_messages,
+)
 
 from tools.search_hotels import search_hotels as _raw_search_hotels
 from tools.search_flights import search_flights as _raw_search_flights
@@ -448,199 +458,9 @@ def _build_tools(state: dict, user_message: str = "") -> list:
 # retries). The mapping is declarative — adding a new tool = one line.
 # ═══════════════════════════════════════════════════════════════════════
 
-_TOOL_STATE_MAP: dict[str, str] = {
-    "search_hotels_tool": "hotel",
-    "search_flights_tool": "transport",
-    "search_tickets_tool": "tickets",
-    "update_itinerary_tool": "itinerary",
-    "update_tour_tool": "tour",
-}
-
-# Prefixes used by _build_tools when a tool raises; detecting them lets us
-# flag failed tools in the deterministic summary instead of trusting the
-# LLM to report them honestly.
-_TOOL_FAILURE_PREFIXES = (
-    "Hotel search failed",
-    "Flight search failed",
-    "Ticket search failed",
-    "Itinerary update failed",
-    "Tour update failed",
-    "Budget recomputation failed",
-)
-
-_FIELD_LABELS: dict[str, str] = {
-    "hotel": "hotels",
-    "transport": "flights",
-    "tickets": "tickets",
-    "itinerary": "itinerary",
-    "tour": "tour",
-}
-
-def _count_tool_messages(messages: list) -> int:
-    return sum(1 for m in messages if isinstance(m, ToolMessage))
-
-
-def _collect_failed_tool_details(messages: list) -> dict[str, str]:
-    failed: dict[str, str] = {}
-    for msg in messages:
-        if not isinstance(msg, ToolMessage):
-            continue
-        content = (msg.content or "")
-        if content.startswith(_TOOL_FAILURE_PREFIXES):
-            name = getattr(msg, "name", "unknown_tool")
-            failed.setdefault(name, content)
-    return failed
-
-
-def _collect_failed_tools(messages: list) -> list[str]:
-    return list(_collect_failed_tool_details(messages).keys())
-
-
-def _detect_date_override(messages: list, state: dict) -> bool:
-    """True if the supervisor called any tool with explicit date args
-    that differ from the plan's saved dates.
-
-    We compute the plan's canonical dates via compute_trip_dates using
-    all four inputs (gp_date, extra_days, depart_date, return_date) so
-    that when the user HAS set explicit trip dates, a tool call using
-    those same dates is NOT flagged as an override. Only genuine
-    out-of-band dates trigger the "date search not persisted" note.
-    """
-    try:
-        default = compute_trip_dates(
-            state.get("gp_date", ""),
-            state.get("extra_days", 0),
-            state.get("depart_date", "") or "",
-            state.get("return_date", "") or "",
-        )
-    except Exception:
-        return False
-    default_values = {default.get("hotel_checkin"), default.get("hotel_checkout"),
-                      default.get("outbound_date"), default.get("return_date")}
-    for msg in messages:
-        tool_calls = getattr(msg, "tool_calls", None) or []
-        for tc in tool_calls:
-            args = tc.get("args", {}) if isinstance(tc, dict) else {}
-            for key in ("checkin", "checkout", "date", "return_date"):
-                val = args.get(key)
-                if val and val not in default_values:
-                    return True
-    return False
-
-
-def _build_deterministic_summary(
-    state: dict,
-    updated_fields: dict[str, bool],
-    failed_tools: list[str],
-    date_override: bool,
-    failed_tool_details: dict[str, str] | None = None,
-) -> str:
-    cur = str(state.get("currency") or "EUR").upper()
-    parts: list[str] = []
-
-    if updated_fields:
-        bits = []
-        for field in ("tickets", "transport", "hotel", "itinerary", "tour"):
-            if updated_fields.get(field):
-                count = len(state.get(field, []) or [])
-                label = _FIELD_LABELS.get(field, field)
-                bits.append(f"{label} ({count} options)")
-        if bits:
-            parts.append("Updated " + ", ".join(bits) + ".")
-
-    if failed_tools:
-        details = failed_tool_details or {}
-        entries = []
-        for tool_name in failed_tools:
-            nice = tool_name.replace("_tool", "").replace("search_", "")
-            detail = details.get(tool_name, "")
-            if detail:
-                # Keep the user-facing reply concise, but preserve the
-                # concrete failure reason (e.g. no required brand match).
-                entries.append(f"{nice} ({detail.split('. Try ', 1)[0]})")
-            else:
-                entries.append(nice)
-        parts.append(f"Tool call failed and did not update plan: {', '.join(entries)}.")
-
-    if (state.get("budget_summary") or {}).get("retry_exhausted"):
-        parts.append("No feasible plan under the requested budget was found after retries.")
-
-    bs = state.get("budget_summary") or {}
-    if bs:
-        total = bs.get("total")
-        budget = bs.get("budget")
-        within = "within budget" if bs.get("within_budget") else "OVER budget"
-        try:
-            parts.append(f"New total: {cur} {float(total):.0f} / {cur} {float(budget):.0f} — {within}.")
-        except (TypeError, ValueError):
-            pass
-
-    if date_override:
-        # Plan-time trip dates ARE now persisted (Phase 2); the thing
-        # that's not persisted is a chat-time date change. Make the
-        # note accurate about what the user just did: we ran a preview
-        # search against other dates, but their saved plan is untouched.
-        parts.append(
-            "Note: those were preview searches against alternate dates — "
-            "your saved trip dates didn't change. To change the trip dates "
-            "themselves, re-plan with the new dates selected on the form."
-        )
-
-    if not parts:
-        parts.append("Plan unchanged.")
-
-    return " ".join(parts)
-
-
-def _apply_tool_updates(state: dict, messages: list) -> dict[str, bool]:
-    """Scan the message history and apply tool results to state.
-
-    Iterates messages in REVERSE order so we find the LAST successful
-    call for each tool (in case the supervisor retried with different params).
-    """
-    updated: dict[str, bool] = {}
-
-    for msg in reversed(messages):
-        if not isinstance(msg, ToolMessage):
-            continue
-
-        tool_name = getattr(msg, "name", None)
-        if not tool_name or tool_name not in _TOOL_STATE_MAP:
-            continue
-
-        field = _TOOL_STATE_MAP[tool_name]
-        if field in updated:
-            continue
-
-        content = msg.content
-        if not content or content.startswith(("Hotel search failed",
-                                               "Flight search failed",
-                                               "Ticket search failed",
-                                               "Itinerary update failed",
-                                               "Tour update failed")):
-            continue
-
-        try:
-            data = json.loads(content)
-            if isinstance(data, list) and len(data) > 0:
-                state[field] = data
-                updated[field] = True
-                logger.info("state updated: %s ← %d items from %s", field, len(data), tool_name)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    if updated:
-        try:
-            state["budget_summary"] = _raw_recompute_budget(state)
-            state["budget_ok"] = state["budget_summary"].get("within_budget", False)
-            bs = state["budget_summary"]
-            bs_cur = bs.get("currency", state.get("currency", "EUR"))
-            logger.info("budget recomputed after state update: %s %.0f / %s %.0f",
-                        bs_cur, bs["total"], bs_cur, bs["budget"])
-        except Exception:
-            logger.exception("budget recomputation failed after state update")
-
-    return updated
+# State-update and deterministic-reply helpers live in refine_state.py and
+# refine_reply.py. The private aliases imported above keep existing tests and
+# callers stable while shrinking this orchestration module.
 
 
 # ═══════════════════════════════════════════════════════════════════════
