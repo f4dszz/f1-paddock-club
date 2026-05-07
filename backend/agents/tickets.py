@@ -16,19 +16,19 @@ def _ticket_mock(state: TravelPlanState) -> list[dict]:
     return [
         {"name": "General Admission", "price": 195, "currency": "EUR",
          "section": "Free roaming", "tag": "VALUE",
-         "link": "https://tickets.formula1.com",
-         "provider": "Formula 1", "link_type": "official_ticket_page",
-         "booking_confidence": "high"},
+         "link": "https://tickets.formula1.com/en",
+         "provider": "Formula 1", "link_type": "search",
+         "booking_confidence": "medium"},
         {"name": "Tribuna 25", "price": 380, "currency": "EUR",
          "section": "T2 braking zone", "tag": "PICK",
-         "link": "https://tickets.formula1.com",
-         "provider": "Formula 1", "link_type": "official_ticket_page",
-         "booking_confidence": "high"},
+         "link": "https://tickets.formula1.com/en",
+         "provider": "Formula 1", "link_type": "search",
+         "booking_confidence": "medium"},
         {"name": "Main Grandstand", "price": 620, "currency": "EUR",
          "section": "Pit lane + podium", "tag": "VIP",
-         "link": "https://tickets.formula1.com",
-         "provider": "Formula 1", "link_type": "official_ticket_page",
-         "booking_confidence": "high"},
+         "link": "https://tickets.formula1.com/en",
+         "provider": "Formula 1", "link_type": "search",
+         "booking_confidence": "medium"},
     ]
 
 

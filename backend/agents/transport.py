@@ -32,24 +32,23 @@ def _transport_mock(state: TravelPlanState) -> list[dict]:
     )
     out_date = dates.get("outbound_date", "?")
     ret_date = dates.get("return_date", "?")
+    flight_tag = "ROUNDTRIP" if ret_date else "OUT"
+    flight_detail = (
+        f"Estimated direct round trip · {out_date} → {ret_date}"
+        if ret_date else f"Estimated direct route · {out_date}"
+    )
     return [
-        {"tag": "OUT", "summary": f"{origin} → {city}",
-         "detail": f"Estimated direct route · {out_date}",
-         "price": 485, "currency": "EUR",
+        {"tag": flight_tag, "summary": f"{origin} ↔ {city}",
+         "detail": flight_detail,
+         "price": 1005, "currency": "EUR",
          "link": "https://www.google.com/travel/flights",
-         "provider": "Google Flights", "link_type": "flight_search",
-         "booking_confidence": "search"},
-        {"tag": "RET", "summary": f"{city} → {origin}",
-         "detail": f"Estimated direct route · {ret_date}",
-         "price": 520, "currency": "EUR",
-         "link": "https://www.google.com/travel/flights",
-         "provider": "Google Flights", "link_type": "flight_search",
-         "booking_confidence": "search"},
+         "provider": "Google Flights", "link_type": "search",
+         "booking_confidence": "medium"},
         {"tag": "LOCAL", "summary": f"{city} ↔ Circuit",
          "detail": "Local transit (varies by circuit)",
          "price": 5, "currency": "EUR",
          "link": "", "provider": "Local transit",
-         "link_type": "local_info", "booking_confidence": "low"},
+         "link_type": "homepage", "booking_confidence": "low"},
     ]
 
 

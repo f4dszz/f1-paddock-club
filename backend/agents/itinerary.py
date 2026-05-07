@@ -91,6 +91,22 @@ def itinerary_agent(state: TravelPlanState) -> dict:
             stops = state.get("stops") or ""
             special = state.get("special_requests") or ""
 
+            # Pull weekend schedule + commute tip from the F1 domain layer
+            # so the LLM doesn't invent session days or local transit advice.
+            from tools._f1_domain import enrich as _enrich_gp
+            domain = _enrich_gp(state.get("gp_name", "")) or {}
+            schedule = domain.get("session_schedule") or {}
+            commute = domain.get("commute_notes") or ""
+            schedule_block = ""
+            if schedule:
+                schedule_block = (
+                    "\nRace weekend schedule:\n"
+                    f"- Friday {schedule.get('friday','')}: FP1 + FP2 (Sprint Qualifying on Sprint weekends)\n"
+                    f"- Saturday {schedule.get('saturday','')}: FP3 + Qualifying (Sprint + Quali on Sprint weekends)\n"
+                    f"- Sunday {schedule.get('sunday','')}: Race\n"
+                )
+            commute_block = f"Local commute tips: {commute}\n" if commute else ""
+
             system = (
                 "You are an expert travel planner curating a Formula 1 fan "
                 "trip. You produce tight, practical day-by-day itineraries. "
@@ -103,7 +119,9 @@ def itinerary_agent(state: TravelPlanState) -> dict:
                 f"Origin: {state.get('origin', '')}\n"
                 f"Hotel base: {chosen_hotel or 'TBD'}\n"
                 f"Stops / multi-city plan: {stops or 'none'}\n"
-                f"Special requests: {special or 'none'}\n\n"
+                f"Special requests: {special or 'none'}\n"
+                f"{schedule_block}"
+                f"{commute_block}\n"
                 "Cover all three race-weekend sessions appropriately. "
                 "Use the extra days for the city and nearby day trips. "
                 "Each day = ONE line, starting 'Day N (DayOfWeek): '. "

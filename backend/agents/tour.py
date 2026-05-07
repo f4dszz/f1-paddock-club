@@ -52,6 +52,22 @@ def tour_agent(state: TravelPlanState) -> dict:
 
             special = state.get("special_requests") or ""
 
+            # Pull weekend schedule + commute tip from the F1 domain layer
+            # so picks respect what's open / commutable on each session day.
+            from tools._f1_domain import enrich as _enrich_gp
+            domain = _enrich_gp(state.get("gp_name", "")) or {}
+            schedule = domain.get("session_schedule") or {}
+            commute = domain.get("commute_notes") or ""
+            schedule_block = ""
+            if schedule:
+                schedule_block = (
+                    "\nRace weekend schedule:\n"
+                    f"- Friday {schedule.get('friday','')}: FP1 + FP2\n"
+                    f"- Saturday {schedule.get('saturday','')}: FP3 + Qualifying\n"
+                    f"- Sunday {schedule.get('sunday','')}: Race\n"
+                )
+            commute_block = f"Local commute tips: {commute}\n" if commute else ""
+
             system = (
                 "You are a savvy local tour curator who knows the area "
                 "around F1 Grand Prix host cities. Recommend the best "
@@ -62,7 +78,9 @@ def tour_agent(state: TravelPlanState) -> dict:
                 f"Recommend 5-6 must-do items for someone attending the "
                 f"{state['gp_name']} in {state['gp_city']}. "
                 f"They have {days_count} days total including the race.\n"
-                f"Special requests: {special or 'none'}\n\n"
+                f"Special requests: {special or 'none'}\n"
+                f"{schedule_block}"
+                f"{commute_block}\n"
                 "Mix iconic sights, a hidden gem, a local food spot, and a "
                 "motorsport-flavored pick. Each line must follow exactly: "
                 f"'<emoji> Name ({sym}price) — short note'. Use {sym} "

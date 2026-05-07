@@ -20,6 +20,7 @@ import re
 from pydantic import BaseModel, Field
 
 from ._cache import cached
+from ._links import normalize_link
 from ._parallel import query_parallel
 from ._date_util import normalize_date, compute_checkout
 
@@ -106,6 +107,30 @@ _HOTEL_LOCATION_ALIASES: dict[str, set[str]] = {
 }
 
 
+def _stay_zone_tokens_for_city(city: str) -> set[str]:
+    """Pull canonical stay-zone tokens for a city from `_f1_domain`.
+
+    The F1 domain layer owns the official stay zones per GP. We tokenize
+    them (lowercase, alpha-only, length>=3) and merge into the existing
+    alias set so race-week searches surface neighbourhoods we curated.
+    Returns an empty set when the city is not a known GP host.
+    """
+    try:
+        from ._f1_domain import stay_zones_for
+        from ._race_calendar import get_race_by_city
+    except Exception:  # pragma: no cover - defensive import
+        return set()
+    race = get_race_by_city(city)
+    if not race:
+        return set()
+    tokens: set[str] = set()
+    for zone in stay_zones_for(race["gp_name"]):
+        for token in re.findall(r"[a-z0-9]+", zone.lower()):
+            if len(token) >= 3:
+                tokens.add(token)
+    return tokens
+
+
 def _location_tokens(city: str, near: str | None = None) -> set[str]:
     tokens = {
         token
@@ -113,6 +138,8 @@ def _location_tokens(city: str, near: str | None = None) -> set[str]:
         if len(token) >= 3
     }
     tokens |= _HOTEL_LOCATION_ALIASES.get(city.lower(), set())
+    # Augment (do not replace) with stay-zone tokens curated in _f1_domain.
+    tokens |= _stay_zone_tokens_for_city(city)
     if near:
         tokens |= {
             token
@@ -206,6 +233,10 @@ def _try_serpapi_google_hotels(
         if max_price and total > max_price:
             continue
 
+        raw_link = p.get("link", "https://www.booking.com")
+        # Booking.com is the primary affiliate target SerpAPI returns
+        # for google_hotels listings; classify against that provider.
+        norm = normalize_link(raw_link, "booking_com")
         results.append({
             "name": p.get("name", "Unknown Hotel"),
             "price_per_night": price_per_night,
@@ -215,10 +246,10 @@ def _try_serpapi_google_hotels(
             "distance": p.get("nearby_places", [{}])[0].get("name", "") if p.get("nearby_places") else "",
             "rating": str(p.get("overall_rating", "")),
             "tag": _classify_hotel(price_per_night, p.get("overall_rating", 0)),
-            "link": p.get("link", "https://www.booking.com"),
+            "link": norm["url"],
             "provider": "Google Hotels",
-            "link_type": "hotel_listing",
-            "booking_confidence": "medium",
+            "link_type": norm["link_type"],
+            "booking_confidence": norm["booking_confidence"],
         })
 
     return results[:5]
@@ -281,6 +312,20 @@ def _try_serpapi_google_maps_hotels(
         if stars and star_rating < stars:
             continue
 
+        # Prefer the property's own website; fall back to the maps URL.
+        # Arbitrary hotel websites are not in our provider whitelist, so
+        # they are useful external provider pages, not high-confidence
+        # booking deeplinks.
+        website = p.get("website")
+        if website:
+            link = website
+            link_type = "homepage"
+            booking_confidence = "medium"
+        else:
+            norm = normalize_link(p.get("link", ""), "google_maps")
+            link = norm["url"]
+            link_type = norm["link_type"]
+            booking_confidence = norm["booking_confidence"]
         results.append({
             "name": p.get("title", "Unknown Hotel"),
             "price_per_night": price_num,
@@ -290,10 +335,10 @@ def _try_serpapi_google_maps_hotels(
             "distance": p.get("address", ""),
             "rating": str(rating),
             "tag": _classify_hotel(price_num, rating),
-            "link": p.get("website", p.get("link", "")),
+            "link": link,
             "provider": "Google Maps",
-            "link_type": "maps_listing",
-            "booking_confidence": "low" if price_num <= 0 else "medium",
+            "link_type": link_type,
+            "booking_confidence": booking_confidence,
         })
 
     return results
@@ -356,9 +401,11 @@ def _try_llm_estimate(
             hotel["_source"] = "llm_estimate"
             hotel["_degraded"] = True
             hotel.setdefault("provider", "LLM estimate")
-            hotel.setdefault("link_type", "hotel_search")
-            hotel.setdefault("booking_confidence", "estimate")
-            hotel.setdefault("link", "https://www.booking.com")
+            raw_link = hotel.get("link") or "https://www.booking.com"
+            norm = normalize_link(raw_link, "booking_com")
+            hotel["link"] = norm["url"]
+            hotel["link_type"] = norm["link_type"]
+            hotel["booking_confidence"] = norm["booking_confidence"]
     return [hotel for hotel in hotels if isinstance(hotel, dict)]
 
 

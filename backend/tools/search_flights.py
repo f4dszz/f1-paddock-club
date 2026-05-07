@@ -21,6 +21,7 @@ import re
 from pydantic import BaseModel, Field
 
 from ._cache import cached
+from ._links import normalize_link
 from ._parallel import query_parallel, DegradationReport
 from ._date_util import normalize_date
 
@@ -177,6 +178,10 @@ def _try_serpapi_google_flights(
         price = flight_group.get("price", 0)
 
         detail_date = f"{date} → {return_date}" if is_roundtrip else date
+        norm = normalize_link(
+            "https://www.google.com/travel/flights",
+            "google_flights",
+        )
         results.append({
             "tag": tag,
             "summary": f"{first_leg.get('departure_airport', {}).get('id', origin)} -> "
@@ -185,10 +190,10 @@ def _try_serpapi_google_flights(
                       f"{duration // 60}h{duration % 60:02d}m - {detail_date}",
             "price": float(price),
             "currency": "USD",
-            "link": "https://www.google.com/travel/flights",
+            "link": norm["url"],
             "provider": "Google Flights",
-            "link_type": "flight_search",
-            "booking_confidence": "search",
+            "link_type": norm["link_type"],
+            "booking_confidence": norm["booking_confidence"],
             "airline": first_leg.get("airline", ""),
             "stops": num_stops,
         })
@@ -241,7 +246,7 @@ def _try_serpapi_google_search_flights(
                 "currency": "USD",
                 "link": link,
                 "provider": "Google Search",
-                "link_type": "provider_search",
+                "link_type": "search",
                 "booking_confidence": "low",
             })
 
@@ -314,9 +319,14 @@ def _try_llm_estimate(
             leg["_source"] = "llm_estimate"
             leg["_degraded"] = True
             leg.setdefault("provider", "LLM estimate")
-            leg.setdefault("link_type", "flight_search")
-            leg.setdefault("booking_confidence", "estimate")
-            leg.setdefault("link", "https://www.google.com/travel/flights")
+            # Run any caller-supplied link through normalization too —
+            # LLM fallback often emits "https://www.google.com/travel/flights"
+            # which we want classified as "search", not "deeplink".
+            raw_link = leg.get("link") or "https://www.google.com/travel/flights"
+            norm = normalize_link(raw_link, "google_flights")
+            leg["link"] = norm["url"]
+            leg["link_type"] = norm["link_type"]
+            leg["booking_confidence"] = norm["booking_confidence"]
     return [leg for leg in legs if isinstance(leg, dict)]
 
 

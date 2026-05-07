@@ -26,6 +26,8 @@ from datetime import date
 from pydantic import BaseModel, Field
 
 from ._cache import cached
+from ._f1_domain import circuit_name_for as _circuit_name_for
+from ._links import normalize_link
 from ._parallel import query_parallel
 from ._race_calendar import race_date as _calendar_race_date, get_race as _get_race
 
@@ -44,36 +46,39 @@ _TICKET_URLS: dict[str, str] = {
 # Default fallback URL for GPs not in the map
 _DEFAULT_TICKET_URL = "https://tickets.formula1.com/en"
 
-# Known circuit names for search disambiguation (Austrian vs Australian, etc.)
-_CIRCUIT_NAMES: dict[str, str] = {
-    "Australian GP": "Albert Park Melbourne",
-    "Austrian GP": "Red Bull Ring Spielberg",
-    "Azerbaijan GP": "Baku City Circuit",
-    "Barcelona-Catalunya GP": "Circuit de Barcelona-Catalunya",
-    "Belgian GP": "Spa-Francorchamps",
-    "Brazilian GP": "Interlagos Sao Paulo",
-    "British GP": "Silverstone",
-    "Canadian GP": "Circuit Gilles Villeneuve Montreal",
-    "Chinese GP": "Shanghai International Circuit",
-    "Dutch GP": "Zandvoort",
-    "Hungarian GP": "Hungaroring Budapest",
-    "Italian GP": "Monza Autodromo Nazionale",
-    "Japanese GP": "Suzuka Circuit",
-    "Las Vegas GP": "Las Vegas Strip Circuit",
-    "Mexico City GP": "Autodromo Hermanos Rodriguez",
-    "Miami GP": "Miami International Autodrome",
-    "Monaco GP": "Circuit de Monaco Monte Carlo",
-    "Qatar GP": "Lusail International Circuit",
-    "Singapore GP": "Marina Bay Street Circuit",
-    "Spanish GP": "Madrid circuit",
-    "United States GP": "Circuit of the Americas Austin",
-    "Abu Dhabi GP": "Yas Marina Circuit",
-}
 
+def _ticket_provider_for(url: str) -> str:
+    """Pick the right provider key for a ticket URL.
+
+    The ticket page can live on the F1 official site, the circuit's own
+    domain (monzanet.it, silverstone.co.uk, singaporegp.sg), or — when
+    the LLM hallucinates — somewhere else entirely. Map by host so the
+    URL is classified against the correct rules.
+    """
+    if not url:
+        return "f1_official"
+    host = url.lower()
+    if "monzanet.it" in host:
+        return "monzanet"
+    if "silverstone.co.uk" in host:
+        return "silverstone"
+    if "singaporegp.sg" in host:
+        return "singaporegp"
+    return "f1_official"
+
+
+def _normalize_ticket_link(url: str) -> dict:
+    """Normalize a ticket URL via the right provider and return the dict."""
+    return normalize_link(url or _DEFAULT_TICKET_URL,
+                          _ticket_provider_for(url or _DEFAULT_TICKET_URL))
 
 def _disambiguate(gp_name: str) -> str:
-    """Return a disambiguation suffix for search queries (city + circuit)."""
-    circuit = _CIRCUIT_NAMES.get(gp_name, "")
+    """Return a disambiguation suffix for search queries (city + circuit).
+
+    Pulls the canonical circuit name from `_f1_domain` (single source of
+    truth) and falls back to "<city> <country>" if the GP is unknown.
+    """
+    circuit = _circuit_name_for(gp_name) or ""
     if circuit:
         return circuit
     # Fallback: pull city from race calendar
@@ -254,8 +259,10 @@ def _extract_with_llm(
             opt["_source"] = source_label
             opt["_degraded"] = False  # Real data, just LLM-extracted
             opt.setdefault("provider", "Formula 1")
-            opt.setdefault("link_type", "official_ticket_page")
-            opt.setdefault("booking_confidence", "high")
+            norm = _normalize_ticket_link(opt.get("link", ""))
+            opt["link"] = norm["url"]
+            opt["link_type"] = norm["link_type"]
+            opt["booking_confidence"] = norm["booking_confidence"]
     return [o for o in options if isinstance(o, dict)]
 
 
@@ -313,8 +320,10 @@ def _try_llm_estimate(
             opt["_source"] = "llm_estimate"
             opt["_degraded"] = True
             opt.setdefault("provider", "Formula 1")
-            opt.setdefault("link_type", "official_ticket_page")
-            opt.setdefault("booking_confidence", "estimate")
+            norm = _normalize_ticket_link(opt.get("link", ""))
+            opt["link"] = norm["url"]
+            opt["link_type"] = norm["link_type"]
+            opt["booking_confidence"] = norm["booking_confidence"]
     return [o for o in options if isinstance(o, dict)]
 
 
