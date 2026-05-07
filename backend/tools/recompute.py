@@ -9,7 +9,7 @@ and the final BudgetSummary is denominated in the user-selected currency.
 
 The recompute logic:
 - Filters out INFO/supplementary items (tag="INFO" or price=0)
-- Picks the cheapest OUT flight + cheapest RET flight (if any) + LOCAL
+- Picks the cheapest ROUNDTRIP flight, or cheapest OUT + RET pair, plus LOCAL
 - Picks the cheapest real hotel and multiplies by nights
 - Converts every amount source_currency → target_currency via EUR pivot
 - Per-category defaults (tour/food/misc) are defined in EUR and
@@ -69,6 +69,17 @@ def _pick_cheapest_in(items: list[dict], tag_filter: str, target: str) -> float:
     if not candidates:
         return 0.0
     return min(candidates)
+
+
+def _pick_cheapest_item(items: list[dict], tag_filter: str, target: str) -> dict | None:
+    """Pick the cheapest priced item matching a tag."""
+    candidates = [
+        item for item in items
+        if item.get("tag") == tag_filter and _positive_float(item.get("price", 0)) > 0
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: _item_price_in(item, target))
 
 
 def _display_items(items: list[dict]) -> list[dict]:
@@ -173,17 +184,47 @@ def recompute_budget(state: dict[str, Any], selections: dict[str, Any] | None = 
     transport = _display_items(state.get("transport") or [])
     selected_transport = _selected_items(transport, normalized_selections, "transport")
     local_items = [t for t in transport if t.get("tag") == "LOCAL" and _positive_float(t.get("price", 0)) > 0]
-    selected_local = [t for t in selected_transport if t.get("tag") == "LOCAL"]
     selected_flights = [t for t in selected_transport if t.get("tag") != "LOCAL"]
     if selected_transport:
-        flight_cost = sum(
-            _price_or_missing(t, target, missing_categories, "Flights")
-            for t in selected_flights
-        )
-        # Keep local transit in the quote even when the user only selects
-        # a flight row. If they explicitly selected LOCAL, use that instead.
-        local_source = selected_local or local_items
-        local_cost = sum(_item_price_in(t, target) for t in local_source)
+        if not selected_flights:
+            raise ValueError("Transport selection must reference a flight option")
+
+        selected_roundtrips = [t for t in selected_flights if t.get("tag") == "ROUNDTRIP"]
+        selected_out = [t for t in selected_flights if t.get("tag") == "OUT"]
+        selected_ret = [t for t in selected_flights if t.get("tag") == "RET"]
+
+        if selected_roundtrips:
+            flight_cost = sum(
+                _price_or_missing(t, target, missing_categories, "Flights")
+                for t in selected_roundtrips
+            )
+        else:
+            if selected_out:
+                out_cost = sum(
+                    _price_or_missing(t, target, missing_categories, "Flights")
+                    for t in selected_out
+                )
+            else:
+                paired_out = _pick_cheapest_item(transport, "OUT", target)
+                out_cost = _price_or_missing(paired_out, target, missing_categories, "Flights") if paired_out else 0.0
+                if out_cost <= 0:
+                    missing_categories.add("Flights")
+
+            if selected_ret:
+                ret_cost = sum(
+                    _price_or_missing(t, target, missing_categories, "Flights")
+                    for t in selected_ret
+                )
+            else:
+                paired_ret = _pick_cheapest_item(transport, "RET", target)
+                ret_cost = _price_or_missing(paired_ret, target, missing_categories, "Flights") if paired_ret else 0.0
+                if ret_cost <= 0:
+                    missing_categories.add("Flights")
+
+            flight_cost = out_cost + ret_cost
+
+        # Local transit is part of the trip baseline, not a selectable flight.
+        local_cost = sum(_item_price_in(t, target) for t in local_items)
     else:
         roundtrip_cost = _pick_cheapest_in(transport, "ROUNDTRIP", target)
         if roundtrip_cost > 0:

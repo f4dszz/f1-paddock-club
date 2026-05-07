@@ -197,6 +197,7 @@ app.add_middleware(
 
 
 _SUPPORTED_CURRENCIES = {"EUR", "USD", "CNY"}
+_MAX_LEGACY_EXTRA_DAYS = 27
 
 
 class TripRequest(BaseModel):
@@ -226,6 +227,14 @@ class TripRequest(BaseModel):
                 f"{', '.join(sorted(_SUPPORTED_CURRENCIES))}."
             )
         return code
+
+    @field_validator("budget")
+    @classmethod
+    def _validate_budget(cls, v):
+        amount = float(v)
+        if amount <= 0:
+            raise ValueError("Budget must be greater than 0")
+        return amount
 
 
 def _validate_plan_payload(data) -> TripRequest:
@@ -262,6 +271,12 @@ def _validate_plan_payload(data) -> TripRequest:
     ok, reason = validate_trip_dates(req.gp_date, req.depart_date, req.return_date)
     if not ok:
         raise ValueError(reason)
+
+    if not (req.depart_date and req.return_date):
+        if req.extra_days < 0:
+            raise ValueError("extra_days must be between 0 and 27")
+        if req.extra_days > _MAX_LEGACY_EXTRA_DAYS:
+            raise ValueError("extra_days must be between 0 and 27")
 
     return req
 
