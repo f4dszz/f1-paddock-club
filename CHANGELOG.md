@@ -15,9 +15,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - "Why this card?" explainability for ticket, flight, and hotel cards, including reasons, matched constraints, source path, and trade-offs.
 - Backend feature-completion tests and CI execution of `python -m unittest discover -s tests -v`.
 - Maintainer architecture map in `docs/architecture-map.zh-CN.md`, covering state flow, memory layers, quote semantics, hard constraints, explainability, and module boundaries.
+- Synced, compact `AGENTS.md` / `CLAUDE.md` guidelines with a drift check script, tracked git hook templates, project skill install script, and Playwright browser smoke coverage.
 
 ### Changed
-- Booking buttons now describe the real link type, such as official ticket page, flight search, hotel listing, maps listing, or provider search.
+- Booking buttons now describe the real link type with the normalized `deeplink` / `search` / `homepage` contract, and arbitrary hotel websites are medium-confidence external provider sites rather than high-confidence booking links.
 - Unpriced ticket/flight/hotel options are selectable, but selecting them marks the quote incomplete rather than treating missing price as zero.
 - Lane 2 constraints now live outside the rolling conversation history, so hard constraints can survive multi-turn refinement.
 - Explainability copy now says "source path" instead of implying a complete runtime attempt log.
@@ -33,9 +34,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Hard-constraint reconciliation now runs only when constraints change or transport/hotel data changes, avoiding unrelated chat turns that silently refresh result cards.
 - Hotel brand filtering now uses canonical brand aliases rather than broad substring matching.
 - Duplicate selected card indices are deduped before budget recomputation, and WebSocket `selections: null` is rejected explicitly.
+- Transport quote selection no longer undercounts fallback one-way legs; mock fallback emits a single round-trip flight card and stale `LOCAL`-only transport selections are rejected.
+- Plan input validation now rejects non-positive budgets and legacy `extra_days` values outside the 0-27 range.
 - Direct-flight filtering now distrusts contradictory structured `stops: 0` fields when the visible card text says `1 stop`, `via`, `connection`, or `layover`.
 - Extracted date inputs now capture event values before React state updates, preventing a `currentTarget` null crash during Browser Use/manual date edits.
 - English Explore-card replacements using `Replace X with Y` now target the named tour item and put the replacement in the card title instead of only appending a note.
+- Dev scripts now resolve `.venv/bin/python`, `python3.12`, `python3.11`, or `python3` instead of assuming a `python` executable exists.
+- Refinement helper code is split out of `backend/refine.py` into state-update and deterministic-reply modules while preserving existing helper imports.
+- `start.sh` is now a true one-command launcher with configurable ports, health checks, and child-process cleanup.
 
 ## [0.3.0] — 2026-04-20
 

@@ -69,6 +69,38 @@ class FeatureCompletionTests(unittest.TestCase):
         self.assertFalse(quote["within_budget"])
         self.assertIn("Flights", quote["missing_price_categories"])
 
+    def test_roundtrip_selection_keeps_local_transit(self):
+        from tools.recompute import recompute_budget
+
+        state = _sample_state()
+        quote = recompute_budget(state, selections={"transport": [0]})
+
+        self.assertEqual(quote["basis"], "selected")
+        self.assertEqual(quote["items"][1], {"name": "Flights", "amount": 420.0, "currency": "EUR"})
+
+    def test_one_way_transport_selection_pairs_opposite_direction(self):
+        from tools.recompute import recompute_budget
+
+        state = _sample_state()
+        state["transport"] = [
+            {"tag": "OUT", "summary": "Outbound", "detail": "Direct", "price": 400, "currency": "EUR"},
+            {"tag": "RET", "summary": "Return", "detail": "Direct", "price": 500, "currency": "EUR"},
+            {"tag": "LOCAL", "summary": "Transit", "detail": "Train", "price": 20, "currency": "EUR"},
+        ]
+
+        selected_out = recompute_budget(state, selections={"transport": [0]})
+        selected_ret = recompute_budget(state, selections={"transport": [1]})
+
+        self.assertEqual(selected_out["items"][1]["amount"], 920.0)
+        self.assertEqual(selected_ret["items"][1]["amount"], 920.0)
+
+    def test_local_only_transport_selection_is_rejected(self):
+        from tools.recompute import recompute_budget
+
+        state = _sample_state()
+        with self.assertRaises(ValueError):
+            recompute_budget(state, selections={"transport": [2]})
+
     def test_none_prices_are_treated_as_missing_not_crashes(self):
         from tools.recompute import recompute_budget
 
@@ -332,6 +364,47 @@ class FeatureCompletionTests(unittest.TestCase):
             self.assertIn("link_type", item)
             self.assertIn("booking_confidence", item)
 
+        self.assertEqual(_transport_mock(state)[0]["tag"], "ROUNDTRIP")
+
+
+class PlanValidationTests(unittest.TestCase):
+    def test_plan_validation_rejects_non_positive_budget(self):
+        from main import _validate_plan_payload
+
+        for budget in (0, -10):
+            with self.subTest(budget=budget), self.assertRaises(ValueError) as ctx:
+                _validate_plan_payload({"budget": budget})
+            self.assertIn("Budget must be greater than 0", str(ctx.exception))
+
+    def test_plan_validation_rejects_excessive_legacy_extra_days(self):
+        from main import _validate_plan_payload
+
+        for extra_days in (-1, 28):
+            with self.subTest(extra_days=extra_days), self.assertRaises(ValueError) as ctx:
+                _validate_plan_payload({"extra_days": extra_days})
+            self.assertIn("extra_days must be between 0 and 27", str(ctx.exception))
+
+    def test_plan_validation_rejects_invalid_currency_and_same_day_trip(self):
+        from main import _validate_plan_payload
+
+        with self.assertRaises(ValueError) as currency_ctx:
+            _validate_plan_payload({"currency": "GBP"})
+        self.assertIn("Unsupported currency", str(currency_ctx.exception))
+
+        with self.assertRaises(ValueError) as date_ctx:
+            _validate_plan_payload({
+                "depart_date": "2026-09-04",
+                "return_date": "2026-09-04",
+            })
+        self.assertIn("day-trips not yet supported", str(date_ctx.exception))
+
+    def test_plan_validation_rejects_non_object_payload(self):
+        from main import _validate_plan_payload
+
+        with self.assertRaises(ValueError) as ctx:
+            _validate_plan_payload("not an object")
+        self.assertIn("plan payload must be a JSON object", str(ctx.exception))
+
 
 class QuoteWebSocketTests(unittest.IsolatedAsyncioTestCase):
     async def test_ws_quote_does_not_mutate_plan_state(self):
@@ -388,6 +461,7 @@ class QuoteWebSocketTests(unittest.IsolatedAsyncioTestCase):
             {"selections": {"hotel": ["1"]}},
             {"selections": {"hotel": [None]}},
             {"selections": {"hotel": -1}},
+            {"selections": {"transport": [2]}},
             {"selections": {"hotel": [99]}},
         ]
 
@@ -399,6 +473,24 @@ class QuoteWebSocketTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state, original)
             self.assertEqual(ws.sent[0]["type"], "error")
             self.assertIn("Invalid quote selection", ws.sent[0]["data"])
+
+    async def test_ws_plan_rejects_non_object_payload_without_closing_session(self):
+        from main import _handle_plan
+
+        class DummyWS:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+        session = {"plan_state": {"existing": True}}
+        ws = DummyWS()
+        await _handle_plan(ws, "not an object", session)
+
+        self.assertEqual(session["plan_state"], {"existing": True})
+        self.assertEqual(ws.sent[0]["type"], "error")
+        self.assertIn("plan payload must be a JSON object", ws.sent[0]["data"])
 
 
 if __name__ == "__main__":

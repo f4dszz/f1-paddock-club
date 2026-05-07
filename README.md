@@ -101,7 +101,7 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` on the `messag
 
 ```
 f1-paddock-club/
-├── CLAUDE.md                  # Full design context for Claude Code
+├── AGENTS.md / CLAUDE.md      # Synced, compact project agent guidelines
 ├── README.md                  # ← you are here
 ├── README.zh-CN.md            # 简体中文版
 ├── backend/
@@ -125,6 +125,9 @@ f1-paddock-club/
 │   ├── index.html             # HTML shell
 │   ├── vite.config.js         # Vite dev server config (port 3000)
 │   └── package.json           # React + Vite deps
+├── skills/                    # Shared project skill source files; install locally when needed
+├── .githooks/                 # Tracked hook templates; install with scripts/install-hooks.sh
+├── scripts/                   # Local lifecycle, verification, hooks, and E2E helpers
 └── start.sh                   # Launch both backend + frontend
 ```
 
@@ -136,9 +139,9 @@ f1-paddock-club/
 
 ```bash
 # One-time setup
-cd backend && python -m venv .venv && .venv/bin/python -m pip install -r requirements.txt && cp .env.example .env
+cd backend && python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt && cp .env.example .env
 # Edit .env - at minimum set OPENAI_API_KEY
-cd ../frontend && npm install
+cd ../frontend && npm ci
 cd ..
 
 # Launch both services
@@ -149,7 +152,7 @@ cd ..
 
 ### Recommended: two-terminal dev workflow (macOS / Linux / Windows Git Bash)
 
-`start.sh` only cleans up if you stop with `Ctrl+C` in the same terminal. For day-to-day development, use the dedicated scripts in `scripts/`:
+`start.sh` is the one-terminal launcher and cleans up child processes on exit. For day-to-day development with separate logs, use the dedicated scripts in `scripts/`:
 
 ```bash
 # Terminal 1: backend on :8001
@@ -163,7 +166,31 @@ cd ..
 
 # Check what's currently listening
 ./scripts/dev-status.sh
+
+# Run the local verification bundle before pushing
+./scripts/check-local.sh
 ```
+
+### Local automation
+
+```bash
+# Check AGENTS.md / CLAUDE.md are byte-for-byte synced
+./scripts/check-agent-doc-sync.sh
+
+# Install tracked git hook templates into this clone
+./scripts/install-hooks.sh
+
+# Run backend + frontend + browser smoke, then clean up services
+./scripts/e2e-local.sh
+
+# Run only the Playwright tests against an already-running frontend
+cd frontend && npm run e2e
+
+# Optional: sync repo skill source into ${CODEX_HOME:-~/.codex}/skills
+./scripts/install-codex-skills.sh
+```
+
+Repo `skills/*` are shared source files and belong in git. Installed local skills under `${CODEX_HOME:-~/.codex}/skills`, `.git/hooks/*`, and other machine state do not belong in git.
 
 ### Health check (verify both services are reachable)
 
@@ -186,16 +213,18 @@ Local frontend verification commands:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run build
+npm audit --audit-level=moderate
 ```
 
 On Windows PowerShell, the equivalent commands are:
 
 ```powershell
 cd frontend
-& 'C:\Program Files\nodejs\npm.cmd' install
+& 'C:\Program Files\nodejs\npm.cmd' ci
 & 'C:\Program Files\nodejs\npm.cmd' run build
+& 'C:\Program Files\nodejs\npm.cmd' audit --audit-level=moderate
 ```
 
 ### Manual setup
@@ -204,7 +233,7 @@ cd frontend
 
 ```bash
 cd backend
-python -m venv .venv
+python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
@@ -353,14 +382,14 @@ Server responses:
 
 ```bash
 cd frontend
-npm install   # first time only
+npm ci        # clean install from package-lock.json
 npm run dev   # → http://localhost:3000
 ```
 
 Requirements:
 - Node.js `^20.19.0 || >=22.12.0`
 - npm `11+`
-- Frontend dependencies installed in `frontend/node_modules`
+- Frontend dependencies installed in `frontend/node_modules` via `npm ci`
 
 Windows PowerShell note:
 - If `npm` fails with `npm.ps1 cannot be loaded because running scripts is disabled`, run `npm.cmd` instead.

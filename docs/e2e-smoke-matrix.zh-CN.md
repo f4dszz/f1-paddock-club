@@ -96,6 +96,9 @@ deferred; the document itself is the contract.
 | 7.4 | Health check | `curl http://127.0.0.1:8001/api/calendar` and `curl http://localhost:3000/api/calendar` | both return 200 | ✅ |
 | 7.5 | Refactored frontend build | `npm run build` after component/domain split | Vite production build succeeds; no user-visible behavior changes expected | ✅ |
 | 7.6 | Refactored backend imports | `python -m unittest discover -s backend/tests -v` after agent/refine split | graph imports still work through `agents` facade; all unit tests pass | ✅ |
+| 7.7 | Local verification bundle | `./scripts/check-local.sh` | guideline sync, backend compile + unit tests, URL-normalizer skill tests, frontend `npm ci`, build, and audit all pass | ✅ |
+| 7.8 | One-command dev launcher | `./start.sh` | backend and frontend start with health checks; `Ctrl+C` cleans up both child processes | ✅ |
+| 7.9 | Browser smoke automation | `./scripts/e2e-local.sh` | services start, Playwright opens `http://localhost:3000`, plans a mock/fallback trip, selects ticket/flight/hotel, verifies quote/debug/link copy, then cleans up | ✅ |
 
 ## Sampling guide
 
@@ -116,11 +119,6 @@ Run only the categories relevant to the changed code:
 - **Debug trace scope**: current events are `state_apply`, `tool_fail`, `budget_final`. Per-tool timing / argument previews are reserved for a later iteration.
 - **Source path scope**: the explainability panel describes the final card's configured data path. It is not a full runtime attempt log unless a future trace layer records exact provider attempts.
 
-## Automation track (deferred)
+## Automation track
 
-Automated coverage will be added when all of the following are in place:
-- Playwright or Selenium that can drive WebSocket reliably
-- Deterministic fixtures for SerpAPI / Firecrawl
-- A CI pipeline to run them
-
-Until then this file is the regression contract.
+Playwright now covers the baseline mock/fallback smoke path through `frontend/e2e/smoke.spec.js` and `scripts/e2e-local.sh`. This matrix remains the broader regression contract; use the automated smoke on every substantial UI/backend change, then sample the manual rows that match the files touched.

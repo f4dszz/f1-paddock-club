@@ -97,7 +97,7 @@
 
 ```
 f1-paddock-club/
-├── CLAUDE.md                  # 给 Claude Code 的完整设计上下文
+├── AGENTS.md / CLAUDE.md      # 同步的精简项目级 agent guidelines
 ├── README.md                  # 英文版
 ├── README.zh-CN.md            # ← 你正在看这一份
 ├── backend/
@@ -122,6 +122,9 @@ f1-paddock-club/
 │   ├── index.html             # HTML 壳
 │   ├── vite.config.js         # Vite 开发服务器配置（端口 3000）
 │   └── package.json           # React + Vite 依赖
+├── skills/                    # 共享的项目 skill 源文件；按需安装到本机
+├── .githooks/                 # 进 git 的 hook 模板；用 scripts/install-hooks.sh 启用
+├── scripts/                   # 本地生命周期、检查、hooks、E2E 脚本
 └── start.sh                   # 一键启动后端 + 前端
 ```
 
@@ -133,9 +136,9 @@ f1-paddock-club/
 
 ```bash
 # 首次安装
-cd backend && pip install -r requirements.txt && cp .env.example .env
+cd backend && python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt && cp .env.example .env
 # 编辑 .env —— 至少填入 OPENAI_API_KEY
-cd ../frontend && npm install
+cd ../frontend && npm ci
 cd ..
 
 # 启动
@@ -146,7 +149,7 @@ cd ..
 
 ### 推荐：双终端开发流程（Windows / Git Bash）
 
-`start.sh` 只在同一终端用 `Ctrl+C` 停止时才清理进程。日常开发推荐用 `scripts/` 下的独立脚本：
+`start.sh` 是单终端一键启动入口，退出时会清理子进程。日常开发如果想分开看前后端日志，推荐用 `scripts/` 下的独立脚本：
 
 ```bash
 # 终端 1：后端 :8001
@@ -160,7 +163,31 @@ cd ..
 
 # 查看当前监听情况
 ./scripts/dev-status.sh
+
+# 推送前运行本地验证集合
+./scripts/check-local.sh
 ```
+
+### 本地自动化
+
+```bash
+# 检查 AGENTS.md / CLAUDE.md 是否完全同步
+./scripts/check-agent-doc-sync.sh
+
+# 把仓库里的 hook 模板启用到当前 clone
+./scripts/install-hooks.sh
+
+# 自动启动前后端、跑浏览器 smoke、最后清理服务
+./scripts/e2e-local.sh
+
+# 只对已经启动的前端跑 Playwright
+cd frontend && npm run e2e
+
+# 可选：把 repo skill 源文件同步到 ${CODEX_HOME:-~/.codex}/skills
+./scripts/install-codex-skills.sh
+```
+
+`skills/*` 是项目共享源文件，可以进 git。本机已安装 skill（`${CODEX_HOME:-~/.codex}/skills`）、`.git/hooks/*` 和其它机器状态不进 git。
 
 ### 自检（验证前后端是否可达）
 
@@ -183,15 +210,16 @@ curl http://localhost:3000/api/calendar
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run build
+npm audit --audit-level=moderate
 ```
 
 Windows PowerShell 等价命令：
 
 ```powershell
 cd frontend
-& 'C:\Program Files\nodejs\npm.cmd' install
+& 'C:\Program Files\nodejs\npm.cmd' ci
 & 'C:\Program Files\nodejs\npm.cmd' run build
 ```
 
@@ -328,7 +356,7 @@ WebSocket 支持多轮会话，分两条通道：
 
 ```bash
 cd frontend
-npm install   # 首次安装
+npm ci        # 按 package-lock.json 干净安装
 npm run dev   # → http://localhost:3000
 ```
 

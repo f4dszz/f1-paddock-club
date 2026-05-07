@@ -1,18 +1,37 @@
-# Current Project Status — 2026-05-02
+# Current Project Status — 2026-05-07
 
 This note records the current project state after the Round 2 feature-completion
-and internal stabilization work. It intentionally excludes personal interview
+and Round 3 stabilization work. It intentionally excludes personal interview
 notes, real `.env` files, and local harness records.
 
 ## Repo / Tracking
 
 - Current branch: `main`, tracking `origin/main`.
-- Latest pushed baseline before this working batch: `f2433af`.
-- Current working tree contains uncommitted project changes for quote hardening,
-  explainability, frontend/backend modularization, tests, and docs.
-- Personal/local files remain excluded from git unless separately approved:
-  `AGENTS.md`, `.env`, `.local_harness/`, `docs/flaws.md`, AIA/interview docs,
-  and anti-drift notes.
+- Round 2 baseline: `f2433af` (test+ci+docs: feature completion suite + backend
+  tests in CI).
+- Round 2 follow-ups, all on `main`: `8706046` selection quotes + constraint
+  chips, `fb2230f` persistent itinerary/tour edit tools + active constraints,
+  `fd10f6f` selection-driven budget via WebSocket quote, `79b9c9a` quote
+  validation + refinement constraint trust fixes, `7d65400` planning-agents
+  split + card rationales, `de65d21` prototype split + card explainability
+  panel, `7b05606` Round 2 architecture status + smoke matrix refresh,
+  `01d280b` English tour replacement targeting fix, `782f15f` smoke matrix
+  doc refresh.
+- Round 3 stabilization batch (this note's working set, sliced into multiple
+  commits): F1 domain skill (`backend/tools/_f1_domain.py` + tests), booking
+  link normalization (`backend/tools/_links.py` + tests + wiring through
+  `search_*.py` and agents), refine-supervisor split (`refine_state.py`,
+  `refine_reply.py`), recompute multi-leg flight handling, plan validation
+  hardening (`backend/main.py`), Playwright e2e harness
+  (`frontend/e2e/smoke.spec.js` + `playwright.config.js`), local-validation
+  scripts (`check-local.sh`, `check-agent-doc-sync.sh`, `e2e-local.sh`,
+  `python-bin.sh`, `install-hooks.sh`, `install-codex-skills.sh`),
+  `.githooks/pre-push`, repo-local skills (`skills/url-normalizer/`,
+  `skills/orchestrator/`), and the new `docs/intelligence-roadmap.md`.
+- `AGENTS.md` and `CLAUDE.md` are tracked, compact, and kept byte-identical by
+  `scripts/check-agent-doc-sync.sh`. Personal/local files remain excluded from
+  git unless separately approved: `.env`, `.local_harness/`, `docs/flaws.md`,
+  AIA/interview docs, and anti-drift notes.
 
 ## Implemented Functional Work
 
@@ -81,9 +100,20 @@ notes, real `.env` files, and local harness records.
 ## Verification Summary
 
 - Backend compile passed: `backend/.venv/bin/python -m compileall -q backend`.
-- Backend unit tests passed: `backend/.venv/bin/python -m unittest discover -s backend/tests -v` with 42 tests.
+- Backend unit tests passed: `backend/.venv/bin/python -m unittest discover -s backend/tests -v` with 50 tests.
 - Frontend production build passed: `npm run build`.
 - Frontend dependency audit passed: `npm audit --audit-level=moderate`.
+- Local verification can be run with `./scripts/check-local.sh`, which bundles
+  guideline sync, backend compile, backend tests, URL-normalizer skill tests,
+  frontend `npm ci`, frontend build, and audit.
+- Browser smoke can be run with `./scripts/e2e-local.sh`, which starts backend
+  and frontend, runs Playwright against `http://localhost:3000`, and cleans up.
+  The Playwright spec at `frontend/e2e/smoke.spec.js` now covers four cases:
+  the original mock-fallback selection/quote/links flow plus three regression
+  guards (direct-only refinement, welcome-form date input async setter, and
+  English tour replacement not appending the old title).
+- `scripts/install-hooks.sh` enables `.githooks/pre-push`, which gates every
+  push on `check-agent-doc-sync.sh` + `check-local.sh`.
 - Browser Use E2E was rerun against restarted local services:
   - Singapore GP: default dates `2026-10-09` -> `2026-10-14`, normal planning,
     selected quote, unpriced incomplete quote, explainability panel, and debug
@@ -103,6 +133,16 @@ notes, real `.env` files, and local harness records.
     National Gallery Singapore` could append text instead of replacing the
     targeted tour title; the edit helper now recognizes `with` replacements
     and prioritizes the named source item.
+- Follow-up trust fixes in this working batch:
+  - Fallback/mock flights now use a single `ROUNDTRIP` flight card, so selected
+    quote totals cannot accidentally count only one direction.
+  - Stale or malformed transport selections that point at `LOCAL` transit are
+    rejected instead of producing a falsely cheap quote.
+  - Plan input validation now rejects non-positive budgets and legacy
+    `extra_days` outside the 0-27 range.
+  - Refinement state-update and deterministic-reply helpers were split out of
+    `backend/refine.py` to reduce the supervisor module's size without changing
+    behavior.
 
 ## Remaining Functional Gaps
 
