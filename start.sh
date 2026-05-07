@@ -1,58 +1,55 @@
-#!/bin/bash
-# F1 Paddock Club — Start both backend and frontend
-#
-# Usage: ./start.sh
-# Backend: http://localhost:8001 (API + WebSocket)
-# Frontend: http://localhost:3000 (Vite may open a browser tab depending on environment)
-#
-# Prerequisites:
-#   Backend:  pip install -r backend/requirements.txt + .env with API keys
-#   Frontend: cd frontend && npm install
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_PORT="${BACKEND_PORT:-8001}"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+
+BACKEND_PID=""
+FRONTEND_PID=""
+
+cleanup() {
+  if [[ -n "$FRONTEND_PID" ]]; then
+    kill "$FRONTEND_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$BACKEND_PID" ]]; then
+    kill "$BACKEND_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+wait_for_url() {
+  local label="$1"
+  local url="$2"
+  local tries="${3:-30}"
+  for _ in $(seq 1 "$tries"); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      echo "$label ready: $url"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "$label failed to start: $url" >&2
+  return 1
+}
 
 echo "=== F1 Paddock Club ==="
-echo ""
+echo "Backend port:  $BACKEND_PORT"
+echo "Frontend port: $FRONTEND_PORT"
+echo
 
-# Start backend
-echo "[1/2] Starting backend on :8001..."
-cd backend
-PYTHON_BIN="${PYTHON_BIN:-python}"
-if [ -x ".venv/bin/python" ]; then
-  PYTHON_BIN=".venv/bin/python"
-fi
-PYTHONIOENCODING=utf-8 "$PYTHON_BIN" -m uvicorn main:app --reload --port 8001 &
+BACKEND_PORT="$BACKEND_PORT" "$ROOT_DIR/scripts/dev-backend.sh" &
 BACKEND_PID=$!
-cd ..
+wait_for_url "Backend" "http://127.0.0.1:$BACKEND_PORT/api/calendar" 30
 
-# Wait for backend to be ready
-echo "      Waiting for backend..."
-for i in $(seq 1 15); do
-  CURL_AUTH=()
-  if [ -n "${DEMO_ACCESS_TOKEN:-}" ]; then
-    CURL_AUTH=(-H "Authorization: Bearer ${DEMO_ACCESS_TOKEN}")
-  fi
-  if curl -s "${CURL_AUTH[@]}" http://localhost:8001/api/calendar > /dev/null 2>&1; then
-    echo "      Backend ready."
-    break
-  fi
-  sleep 1
-done
-
-# Start frontend
-echo "[2/2] Starting frontend on :3000..."
-cd frontend
-npm run dev &
+FRONTEND_PORT="$FRONTEND_PORT" "$ROOT_DIR/scripts/dev-frontend.sh" &
 FRONTEND_PID=$!
-cd ..
+wait_for_url "Frontend" "http://localhost:$FRONTEND_PORT/" 30
 
-echo ""
-echo "=== Both services running ==="
-echo "  Backend:  http://localhost:8001"
-echo "  Frontend: http://localhost:3000"
-echo ""
+echo
+echo "Both services running."
+echo "Backend:  http://127.0.0.1:$BACKEND_PORT"
+echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo "Press Ctrl+C to stop both."
 
-# Cleanup on exit
-trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
-wait
+wait "$BACKEND_PID" "$FRONTEND_PID"

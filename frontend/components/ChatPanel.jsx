@@ -15,11 +15,11 @@ export function ChatMessages({chatMsgs}){
 export function ChatInput({chatInput,setChatInput,chatLoading,handleChat}){
   return(
     <div style={{padding:"6px 14px 10px",borderTop:"1px solid #1a1a1a",flexShrink:0,display:"flex",gap:6}}>
-      <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChat();}}}
+      <input data-testid="chat-input" value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChat();}}}
         placeholder="Refine this plan... (e.g. cheaper hotels, direct flights only)" disabled={chatLoading}
         style={{flex:1,padding:"7px 10px",borderRadius:7,border:"1px solid #222",background:"#111",color:"#eee",fontSize:11,outline:"none",fontFamily:"inherit",opacity:chatLoading?0.5:1}}
         onFocus={e=>e.target.style.borderColor="#E10600"} onBlur={e=>e.target.style.borderColor="#222"}/>
-      <button onClick={handleChat} disabled={!chatInput.trim()||chatLoading} style={{padding:"7px 12px",borderRadius:7,border:"none",background:chatInput.trim()&&!chatLoading?"#E10600":"#222",color:chatInput.trim()&&!chatLoading?"#fff":"#555",fontSize:10,fontWeight:600,cursor:chatInput.trim()&&!chatLoading?"pointer":"not-allowed"}}>{chatLoading?"...":"GO"}</button>
+      <button data-testid="chat-send" onClick={handleChat} disabled={!chatInput.trim()||chatLoading} style={{padding:"7px 12px",borderRadius:7,border:"none",background:chatInput.trim()&&!chatLoading?"#E10600":"#222",color:chatInput.trim()&&!chatLoading?"#fff":"#555",fontSize:10,fontWeight:600,cursor:chatInput.trim()&&!chatLoading?"pointer":"not-allowed"}}>{chatLoading?"...":"GO"}</button>
     </div>
   );
 }
