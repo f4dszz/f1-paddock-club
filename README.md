@@ -186,11 +186,9 @@ cd ..
 # Run only the Playwright tests against an already-running frontend
 cd frontend && npm run e2e
 
-# Optional: sync repo skill source into ${CODEX_HOME:-~/.codex}/skills
-./scripts/install-codex-skills.sh
 ```
 
-Repo `skills/*` are shared source files and belong in git. Installed local skills under `${CODEX_HOME:-~/.codex}/skills`, `.git/hooks/*`, and other machine state do not belong in git.
+Repo `skills/*` are shared source/reference files and belong in git. Installed local skills under `${CODEX_HOME:-~/.codex}/skills`, `.git/hooks/*`, and other machine state do not belong in git; this repo intentionally does not automate writing to `${CODEX_HOME:-~/.codex}`.
 
 ### Health check (verify both services are reachable)
 

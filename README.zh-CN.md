@@ -183,11 +183,9 @@ cd ..
 # 只对已经启动的前端跑 Playwright
 cd frontend && npm run e2e
 
-# 可选：把 repo skill 源文件同步到 ${CODEX_HOME:-~/.codex}/skills
-./scripts/install-codex-skills.sh
 ```
 
-`skills/*` 是项目共享源文件，可以进 git。本机已安装 skill（`${CODEX_HOME:-~/.codex}/skills`）、`.git/hooks/*` 和其它机器状态不进 git。
+`skills/*` 是项目共享源文件/参考材料，可以进 git。本机已安装 skill（`${CODEX_HOME:-~/.codex}/skills`）、`.git/hooks/*` 和其它机器状态不进 git；本仓库刻意不自动写入 `${CODEX_HOME:-~/.codex}`。
 
 ### 自检（验证前后端是否可达）
 

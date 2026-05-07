@@ -108,13 +108,10 @@ curl http://localhost:3000/api/calendar
 
 ## Skills, Hooks, And Subagents
 
-Repo-local `skills/` folders are shared source files. They are not loaded by
-Codex automatically from this repo. To install them into the local Codex skill
-directory, run:
-
-```bash
-./scripts/install-codex-skills.sh
-```
+Repo-local `skills/` folders are shared source/reference files. They are not
+loaded by Codex automatically from this repo, and this project does not write
+to `${CODEX_HOME:-~/.codex}`. Install or sync local skills outside the repo only
+when a developer explicitly wants that local machine state.
 
 Git hook templates live in `.githooks/` and are versioned. They are active only
 after running:
