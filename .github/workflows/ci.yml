@@ -142,3 +142,14 @@ jobs:
 
       - name: Run local E2E smoke
         run: PYTHON_BIN=python ./scripts/e2e-local.sh
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

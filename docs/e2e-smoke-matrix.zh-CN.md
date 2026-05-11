@@ -121,4 +121,36 @@ Run only the categories relevant to the changed code:
 
 ## Automation track
 
-Playwright now covers the baseline mock/fallback smoke path through `frontend/e2e/smoke.spec.js` and `scripts/e2e-local.sh`. This matrix remains the broader regression contract; use the automated smoke on every substantial UI/backend change, then sample the manual rows that match the files touched.
+The Playwright suite at `frontend/e2e/` is split into two lanes:
+
+- **Default no-key smoke (`smoke.spec.js`)** — runs in CI on every push and via
+  `./scripts/e2e-local.sh` with provider and LLM keys empty. Covers initial
+  planning rendering (ticket/flight/hotel cards, baseline budget, debug trace,
+  honest book-link copy) and the welcome-form date-input regression. Does
+  **not** cover post-chat refinement: the refinement supervisor needs an LLM
+  and the no-key path returns early, so refinement assertions in that
+  environment would be trivially true regardless of whether refinement
+  actually happened.
+- **LLM-gated refine (`refine.spec.js`)** — only runs when
+  `E2E_INCLUDE_REFINE=1` is set. Two refinement-driven cases:
+  - **English Explore-card replacement** — asserts the new tour title
+    appears after a `Replace X with Y` chat message. The mock baseline is
+    Italian-GP tours (`Monza Circuit Museum`, etc.), so this is a real
+    positive signal: it can only pass if the refinement supervisor fires
+    and the deterministic edit helper rewrites the tour title.
+  - **Direct-only refinement** — structural smoke. Posts a chat message
+    and confirms the transport card still has no stops indicator after the
+    chat path completes. The no-key mock baseline already lacks stops, so
+    this only proves the refinement chat path does not break the card, not
+    that the constraint was strictly enforced. Strengthening to a positive
+    constraint signal (visible constraint chip plus non-error reply, or a
+    fixture-driven before-state that has stops to remove) is tracked as
+    future work alongside the S2 fixture lane.
+
+  CI does not run this spec today; a developer with a configured
+  `OPENAI_API_KEY` (or future deterministic refinement support) can run
+  `E2E_INCLUDE_REFINE=1 npm run e2e` locally.
+
+This matrix remains the broader regression contract; use the automated default
+smoke on every substantial UI/backend change, then sample the manual rows that
+match the files touched.

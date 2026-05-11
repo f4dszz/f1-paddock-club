@@ -24,6 +24,7 @@ Thumbs.db
 
 # Local multi-agent harness / scratch coordination
 .local_harness/
+.harness/
 
 # Backend log files
 backend/logs/

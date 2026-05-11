@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+// Default no-key smoke E2E. Runs via `./scripts/e2e-local.sh` and the CI
+// `e2e` job at `.github/workflows/ci.yml`. Both run with provider + LLM
+// keys empty — these tests must not depend on the refinement supervisor
+// firing (which requires a working LLM). Refinement-driven cases live in
+// `refine.spec.js` and are env-gated by `E2E_INCLUDE_REFINE=1`.
+
 test("mock/fallback planning flow supports selections, budget quote, debug trace, and honest links", async ({ page }) => {
   await page.goto("/?debug=1");
 
@@ -30,25 +36,6 @@ test("mock/fallback planning flow supports selections, budget quote, debug trace
   await expect(page.getByText("not a purchase confirmation").first()).toBeVisible();
 });
 
-test("direct-only refinement removes connecting flights from transport card", async ({ page }) => {
-  await page.goto("/?debug=1");
-  await expect(page.getByText("PADDOCK CLUB")).toBeVisible();
-  await page.getByTestId("gp-card-singapore-gp").click();
-  await page.getByTestId("origin-input").fill("New York");
-  await page.getByTestId("budget-input").fill("3000");
-  await page.getByTestId("plan-submit").click();
-  await expect(page.getByTestId("result-card-transport")).toBeVisible({ timeout: 120000 });
-
-  await page.getByTestId("chat-input").fill("direct flights only please");
-  await page.getByTestId("chat-send").click();
-  // Refinement runs ReAct supervisor + reconciler; allow time for state commit + render.
-  await page.waitForTimeout(8000);
-
-  const transportText = (await page.getByTestId("result-card-transport").textContent()) ?? "";
-  // No connecting flights should remain after a direct-only constraint is applied.
-  expect(transportText).not.toMatch(/\b\d+\s*stop(s)?\b/i);
-});
-
 test("welcome form date inputs preserve values when filled in sequence", async ({ page }) => {
   await page.goto("/?debug=1");
   await expect(page.getByText("PADDOCK CLUB")).toBeVisible();
@@ -59,28 +46,8 @@ test("welcome form date inputs preserve values when filled in sequence", async (
   // Two consecutive fills exercised the e.currentTarget.value-in-async-setter regression.
   await depart.fill("2026-05-22");
   await ret.fill("2026-05-26");
-  await page.waitForTimeout(200);
 
+  // toHaveValue auto-polls up to expect.timeout (15s); no fixed sleep needed.
   await expect(depart).toHaveValue("2026-05-22");
   await expect(ret).toHaveValue("2026-05-26");
-});
-
-test("english tour replacement does not append the old title", async ({ page }) => {
-  await page.goto("/?debug=1");
-  await expect(page.getByText("PADDOCK CLUB")).toBeVisible();
-  await page.getByTestId("gp-card-singapore-gp").click();
-  await page.getByTestId("origin-input").fill("New York");
-  await page.getByTestId("budget-input").fill("3000");
-  await page.getByTestId("plan-submit").click();
-  await expect(page.getByTestId("result-card-tour")).toBeVisible({ timeout: 120000 });
-
-  // Use the canonical Singapore mock tour reference from docs/current.md.
-  await page.getByTestId("chat-input").fill("Replace Gardens by the Bay with National Gallery Singapore");
-  await page.getByTestId("chat-send").click();
-  await page.waitForTimeout(8000);
-
-  const tourText = (await page.getByTestId("result-card-tour").textContent()) ?? "";
-  expect(tourText).toContain("National Gallery Singapore");
-  // Bug pattern: replacement appended → `Gardens by the Bay with National Gallery Singapore` as one title.
-  expect(tourText).not.toMatch(/Gardens by the Bay\s+with\s+National Gallery/i);
 });
