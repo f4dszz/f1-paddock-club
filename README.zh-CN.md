@@ -109,6 +109,8 @@ f1-paddock-club/
 │   ├── refine.py              # Lane 2 supervisor 编排入口
 │   ├── refine_editing.py      # Itinerary/tour 卡片更新 helper
 │   ├── refine_constraints.py  # 工具返回后的硬约束 reconciler
+│   ├── refine_reply.py        # 基于持久化 state 的确定性回复 summarizer
+│   ├── refine_state.py        # 工具结果 → state 应用 + 失败追踪
 │   ├── _session.py            # WebSocket 会话管理（对话记忆 + plan state 分层）
 │   ├── tools/                 # 外部数据工具（SerpAPI、Firecrawl、缓存、币种、日期、赛历）
 │   ├── logging_config.py      # 文件日志配置（写到 logs/）
@@ -137,7 +139,8 @@ f1-paddock-club/
 ```bash
 # 首次安装
 cd backend && python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt && cp .env.example .env
-# 编辑 .env —— 至少填入 OPENAI_API_KEY
+# 可选：编辑 .env 以启用真实 LLM / provider 调用。
+# key 留空时，首次规划仍能在前端渲染估算 / mock 卡片。
 cd ../frontend && npm ci
 cd ..
 
@@ -184,6 +187,20 @@ cd ..
 cd frontend && npm run e2e
 
 ```
+
+### E2E 测试结构
+
+`frontend/e2e/` 双 lane：
+
+- **`smoke.spec.js`** —— 默认，无需 LLM key。CI 每次 push 跑（`.github/workflows/ci.yml` 的 `e2e` job，失败时上传 Playwright artifacts）。覆盖初次规划、selection/quote、链接、日期输入回归。
+- **`refine.spec.js`** —— 由 `playwright.config.js` 的 `testIgnore` 把守，需 `E2E_INCLUDE_REFINE=1` 解锁。覆盖 refinement（direct-only 约束、英文 Explore 卡替换）。开 `LLM_STUB_MODE=1` 时，`backend/refine.py` 走测试专用确定性 stub，直接调 `_apply_constraint_filters` / `apply_line_update`，无真 LLM、零成本。
+
+```bash
+./scripts/e2e-local.sh                                       # 仅 smoke（CI 契约）
+E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # stub 驱动 refine + smoke
+```
+
+Stub 由 `APP_ENV=test + LLM_STUB_MODE=1` 把守；生产环境空 key 仍按 `LLM not configured` 老路兜底。
 
 `skills/*` 是项目共享源文件/参考材料，可以进 git。本机已安装 skill（`${CODEX_HOME:-~/.codex}/skills`）、`.git/hooks/*` 和其它机器状态不进 git；本仓库刻意不自动写入 `${CODEX_HOME:-~/.codex}`。
 
@@ -232,7 +249,19 @@ pip install -r requirements.txt
 
 #### 2.（可选）配置大模型 Provider
 
-不设置 API key 也能跑 —— 涉及大模型的两个智能体（`itinerary`、`tour`）会自动回退到 mock 数据。配上 key 之后才会真正调用模型。推荐用 `.env` 文件来管理：
+浏览器里的首次规划可以在没有外部 API key 的情况下展示结果。provider / LLM key 留空时，用户点击首次规划后，前端仍会渲染 5 组可见卡片，但它们是占位 / 估算内容，不是针对目的地验证过的真实推荐：
+
+- 门票卡片 —— 通用 F1 门票示例，不代表该 GP 的实时库存。
+- 交通卡片 —— 基于所选目的地和日期的路线 / 日期估算。
+- 酒店卡片 —— 通用住宿占位；部分文案会带上所选城市。
+- 每日行程 / Schedule —— 使用所选城市和比赛日期的通用行程文案。
+- 景点餐饮 / Explore —— 按 GP 给的示例推荐（`backend/agents/tour.py` 的 `_TOUR_MOCK_BY_GP`）。Italian GP 与 Singapore GP 有对应区域内容；其它 GP 暂时回退到意大利示例。
+
+预算面板会基于这些可见卡片继续计算。这个无 key 模式适合本地 smoke 测试和首次规划页面演示，但这些数据不是实时库存或真实可订结果，也不应当被当作真实旅行推荐。
+
+计划生成后，聊天框里的卡片修改/追问需要配置 LLM。没有 LLM key 时，前端会显示错误，已有卡片不变。（项目里有一条由 `APP_ENV=test + LLM_STUB_MODE=1` 双 env 把守的确定性 refinement stub，仅 E2E 测试用，不是用户级回退。）
+
+配上 key 之后，应用里需要大模型的部分才会真正调用模型。推荐用 `.env` 文件来管理：
 
 ```bash
 cd backend
@@ -348,7 +377,7 @@ WebSocket 支持多轮会话，分两条通道：
 
 > **向后兼容**：直接发送 raw TripRequest JSON（不带 `{type, data}` 包装）会被自动识别并路由到 Lane 1。
 
-> **注意**：首条消息用 `type=chat`（而非 `type=plan`）会走 Supervisor 的规划模式，只产出门票/机票/酒店/预算，**不包含**行程和观光推荐（3/5 sections）。要获得完整的 5/5 计划，请先用 `type=plan`。
+> **注意**：浏览器里的首次规划在无 key 时也能渲染占位的门票、交通、酒店、每日行程、景点餐饮卡片。部分占位内容是通用样例，不一定匹配所选 GP。后续聊天修改需要 LLM key；没有 key 时，已有卡片保持不变，界面会显示错误。
 
 #### 5. 启动前端
 
@@ -425,7 +454,7 @@ Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索或
 
 ## 后续路线图
 
-- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（进行中）。后续：严格 E2E 自动化、iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
+- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（已完成）。4.6 deterministic E2E in CI —— 拆 smoke + refine 双 lane、CI 失败上传 artifact、refine lane 通过 `APP_ENV=test + LLM_STUB_MODE=1` 走确定性 stub-backed refinement（已完成）。后续：iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
 - **Phase 5** —— 安全基线、错误处理、运行结果持久化、部署上线。
 
 ---

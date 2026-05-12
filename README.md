@@ -113,6 +113,9 @@ f1-paddock-club/
 │   ├── refine.py              # Lane 2 supervisor orchestration
 │   ├── refine_editing.py      # Itinerary/tour card update helpers
 │   ├── refine_constraints.py  # Hard constraint reconciler after tool output
+│   ├── refine_reply.py        # Deterministic post-state reply summarizer
+│   ├── refine_state.py        # Tool-result → state apply + failure tracking
+│   ├── _session.py            # WebSocket session manager (chat memory + plan state layered)
 │   ├── tools/                 # External data tools (SerpAPI, Firecrawl, cache, currency, dates)
 │   ├── logging_config.py      # File logger setup (writes to logs/)
 │   ├── requirements.txt
@@ -140,7 +143,8 @@ f1-paddock-club/
 ```bash
 # One-time setup
 cd backend && python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt && cp .env.example .env
-# Edit .env - at minimum set OPENAI_API_KEY
+# Optional: edit .env for real LLM/provider calls.
+# Leaving keys empty still lets the first plan render estimate/mock cards.
 cd ../frontend && npm ci
 cd ..
 
@@ -187,6 +191,20 @@ cd ..
 cd frontend && npm run e2e
 
 ```
+
+### E2E test layout
+
+`frontend/e2e/` has two lanes:
+
+- **`smoke.spec.js`** — default, no LLM keys. Runs in CI on every push (`.github/workflows/ci.yml` `e2e` job, artifacts uploaded on failure). Covers initial planning, selection/quote, links, and a date-input regression.
+- **`refine.spec.js`** — env-gated by `E2E_INCLUDE_REFINE=1` via `playwright.config.js` `testIgnore`. Covers refinement cases (direct-only constraint, English Explore-card replacement). With `LLM_STUB_MODE=1`, `backend/refine.py` switches to a deterministic test-only stub that calls `_apply_constraint_filters` / `apply_line_update` directly — no real LLM, no `$` per run.
+
+```bash
+./scripts/e2e-local.sh                                       # smoke only (CI contract)
+E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # stub-backed refine + smoke
+```
+
+The stub is gated by `APP_ENV=test + LLM_STUB_MODE=1`; production with empty keys still returns the honest `LLM not configured`.
 
 Repo `skills/*` are shared source/reference files and belong in git. Installed local skills under `${CODEX_HOME:-~/.codex}/skills`, `.git/hooks/*`, and other machine state do not belong in git; this repo intentionally does not automate writing to `${CODEX_HOME:-~/.codex}`.
 
@@ -237,7 +255,19 @@ python3 -m venv .venv
 
 #### 2. (Optional) Configure an LLM provider
 
-Without an API key, the LLM-powered agents (`itinerary`, `tour`) automatically fall back to mock data. With a key they call a real model. The recommended way to configure this is a `.env` file:
+The browser can show an initial trip plan without external API keys. If you leave provider/LLM keys empty, the first "Plan trip" flow still renders five visible card groups, but they are placeholders/estimates, not destination-verified recommendations:
+
+- Ticket cards — generic F1 ticket examples, not live GP availability.
+- Transport cards — route/date estimates based on the selected destination.
+- Hotel cards — generic stay placeholders; some labels use the selected city.
+- Schedule / day-by-day plan — generic schedule text using the selected city and race date.
+- Explore / sights and food — GP-aware sample recommendations via `_TOUR_MOCK_BY_GP` in `backend/agents/tour.py`. Italian GP and Singapore GP have region-specific entries; other GPs fall back to the Italian list.
+
+The budget panel is computed from those visible cards. This no-key mode is useful for local smoke testing and demos of the first planning screen, but the data is not live availability and should not be treated as a real trip recommendation.
+
+After the plan appears, the chat box for refinement requires a configured LLM. Without one, the frontend surfaces an error and existing cards stay unchanged. (A deterministic refinement stub gated by `APP_ENV=test + LLM_STUB_MODE=1` exists for E2E tests only — not a user-facing fallback.)
+
+With a key, the LLM-powered parts of the app call a real model. The recommended way to configure this is a `.env` file:
 
 ```bash
 cd backend
@@ -374,7 +404,7 @@ Server responses:
 
 > **Backward compat:** raw TripRequest JSON (without `{type, data}` envelope) is auto-detected and routed to Lane 1.
 
-> **Note:** `type=chat` as the first message uses the supervisor's planning mode, which produces tickets/flights/hotels/budget but **not** itinerary or tour (3/5 sections). For a complete 5/5 plan, use `type=plan` first.
+> **Note:** the browser's first planning flow can render placeholder Ticket, Transport, Hotel, Schedule, and Explore cards without keys. Some placeholders are generic rather than GP-specific. Follow-up chat changes require an LLM key; without one, the existing cards stay unchanged and the UI shows an error.
 
 #### 5. Run the frontend
 
@@ -451,7 +481,7 @@ The supervisor is a real agent: it reads the conversation, chooses whether and w
 
 ## Roadmap
 
-- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (in progress). Next: strict E2E automation, iCal export, deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
+- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — split smoke + refine lanes, CI artifact upload on failure, stub-backed refinement via `APP_ENV=test + LLM_STUB_MODE=1` (done). Next: iCal export, deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
 - **Phase 5** — security baseline, error handling, run persistence, deploy.
 
 ---
