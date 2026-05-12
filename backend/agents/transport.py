@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from state import TravelPlanState
 from agents._shared import _direct_only_requested, _msg
@@ -37,19 +38,47 @@ def _transport_mock(state: TravelPlanState) -> list[dict]:
         f"Estimated direct round trip · {out_date} → {ret_date}"
         if ret_date else f"Estimated direct route · {out_date}"
     )
-    return [
+    flights: list[dict] = [
         {"tag": flight_tag, "summary": f"{origin} ↔ {city}",
          "detail": flight_detail,
+         "stops": 0,
          "price": 1005, "currency": "EUR",
          "link": "https://www.google.com/travel/flights",
          "provider": "Google Flights", "link_type": "search",
          "booking_confidence": "medium"},
-        {"tag": "LOCAL", "summary": f"{city} ↔ Circuit",
-         "detail": "Local transit (varies by circuit)",
-         "price": 5, "currency": "EUR",
-         "link": "", "provider": "Local transit",
-         "link_type": "homepage", "booking_confidence": "low"},
     ]
+
+    # Deterministic test-mode mock: include a connecting flight so the
+    # direct-only refinement E2E case has a real before-state with a
+    # `stop` indicator to filter. Gated by APP_ENV=test + LLM_STUB_MODE=1;
+    # production fallback (no env, or only APP_ENV=test) is unchanged.
+    if (
+        os.environ.get("APP_ENV") == "test"
+        and os.environ.get("LLM_STUB_MODE") == "1"
+    ):
+        connecting_detail = (
+            f"1 stop via Dubai · {out_date} → {ret_date}"
+            if ret_date else f"1 stop via Dubai · {out_date}"
+        )
+        flights.append({
+            "tag": flight_tag, "summary": f"{origin} ↔ {city}",
+            "detail": connecting_detail,
+            "stops": 1,
+            "price": 850, "currency": "EUR",
+            "link": "https://www.google.com/travel/flights",
+            "provider": "Google Flights", "link_type": "search",
+            "booking_confidence": "medium",
+        })
+
+    flights.append({
+        "tag": "LOCAL", "summary": f"{city} ↔ Circuit",
+        "detail": "Local transit (varies by circuit)",
+        "price": 5, "currency": "EUR",
+        "link": "", "provider": "Local transit",
+        "link_type": "homepage", "booking_confidence": "low",
+    })
+
+    return flights
 
 
 def transport_agent(state: TravelPlanState) -> dict:

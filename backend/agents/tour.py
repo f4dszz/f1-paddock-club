@@ -12,13 +12,31 @@ logger = logging.getLogger(__name__)
 
 
 # ── tour_agent ───────────────────────────────────────────────────────
-def _tour_mock(state: TravelPlanState) -> list[str]:
-    recs = [
+
+# GP-aware fallback recommendations. The mock is graceful-degradation
+# product behavior (shown when both real LLM and tool sources fail), so
+# returning the right city's sights — not always Monza — is part of being
+# honest about source even in the fallback path. Other GPs fall through
+# to the Italian list as a safe default; extend on demand.
+_TOUR_MOCK_BY_GP: dict[str, list[str]] = {
+    "Italian GP": [
         "🏎 Monza Circuit Museum (€15) — inside the track, race history",
         "🏛 Duomo Rooftop (€14) — panoramic Milan views",
         "🍕 Luini Panzerotti (€3) — legendary street food",
         "🌊 Como Boat Tour (€12) — Villa Balbianello",
-    ]
+    ],
+    "Singapore GP": [
+        "🌳 Gardens by the Bay (€12) — supertree light show, futuristic conservatories",
+        "🍜 Hawker Chan (€5) — Michelin-starred soya-sauce chicken rice",
+        "🦁 Singapore Zoo Night Safari (€38) — open-air wildlife after dark",
+        "🌃 Marina Bay Sands Skypark (€18) — rooftop infinity view of the street circuit",
+    ],
+}
+
+
+def _tour_mock(state: TravelPlanState) -> list[str]:
+    gp = state.get("gp_name", "")
+    recs = list(_TOUR_MOCK_BY_GP.get(gp, _TOUR_MOCK_BY_GP["Italian GP"]))
     special = state.get("special_requests", "")
     if special:
         recs.append(f"📝 Noted your request: {special}")

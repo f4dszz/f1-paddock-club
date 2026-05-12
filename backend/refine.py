@@ -36,6 +36,7 @@ Usage:
 from __future__ import annotations
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -45,7 +46,7 @@ from langgraph.prebuilt import create_react_agent
 
 from llm import get_llm
 from refine_constraints import _apply_constraint_filters
-from refine_editing import apply_line_update
+from refine_editing import apply_line_update, replacement_name, replacement_target_name
 from refine_reply import (
     build_deterministic_summary as _build_deterministic_summary,
     detect_date_override as _detect_date_override,
@@ -614,6 +615,79 @@ def _convert_eur_to(eur_amount: float, target_currency: str) -> float:
 # SECTION 5: Main Entry Point
 # ═══════════════════════════════════════════════════════════════════════
 
+def _refine_plan_stub(state: dict, user_message: str) -> tuple[dict, str, dict]:
+    """Deterministic test-only stub for refine_plan.
+
+    Gated upstream by APP_ENV=test + LLM_STUB_MODE=1. Bypasses the LangChain
+    supervisor entirely and directly invokes the server-side mutation helpers
+    used by the production path (`normalize_constraints` +
+    `_apply_constraint_filters` for direct-flights-only, `apply_line_update`
+    for tour replacement). This is the smallest test-stub path that exercises
+    the same persisted state transitions the production refinement uses, so
+    frontend/e2e/refine.spec.js can assert real before/after card mutation
+    without burning real LLM credit.
+
+    Not a fake chat model, not a production fallback. Production with empty
+    keys still hits the honest "LLM not configured" early return below.
+
+    Unhandled prompts return state unchanged with an honest reply.
+    """
+    trace: dict = {"failed_tools": [], "updated_fields": [], "tool_call_count": 0}
+    lower = user_message.lower()
+
+    # Pattern 1: direct-flights-only intent → constraint + reconciler.
+    if "direct" in lower and ("flight" in lower or "flights" in lower):
+        active = normalize_constraints(state.get("active_constraints"))
+        active["direct_only"] = True
+        state["active_constraints"] = active
+        updated = _apply_constraint_filters(state, force=True)
+        trace["updated_fields"] = list(updated.keys())
+        trace["tool_call_count"] = 1
+        kept = sum(
+            1
+            for t in state.get("transport", [])
+            if isinstance(t, dict) and t.get("tag") in {"ROUNDTRIP", "OUT", "RET"}
+        )
+        reply = (
+            f"Applied direct-flights-only constraint. Kept {kept} direct "
+            f"flight option(s) on the transport card."
+        )
+        logger.info(
+            "refine_plan stub: direct_only applied; updated=%s kept=%d",
+            updated,
+            kept,
+        )
+        return state, reply, trace
+
+    # Pattern 2: "Replace X with Y" → tour line update.
+    target = replacement_target_name(user_message)
+    replacement = replacement_name(user_message)
+    if target and replacement and state.get("tour"):
+        state["tour"] = apply_line_update(state["tour"], user_message, "Tour")
+        trace["updated_fields"] = ["tour"]
+        trace["tool_call_count"] = 1
+        reply = (
+            f"Updated tour recommendations: replaced '{target}' with "
+            f"'{replacement}'."
+        )
+        logger.info(
+            "refine_plan stub: tour replace applied (%s -> %s)",
+            target,
+            replacement,
+        )
+        return state, reply, trace
+
+    logger.info("refine_plan stub: prompt pattern not recognized")
+    return (
+        state,
+        (
+            "Test-stub refinement: prompt pattern not in the deterministic test "
+            "set. Supported: 'direct flights only', 'Replace X with Y'."
+        ),
+        trace,
+    )
+
+
 def refine_plan(
     state: dict,
     user_message: str,
@@ -638,6 +712,18 @@ def refine_plan(
         caller can unpack without branching.
     """
     _empty_trace: dict = {"failed_tools": [], "updated_fields": [], "tool_call_count": 0}
+
+    # Test-only deterministic stub. Gated by APP_ENV=test + LLM_STUB_MODE=1.
+    # Bypasses the LangChain supervisor and directly invokes server-side
+    # mutation helpers for the small set of refine prompts exercised by
+    # frontend/e2e/refine.spec.js. Not a production fallback path — with
+    # APP_ENV unset or LLM_STUB_MODE unset, the honest "LLM not configured"
+    # early return below still fires when keys are absent.
+    if (
+        os.environ.get("APP_ENV") == "test"
+        and os.environ.get("LLM_STUB_MODE") == "1"
+    ):
+        return _refine_plan_stub(state, user_message)
 
     llm = get_llm(temperature=0.3, max_tokens=2048)
     if llm is None:

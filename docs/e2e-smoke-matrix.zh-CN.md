@@ -131,25 +131,34 @@ The Playwright suite at `frontend/e2e/` is split into two lanes:
   and the no-key path returns early, so refinement assertions in that
   environment would be trivially true regardless of whether refinement
   actually happened.
-- **LLM-gated refine (`refine.spec.js`)** — only runs when
-  `E2E_INCLUDE_REFINE=1` is set. Two refinement-driven cases:
-  - **English Explore-card replacement** — asserts the new tour title
-    appears after a `Replace X with Y` chat message. The mock baseline is
-    Italian-GP tours (`Monza Circuit Museum`, etc.), so this is a real
-    positive signal: it can only pass if the refinement supervisor fires
-    and the deterministic edit helper rewrites the tour title.
-  - **Direct-only refinement** — structural smoke. Posts a chat message
-    and confirms the transport card still has no stops indicator after the
-    chat path completes. The no-key mock baseline already lacks stops, so
-    this only proves the refinement chat path does not break the card, not
-    that the constraint was strictly enforced. Strengthening to a positive
-    constraint signal (visible constraint chip plus non-error reply, or a
-    fixture-driven before-state that has stops to remove) is tracked as
-    future work alongside the S2 fixture lane.
+- **Stub-backed refine (`refine.spec.js`)** — only runs when
+  `E2E_INCLUDE_REFINE=1` is set. The default way to run this lane is with
+  `LLM_STUB_MODE=1`, which switches the refinement entry point to a
+  deterministic test-only stub that directly invokes the server-side
+  mutation helpers (`_apply_constraint_filters`, `apply_line_update`) —
+  no real LLM call, no `$` per run. Two refinement-driven cases, both
+  real positive assertions:
+  - **English Explore-card replacement** — Singapore-GP mock tour list
+    includes `Gardens by the Bay` at baseline. After a `Replace Gardens
+    by the Bay with National Gallery Singapore` chat message, the stub
+    rewrites the tour line; the test asserts the new title appears and
+    the append-bug pattern is absent.
+  - **Direct-only refinement** — when `LLM_STUB_MODE=1` is set, the
+    transport mock includes a connecting flight alongside the direct
+    option, so the transport card has a visible `stop` indicator at
+    baseline. After a `direct flights only please` chat message, the
+    stub sets `direct_only` in `active_constraints` and runs the
+    constraint reconciler; the connecting flight is removed and the
+    indicator disappears. Failure on either direction proves the
+    constraint pipeline did not run.
 
-  CI does not run this spec today; a developer with a configured
-  `OPENAI_API_KEY` (or future deterministic refinement support) can run
-  `E2E_INCLUDE_REFINE=1 npm run e2e` locally.
+  CI does not run this spec today; a developer can run it locally with:
+  `E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh`. This is
+  the only deterministic path. `scripts/e2e-local.sh` clears real
+  provider and LLM keys before starting the backend, so an
+  `OPENAI_API_KEY`-driven run is not supported by this script — that
+  workflow would require a separate manual backend bringup outside the
+  script and would be non-deterministic by definition.
 
 This matrix remains the broader regression contract; use the automated default
 smoke on every substantial UI/backend change, then sample the manual rows that
