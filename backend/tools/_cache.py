@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from functools import wraps
 from pathlib import Path
@@ -37,6 +38,12 @@ logger = logging.getLogger(__name__)
 # .gitignore should include `backend/tools/.cache/`.
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
+
+
+def _bypass_cache() -> bool:
+    # APP_ENV=test bypasses disk cache so the deterministic E2E lane
+    # cannot be polluted by a developer's stale real-provider results.
+    return os.environ.get("APP_ENV") == "test"
 
 
 def _make_key(args: tuple, kwargs: dict) -> str:
@@ -92,6 +99,12 @@ def cached(ttl: int | float | Callable[..., int | float]):
 
         @wraps(func)  # preserves __name__, __doc__ of the original
         def wrapper(*args, **kwargs) -> Any:
+            if _bypass_cache():
+                # No read, no write — guarantees E2E lane sees the
+                # function's actual return value, never a stale entry.
+                logger.info("cache BYPASS %s (APP_ENV=test)", func.__name__)
+                return func(*args, **kwargs)
+
             # ── Compute TTL for this call ──
             if callable(ttl):
                 ttl_seconds = float(ttl(*args, **kwargs))

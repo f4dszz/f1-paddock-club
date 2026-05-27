@@ -10,7 +10,7 @@ test("mock/fallback planning flow supports selections, budget quote, debug trace
   await page.goto("/?debug=1");
 
   await expect(page.getByText("PADDOCK CLUB")).toBeVisible();
-  await page.getByTestId("gp-card-canadian-gp").click();
+  await page.getByTestId("gp-card-italian-gp").click();
 
   await page.getByTestId("origin-input").fill("New York");
   await page.getByTestId("budget-input").fill("2800");
@@ -39,7 +39,7 @@ test("mock/fallback planning flow supports selections, budget quote, debug trace
 test("welcome form date inputs preserve values when filled in sequence", async ({ page }) => {
   await page.goto("/?debug=1");
   await expect(page.getByText("PADDOCK CLUB")).toBeVisible();
-  await page.getByTestId("gp-card-canadian-gp").click();
+  await page.getByTestId("gp-card-italian-gp").click();
 
   const depart = page.getByTestId("depart-date-input");
   const ret = page.getByTestId("return-date-input");

@@ -410,6 +410,8 @@ def _build_trace_events(
             "budget": bs.get("budget"),
             "currency": bs.get("currency"),
             "within_budget": bs.get("within_budget"),
+            "quote_complete": bs.get("quote_complete", True),
+            "missing_price_categories": bs.get("missing_price_categories") or [],
         })
 
     return events
@@ -650,6 +652,24 @@ async def _handle_quote(ws: WebSocket, data, session: dict) -> None:
         "type": "quote",
         "data": {"quote_id": quote_id, "budget_summary": summary},
     })
+
+    # Emit a budget_final trace so the debug surface reflects what the
+    # user just selected. Without this, only the baseline plan budget
+    # shows up in traces, and amber/incomplete quotes from selections
+    # have no observable signal beyond the rendered panel.
+    await _send_trace(
+        ws,
+        [{
+            "event": "budget_final",
+            "total": summary.get("total"),
+            "budget": summary.get("budget"),
+            "currency": summary.get("currency"),
+            "within_budget": summary.get("within_budget"),
+            "quote_complete": summary.get("quote_complete", True),
+            "missing_price_categories": summary.get("missing_price_categories") or [],
+        }],
+        session.get("debug", False),
+    )
 
 
 if __name__ == "__main__":

@@ -152,13 +152,28 @@ The Playwright suite at `frontend/e2e/` is split into two lanes:
     indicator disappears. Failure on either direction proves the
     constraint pipeline did not run.
 
-  CI does not run this spec today; a developer can run it locally with:
-  `E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh`. This is
-  the only deterministic path. `scripts/e2e-local.sh` clears real
-  provider and LLM keys before starting the backend, so an
-  `OPENAI_API_KEY`-driven run is not supported by this script — that
-  workflow would require a separate manual backend bringup outside the
-  script and would be non-deterministic by definition.
+  CI 现在跑这条 spec：`.github/workflows/ci.yml` 的 `e2e` job 命令为
+  `E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`，
+  与本地的 `E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh`
+  契约一致。`scripts/e2e-local.sh` 会清空所有 provider / LLM key，因此
+  这是唯一确定性的跑法；用真实 `OPENAI_API_KEY` 跑 refine 不在这条契约
+  内，需要单独手动起后端，且结果不确定。
+
+  额外两条同样在 CI gated 的 spec：
+
+  - `frontend/e2e/explain.spec.js` —— 默认 lane（无需 stub）。点击
+    "Why this card?" affordance（`ResultCard.jsx` 上 `data-testid="explain-button-..."`
+    的 `i` 按钮）打开 explainability panel，断言 rationale reasons 与
+    data-source-path 内容可见（基于 `backend/tools/_rationale.py` 在
+    planning-time 注入的 deterministic rationale）。
+  - `frontend/e2e/quote_incomplete.spec.js` —— stub-gated lane
+    （`E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1`）。`backend/agents/tickets.py`
+    会在 `APP_ENV=test + LLM_STUB_MODE=1` 下追加一个 `price=0` 的
+    "Paddock Club (price on request)" ticket。选中后，`recompute_budget`
+    返回 `quote_complete=false` + `missing_price_categories=["Tickets"]`，
+    `BudgetPanel.jsx:39` 渲染琥珀色 incomplete-quote 文案，并通过
+    `trace.budget_final` 把 `quote_complete:false` + `Tickets` 写入
+    debug trace。spec 同时断言可视面板内容与 debug-trace metadata。
 
 This matrix remains the broader regression contract; use the automated default
 smoke on every substantial UI/backend change, then sample the manual rows that

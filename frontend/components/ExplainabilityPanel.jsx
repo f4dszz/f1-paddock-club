@@ -22,7 +22,7 @@ export function ExplainabilityPanel({rationale,zoneKey,itemMain,onClose}){
   return(
     <div style={{position:"fixed",inset:0,zIndex:100,pointerEvents:"auto"}}>
       <div onClick={onClose} style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.55)",animation:"explainFadeIn .18s ease-out"}}/>
-      <div role="dialog" aria-label="Why this card?" style={{
+      <div role="dialog" aria-label="Why this card?" data-testid="explain-panel" style={{
         position:"absolute",top:0,right:0,bottom:0,width:"min(360px, 92vw)",
         background:"#0c0c0c",borderLeft:`1px solid ${z.color}55`,
         boxShadow:"-8px 0 24px rgba(0,0,0,0.5)",display:"flex",
@@ -37,9 +37,9 @@ export function ExplainabilityPanel({rationale,zoneKey,itemMain,onClose}){
           <button onClick={onClose} aria-label="Close" style={{background:"transparent",border:"1px solid #222",color:"#888",borderRadius:5,fontSize:12,padding:"3px 8px",cursor:"pointer",lineHeight:1}}>x</button>
         </div>
 
-        <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}}>
+        <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}} data-testid="explain-panel-body">
           {reasons.length>0&&(
-            <section style={{marginBottom:14}}>
+            <section data-testid="explain-reasons" style={{marginBottom:14}}>
               <div style={{fontSize:8,color:"#555",letterSpacing:"0.08em",marginBottom:6}}>WHY IT WAS PICKED</div>
               {reasons.map((r,i)=>(
                 <div key={i} style={{display:"flex",gap:7,marginBottom:5,alignItems:"flex-start"}}>
@@ -63,7 +63,7 @@ export function ExplainabilityPanel({rationale,zoneKey,itemMain,onClose}){
             </section>
           )}
 
-          <section style={{marginBottom:14}}>
+          <section data-testid="explain-source-path" style={{marginBottom:14}}>
             <div style={{fontSize:8,color:"#555",letterSpacing:"0.08em",marginBottom:6}}>DATA SOURCE PATH</div>
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
               {sourcePath.map((src,i)=>(

@@ -64,6 +64,7 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
             {(zoneKey==="hotel"||zoneKey==="transport")&&it.source&&<SourceBadge source={it.source}/>}
             {(it.rationale||explainDemo)&&onShowExplain&&(
               <button onClick={(e)=>{e.stopPropagation();onShowExplain(zoneKey,it);}}
+                data-testid={`explain-button-${zoneKey}-${i}`}
                 aria-label="Why this card?"
                 title="Why this card?"
                 style={{fontSize:9,fontWeight:700,color:"#888",background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:"50%",width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,padding:0,lineHeight:1}}

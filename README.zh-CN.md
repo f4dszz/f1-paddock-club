@@ -190,14 +190,16 @@ cd frontend && npm run e2e
 
 ### E2E 测试结构
 
-`frontend/e2e/` 双 lane：
+`frontend/e2e/` 四条 spec，分两个 lane：
 
-- **`smoke.spec.js`** —— 默认，无需 LLM key。CI 每次 push 跑（`.github/workflows/ci.yml` 的 `e2e` job，失败时上传 Playwright artifacts）。覆盖初次规划、selection/quote、链接、日期输入回归。
-- **`refine.spec.js`** —— 由 `playwright.config.js` 的 `testIgnore` 把守，需 `E2E_INCLUDE_REFINE=1` 解锁。覆盖 refinement（direct-only 约束、英文 Explore 卡替换）。开 `LLM_STUB_MODE=1` 时，`backend/refine.py` 走测试专用确定性 stub，直接调 `_apply_constraint_filters` / `apply_line_update`，无真 LLM、零成本。
+- **默认 lane**（`smoke.spec.js`、`explain.spec.js`）—— 无需 LLM key。本地 `./scripts/e2e-local.sh` 即可跑。覆盖初次规划、selection/quote、链接、日期输入回归，以及 "Why this card?" explainability 面板内容断言。
+- **Stub-gated lane**（`refine.spec.js`、`quote_incomplete.spec.js`）—— 由 `playwright.config.js` 的 `testIgnore` 把守，需 `E2E_INCLUDE_REFINE=1` 解锁，且后端要带 `LLM_STUB_MODE=1`。覆盖 refinement（direct-only 约束、英文 Explore 卡替换）和 unpriced/incomplete quote 琥珀路径（`backend/agents/tickets.py` 在 `APP_ENV=test + LLM_STUB_MODE=1` 下追加一个 `price=0` 票）。开 `LLM_STUB_MODE=1` 时，`backend/refine.py` 走测试专用确定性 stub，直接调 `_apply_constraint_filters` / `apply_line_update`，无真 LLM、零成本。
+
+**CI gate**（`.github/workflows/ci.yml`）：`e2e` job 跑全 4 条 spec（`E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`）；新增的 `bundled-check-local` job 跑 `./scripts/check-local.sh`，与开发者本地契约一致。两者每次 push/PR 都跑，失败时上传 Playwright artifacts。
 
 ```bash
-./scripts/e2e-local.sh                                       # 仅 smoke（CI 契约）
-E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # stub 驱动 refine + smoke
+./scripts/e2e-local.sh                                       # 默认 lane（smoke + explain）
+E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # 全确定性 lane（4 条 spec）
 ```
 
 Stub 由 `APP_ENV=test + LLM_STUB_MODE=1` 把守；生产环境空 key 仍按 `LLM not configured` 老路兜底。
@@ -454,7 +456,7 @@ Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索或
 
 ## 后续路线图
 
-- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（已完成）。4.6 deterministic E2E in CI —— 拆 smoke + refine 双 lane、CI 失败上传 artifact、refine lane 通过 `APP_ENV=test + LLM_STUB_MODE=1` 走确定性 stub-backed refinement（已完成）。后续：iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
+- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（已完成）。4.6 deterministic E2E in CI —— CI 跑全 4 条 spec lane（smoke + refine + unpriced/incomplete quote + explainability），新增 bundled `check-local.sh` job，stub-backed refinement 和 unpriced ticket 通过 `APP_ENV=test + LLM_STUB_MODE=1` 走确定性路径，tool cache 在 `APP_ENV=test` 下绕过，outbound egress 在单测中 monkeypatch（已完成）。后续：iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
 - **Phase 5** —— 安全基线、错误处理、运行结果持久化、部署上线。
 
 ---

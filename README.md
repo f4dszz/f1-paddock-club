@@ -194,14 +194,16 @@ cd frontend && npm run e2e
 
 ### E2E test layout
 
-`frontend/e2e/` has two lanes:
+`frontend/e2e/` has four spec files in two lanes:
 
-- **`smoke.spec.js`** — default, no LLM keys. Runs in CI on every push (`.github/workflows/ci.yml` `e2e` job, artifacts uploaded on failure). Covers initial planning, selection/quote, links, and a date-input regression.
-- **`refine.spec.js`** — env-gated by `E2E_INCLUDE_REFINE=1` via `playwright.config.js` `testIgnore`. Covers refinement cases (direct-only constraint, English Explore-card replacement). With `LLM_STUB_MODE=1`, `backend/refine.py` switches to a deterministic test-only stub that calls `_apply_constraint_filters` / `apply_line_update` directly — no real LLM, no `$` per run.
+- **Default lane** (`smoke.spec.js`, `explain.spec.js`) — no LLM keys. Runs locally with `./scripts/e2e-local.sh`. Covers initial planning, selection/quote, links, a date-input regression, and the "Why this card?" explainability panel content.
+- **Stub-gated lane** (`refine.spec.js`, `quote_incomplete.spec.js`) — env-gated by `E2E_INCLUDE_REFINE=1` via `playwright.config.js` `testIgnore`, requires `LLM_STUB_MODE=1` against the backend. Covers refinement (direct-only constraint, English Explore-card replacement) and the unpriced/incomplete quote amber path (`backend/agents/tickets.py` appends a price=0 ticket under `APP_ENV=test + LLM_STUB_MODE=1`). The refine stub in `backend/refine.py` calls `_apply_constraint_filters` / `apply_line_update` directly — no real LLM, no `$` per run.
+
+**CI gate** (`.github/workflows/ci.yml`): the `e2e` job runs the full lane (`E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`); the `bundled-check-local` job runs `./scripts/check-local.sh` to gate the same bundled contract contributors are told to trust. Both run on every push/PR; Playwright artifacts upload on failure.
 
 ```bash
-./scripts/e2e-local.sh                                       # smoke only (CI contract)
-E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # stub-backed refine + smoke
+./scripts/e2e-local.sh                                       # default lane (smoke + explain)
+E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # full deterministic lane (4 specs)
 ```
 
 The stub is gated by `APP_ENV=test + LLM_STUB_MODE=1`; production with empty keys still returns the honest `LLM not configured`.
@@ -481,7 +483,7 @@ The supervisor is a real agent: it reads the conversation, chooses whether and w
 
 ## Roadmap
 
-- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — split smoke + refine lanes, CI artifact upload on failure, stub-backed refinement via `APP_ENV=test + LLM_STUB_MODE=1` (done). Next: iCal export, deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
+- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — full 4-spec lane runs in CI (smoke + refine + unpriced/incomplete quote + explainability), bundled `check-local.sh` job, stub-backed refinement and unpriced ticket via `APP_ENV=test + LLM_STUB_MODE=1`, tool cache bypassed under `APP_ENV=test`, outbound egress monkeypatched in unit tests (done). Next: iCal export, deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
 - **Phase 5** — security baseline, error handling, run persistence, deploy.
 
 ---
