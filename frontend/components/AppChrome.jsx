@@ -1,7 +1,7 @@
 import { FLAGS, PIPELINE, SHORT_NAMES, TRACK_MAP, ZONES } from "../domain/planningConstants.js";
 import { ConFloat, TrackSVG, Zone } from "./PaddockVisuals.jsx";
 
-export function AppHeader({ gp, phase, pipeIdx, onBack, onReset }) {
+export function AppHeader({ gp, phase, pipeIdx, onBack, onReset, rightSlot, extraActions }) {
   return (
     <div style={{padding:"8px 16px",borderBottom:"1px solid #1a1a1a",flexShrink:0,display:"flex",alignItems:"center",gap:8}}>
       <div onClick={onBack} style={{cursor:"pointer",color:"#555",fontSize:14}}>←</div>
@@ -15,11 +15,13 @@ export function AppHeader({ gp, phase, pipeIdx, onBack, onReset }) {
           {PIPELINE.map((_,i) => <div key={i} style={{width:16,height:3,borderRadius:2,background:i<=pipeIdx?"#E10600":"#222",transition:"all .3s"}}/>)}
         </div>
       )}
+      {extraActions}
       {phase!=="welcome" && (
         <button onClick={onReset} style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#555",fontSize:8,cursor:"pointer"}}>
           RESET
         </button>
       )}
+      {rightSlot}
     </div>
   );
 }

@@ -16,22 +16,36 @@ import { PxChar } from "./components/PaddockVisuals.jsx";
 import { ResultCard } from "./components/ResultCard.jsx";
 import { ThinkPanel } from "./components/ThinkPanel.jsx";
 import { WelcomeForm } from "./components/WelcomeForm.jsx";
+import UserMenu from "./components/UserMenu.jsx";
+import { useBackendToken, useDemoToken } from "./hooks/useBackendToken.js";
 
 // ── Backend connection config ───────────────────────────────────────
 const cleanBase=(url)=>(url||"").replace(/\/+$/,"");
-const DEMO_TOKEN=import.meta.env.VITE_DEMO_TOKEN||"";
 const API_BASE=cleanBase(import.meta.env.VITE_BACKEND_URL||"");
 const DEFAULT_WS_URL=`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
-const addDemoToken=(url)=>{
-  if(!DEMO_TOKEN) return url;
-  const sep=url.includes("?")?"&":"?";
-  return `${url}${sep}demo_token=${encodeURIComponent(DEMO_TOKEN)}`;
-};
-const WS_URL=addDemoToken(import.meta.env.VITE_WS_URL||DEFAULT_WS_URL);
-const WS_LOG_URL=WS_URL.replace(/demo_token=[^&]+/,"demo_token=***");
-const authHeaders=()=>DEMO_TOKEN?{Authorization:`Bearer ${DEMO_TOKEN}`}:{};
+const RAW_WS_URL=import.meta.env.VITE_WS_URL||DEFAULT_WS_URL;
+const HAS_CLERK = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const redactToken=(url)=>url.replace(/(?:demo_)?token=[^&]+/,"token=***");
 
 export default function App(){
+  // HAS_CLERK is a build-time constant from import.meta.env, so the
+  // hook choice here is stable across the bundle's lifetime — safe
+  // against Rules of Hooks even though the call is conditional.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { getToken } = HAS_CLERK ? useBackendToken() : useDemoToken();
+  const buildAuthHeaders = useCallback(async () => {
+    const tok = await getToken();
+    return tok ? { Authorization: `Bearer ${tok}` } : {};
+  }, [getToken]);
+  const buildWsUrl = useCallback(async () => {
+    const tok = await getToken();
+    if (!tok) return RAW_WS_URL;
+    const sep = RAW_WS_URL.includes("?") ? "&" : "?";
+    // Backend accepts both 'token' (Clerk JWT) and legacy 'demo_token'.
+    const param = HAS_CLERK ? "token" : "demo_token";
+    return `${RAW_WS_URL}${sep}${param}=${encodeURIComponent(tok)}`;
+  }, [getToken]);
+
   const debugMode=useMemo(()=>new URLSearchParams(window.location.search).has("debug"),[]);
   const explainDemoMode=useMemo(()=>{
     const v=new URLSearchParams(window.location.search).get("explain");
@@ -83,21 +97,24 @@ export default function App(){
 
   // Fetch GP calendar from backend on mount
   useEffect(()=>{
+    let cancelled = false;
     const calendarUrl=`${API_BASE||window.location.origin}/api/calendar`;
     pushDebug("calendar.fetch.start", calendarUrl);
-    fetch(`${API_BASE}/api/calendar`, {headers:authHeaders()})
-      .then(r=>{
+    (async () => {
+      try {
+        const headers = await buildAuthHeaders();
+        const r = await fetch(`${API_BASE}/api/calendar`, { headers });
         pushDebug("calendar.fetch.response", { status:r.status, ok:r.ok });
-        return r.json();
-      })
-      .then(data=>{
+        const data = await r.json();
+        if (cancelled) return;
         pushDebug("calendar.fetch.success", { count:data?.length || 0 });
         setGpList(data);
-      })
-      .catch(err=>{
-        pushDebug("calendar.fetch.error", String(err));
-      });
-  },[pushDebug]);
+      } catch (err) {
+        if (!cancelled) pushDebug("calendar.fetch.error", String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  },[pushDebug, buildAuthHeaders]);
 
   useEffect(()=>{if(scrollRef.current)setTimeout(()=>{scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},80);},[results,thinkBatch,chatMsgs,statusMsgs]);
 
@@ -183,17 +200,21 @@ export default function App(){
   },[pushDebug]);
 
   // ── Connect WebSocket (persistent, survives re-renders) ──────────
-  const connectWs=useCallback(()=>{
+  // Token resolution is async, so connectWs is async. Callers await it
+  // before using the returned WebSocket.
+  const connectWs=useCallback(async ()=>{
     if(wsRef.current&&wsRef.current.readyState<=1) return wsRef.current;
-    pushDebug("ws.connect.start", WS_LOG_URL);
-    const ws=new WebSocket(WS_URL);
+    const wsUrl = await buildWsUrl();
+    const wsLogUrl = redactToken(wsUrl);
+    pushDebug("ws.connect.start", wsLogUrl);
+    const ws=new WebSocket(wsUrl);
     wsRef.current=ws;
     ws.onmessage=handleWsMsg;
     ws.onopen=()=>{
-      pushDebug("ws.open", WS_LOG_URL);
+      pushDebug("ws.open", wsLogUrl);
     };
     ws.onerror=()=>{
-      pushDebug("ws.error", WS_LOG_URL);
+      pushDebug("ws.error", wsLogUrl);
       setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Backend or WebSocket proxy is unreachable."}]);
       setPhase(prev=>prev==="running"?"done":prev);setSpeaking(false);
     };
@@ -202,10 +223,10 @@ export default function App(){
       wsRef.current=null;
     };
     return ws;
-  },[handleWsMsg, pushDebug]);
+  },[handleWsMsg, pushDebug, buildWsUrl]);
 
   // ── WebSocket-driven planning run ────────────────────────────────
-  const run=()=>{
+  const run=async ()=>{
     pushDebug("plan.run.click", {
       gp_name: gp?.gp_name || null,
       gp_city: gp?.city || null,
@@ -221,7 +242,7 @@ export default function App(){
     setChatMsgs([]);setStatusMsgs([{agent:"concierge",text:"Welcome, VIP! Connecting to your team..."}]);setShowStatus(false);
     setPhase("running");setSpeaking(true);setPipeIdx(0);
 
-    const ws=connectWs();
+    const ws=await connectWs();
     const planPayload=JSON.stringify({type:"plan",data:{
       gp_name:gp.gp_name, gp_city:gp.city, gp_date:gp.race_date,
       origin:form.origin||"New York", budget:+(form.budget||2500),
@@ -303,7 +324,8 @@ export default function App(){
     <div style={{background:"#0a0a0a",fontFamily:"'DM Sans',sans-serif",color:"#fff",maxWidth:680,margin:"0 auto",display:"flex",flexDirection:"column",height:"100vh",maxHeight:920,boxSizing:"border-box"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 
-      <AppHeader gp={gp} phase={phase} pipeIdx={pipeIdx} onBack={backToSelect} onReset={reset}/>
+      <AppHeader gp={gp} phase={phase} pipeIdx={pipeIdx} onBack={backToSelect} onReset={reset}
+                 rightSlot={HAS_CLERK ? <UserMenu /> : null}/>
       <PaddockMap zSt={zSt} conPos={conPos} speaking={speaking}/>
 
       <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"10px 14px 6px",minHeight:0}}>
