@@ -51,6 +51,8 @@ from tools._race_calendar import all_races, upcoming_races, is_past
 from tools.recompute import recompute_budget
 from tools._trip_dates import validate_trip_dates
 from auth import AuthError, require_user, require_user_for_ws
+from health import router as health_router
+from observability import install_observability
 
 
 logger = logging.getLogger(__name__)
@@ -173,6 +175,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="F1 Paddock Club", version="0.2.0", lifespan=lifespan)
+
+install_observability(app)
+app.include_router(health_router)
 
 app.add_middleware(
     CORSMiddleware,
