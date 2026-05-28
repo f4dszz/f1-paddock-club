@@ -17,6 +17,7 @@ import { ResultCard } from "./components/ResultCard.jsx";
 import { ThinkPanel } from "./components/ThinkPanel.jsx";
 import { WelcomeForm } from "./components/WelcomeForm.jsx";
 import UserMenu from "./components/UserMenu.jsx";
+import SavedTrips from "./components/SavedTrips.jsx";
 import { useBackendToken, useDemoToken } from "./hooks/useBackendToken.js";
 
 // ── Backend connection config ───────────────────────────────────────
@@ -82,6 +83,8 @@ export default function App(){
   const[selections,setSelections]=useState({});
   const[debugLog,setDebugLog]=useState([]);
   const[copyStatus,setCopyStatus]=useState("copy");
+  const[showSavedTrips,setShowSavedTrips]=useState(false);
+  const[saveStatus,setSaveStatus]=useState(null);
   const cancelRef=useRef(false);
   const scrollRef=useRef(null);
   const resolveRef=useRef(null);
@@ -196,6 +199,40 @@ export default function App(){
       setChatMsgs(prev=>[...prev,{from:"c",text:`Error: ${msg.data}`}]);
       setPhase(prev=>prev==="running"?"done":prev);
       setSpeaking(false);setChatLoading(false);
+    }
+    if(msg.type==="save_trip_ack"){
+      setSaveStatus({ok:true, id:msg.data?.id, ts:Date.now()});
+      setTimeout(()=>setSaveStatus(prev=>prev&&Date.now()-prev.ts>2500?null:prev), 3000);
+    }
+    if(msg.type==="trip_loaded"){
+      const d=msg.data||{};
+      const snap=d.plan_snapshot||{};
+      try{
+        // Saved shape is {ticket?, transport?, hotel?, itinerary?, tour?,
+        // selections?, activeConstraints?} — same as liveResults plus side
+        // metadata. Restore the zone keys, then set selections/constraints
+        // from either the snapshot or the top-level trip fields.
+        const zoneKeys=["ticket","transport","hotel","itinerary","tour"]
+          .filter(k=>snap[k]&&typeof snap[k]==="object");
+        if(zoneKeys.length){
+          const live={};
+          for(const k of zoneKeys) live[k]=snap[k];
+          setLiveResults(live);
+          setResults(zoneKeys);
+        }
+        if(snap.selections) setSelections(snap.selections);
+      }catch(e){
+        pushDebug("trip_loaded.error", String(e));
+      }
+      if(d.budget_summary){
+        setBudgetSummary(d.budget_summary);
+        setBaselineBudgetSummary(d.budget_summary);
+      }
+      if(d.active_constraints) setActiveConstraints(d.active_constraints);
+      else if(snap.activeConstraints) setActiveConstraints(snap.activeConstraints);
+      setPhase("done");
+      setShowSavedTrips(false);
+      setStatusMsgs([{agent:"concierge",text:`Loaded saved trip: ${d.gp_slug}`}]);
     }
   },[pushDebug]);
 
@@ -325,6 +362,50 @@ export default function App(){
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 
       <AppHeader gp={gp} phase={phase} pipeIdx={pipeIdx} onBack={backToSelect} onReset={reset}
+                 extraActions={(
+                   <>
+                     {phase==="done" && (
+                       <button
+                         data-testid="save-trip-btn"
+                         disabled={!wsAlive() || results.length===0}
+                         onClick={()=>{
+                           if(!wsAlive()) return;
+                           const snapshot = {
+                             ...liveResults,
+                             selections,
+                             activeConstraints,
+                           };
+                           wsRef.current.send(JSON.stringify({
+                             type:"save_trip",
+                             data:{
+                               gp_slug: gp?.gp_name ? gp.gp_name.toLowerCase().replace(/\s+/g,"-") : "unknown-gp",
+                               depart_date: form.departDate || null,
+                               return_date: form.returnDate || null,
+                               plan_snapshot: snapshot,
+                               budget_summary: budgetSummary,
+                               active_constraints: activeConstraints,
+                             },
+                           }));
+                         }}
+                         style={{padding:"3px 8px",borderRadius:5,border:"1px solid #1d4ed8",background:"transparent",color:"#93c5fd",fontSize:8,cursor:"pointer"}}
+                       >
+                         {saveStatus?.ok ? "SAVED" : "SAVE"}
+                       </button>
+                     )}
+                     <button
+                       data-testid="my-trips-btn"
+                       onClick={async ()=>{
+                         // Open WS lazily if not yet connected, then show
+                         // the panel only once we have a ws object to bind to.
+                         if(!wsRef.current) await connectWs();
+                         setShowSavedTrips(true);
+                       }}
+                       style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#888",fontSize:8,cursor:"pointer"}}
+                     >
+                       MY TRIPS
+                     </button>
+                   </>
+                 )}
                  rightSlot={HAS_CLERK ? <UserMenu /> : null}/>
       <PaddockMap zSt={zSt} conPos={conPos} speaking={speaking}/>
 
@@ -401,6 +482,14 @@ export default function App(){
           zoneKey={explainState.zoneKey}
           itemMain={explainState.item?.main}
           onClose={closeExplain}
+        />
+      )}
+
+      {showSavedTrips&&(
+        <SavedTrips
+          ws={wsRef.current}
+          onLoad={()=>{ /* trip_loaded handler in handleWsMsg restores state */ }}
+          onClose={()=>setShowSavedTrips(false)}
         />
       )}
 

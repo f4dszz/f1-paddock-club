@@ -473,10 +473,22 @@ async def websocket_session(ws: WebSocket):
             elif msg_type == "quote":
                 await _handle_quote(ws, msg_data, session)
 
+            elif msg_type == "save_trip":
+                await _handle_save_trip(ws, msg_data, session)
+
+            elif msg_type == "list_trips":
+                await _handle_list_trips(ws, session)
+
+            elif msg_type == "load_trip":
+                await _handle_load_trip(ws, msg_data, session)
+
+            elif msg_type == "delete_trip":
+                await _handle_delete_trip(ws, msg_data, session)
+
             else:
                 await ws.send_json({
                     "type": "error",
-                    "data": f"Unknown message type: {msg_type}. Use 'plan', 'chat', or 'quote'.",
+                    "data": f"Unknown message type: {msg_type}.",
                 })
 
     except WebSocketDisconnect:
@@ -659,6 +671,150 @@ async def _handle_quote(ws: WebSocket, data, session: dict) -> None:
         }],
         session.get("debug", False),
     )
+
+
+# ── Saved-trip handlers ─────────────────────────────────────────────
+
+
+from datetime import date as _date
+import uuid as _uuid
+
+from db import SessionLocal as _SessionLocal
+import repository as _repo
+
+
+def _parse_date(value) -> _date | None:
+    if not value:
+        return None
+    try:
+        return _date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _session_user_id(session: dict) -> str:
+    return session.get("user_id") or "demo-user"
+
+
+async def _handle_save_trip(ws: WebSocket, data: dict, session: dict) -> None:
+    user_id = _session_user_id(session)
+    plan_snapshot = data.get("plan_snapshot")
+    if not isinstance(plan_snapshot, dict):
+        plan_snapshot = session.get("plan_state") or {}
+    if not plan_snapshot:
+        await ws.send_json({
+            "type": "error",
+            "data": "nothing to save: plan has not run yet",
+        })
+        return
+    try:
+        with _SessionLocal() as db:
+            user = _repo.upsert_user(
+                db,
+                clerk_user_id=user_id,
+                email=data.get("email"),
+                display_name=data.get("display_name"),
+            )
+            trip = _repo.save_trip(
+                db,
+                user_id=user.id,
+                gp_slug=str(data.get("gp_slug") or "unknown-gp"),
+                depart_date=_parse_date(data.get("depart_date")),
+                return_date=_parse_date(data.get("return_date")),
+                plan_snapshot=plan_snapshot,
+                budget_summary=data.get("budget_summary"),
+                active_constraints=data.get("active_constraints"),
+            )
+    except Exception as e:
+        logger.exception("save_trip failed")
+        await ws.send_json({"type": "error", "data": f"save failed: {e}"})
+        return
+    await ws.send_json({
+        "type": "save_trip_ack",
+        "data": {"id": str(trip.id), "gp_slug": trip.gp_slug},
+    })
+
+
+async def _handle_list_trips(ws: WebSocket, session: dict) -> None:
+    user_id = _session_user_id(session)
+    try:
+        with _SessionLocal() as db:
+            user = _repo.upsert_user(
+                db, clerk_user_id=user_id, email=None, display_name=None
+            )
+            rows = _repo.list_trips(db, user_id=user.id)
+            trips = [
+                {
+                    "id": str(r.id),
+                    "gp_slug": r.gp_slug,
+                    "depart_date": r.depart_date.isoformat() if r.depart_date else None,
+                    "return_date": r.return_date.isoformat() if r.return_date else None,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "budget_total": (r.budget_summary or {}).get("total"),
+                    "currency": (r.budget_summary or {}).get("currency"),
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.exception("list_trips failed")
+        await ws.send_json({"type": "error", "data": f"list failed: {e}"})
+        return
+    await ws.send_json({"type": "trips_list", "data": {"trips": trips}})
+
+
+async def _handle_load_trip(ws: WebSocket, data: dict, session: dict) -> None:
+    user_id = _session_user_id(session)
+    raw = data.get("id") or ""
+    try:
+        trip_uuid = _uuid.UUID(str(raw))
+    except (TypeError, ValueError):
+        await ws.send_json({"type": "error", "data": "invalid trip id"})
+        return
+    try:
+        with _SessionLocal() as db:
+            user = _repo.upsert_user(
+                db, clerk_user_id=user_id, email=None, display_name=None
+            )
+            trip = _repo.get_trip(db, trip_id=trip_uuid, user_id=user.id)
+            if trip is None:
+                await ws.send_json({"type": "error", "data": "trip not found"})
+                return
+            payload = {
+                "id": str(trip.id),
+                "gp_slug": trip.gp_slug,
+                "depart_date": trip.depart_date.isoformat() if trip.depart_date else None,
+                "return_date": trip.return_date.isoformat() if trip.return_date else None,
+                "plan_snapshot": trip.plan_snapshot,
+                "budget_summary": trip.budget_summary,
+                "active_constraints": trip.active_constraints,
+            }
+            session["plan_state"] = trip.plan_snapshot or {}
+    except Exception as e:
+        logger.exception("load_trip failed")
+        await ws.send_json({"type": "error", "data": f"load failed: {e}"})
+        return
+    await ws.send_json({"type": "trip_loaded", "data": payload})
+
+
+async def _handle_delete_trip(ws: WebSocket, data: dict, session: dict) -> None:
+    user_id = _session_user_id(session)
+    raw = data.get("id") or ""
+    try:
+        trip_uuid = _uuid.UUID(str(raw))
+    except (TypeError, ValueError):
+        await ws.send_json({"type": "error", "data": "invalid trip id"})
+        return
+    try:
+        with _SessionLocal() as db:
+            user = _repo.upsert_user(
+                db, clerk_user_id=user_id, email=None, display_name=None
+            )
+            ok = _repo.delete_trip(db, trip_id=trip_uuid, user_id=user.id)
+    except Exception as e:
+        logger.exception("delete_trip failed")
+        await ws.send_json({"type": "error", "data": f"delete failed: {e}"})
+        return
+    await ws.send_json({"type": "delete_trip_ack", "data": {"ok": ok}})
 
 
 if __name__ == "__main__":
