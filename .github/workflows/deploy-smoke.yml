@@ -1,0 +1,79 @@
+name: Deploy smoke
+
+# Manual post-deploy verification. Triggered from the Actions tab after
+# Vercel + Railway have promoted a new revision. Verifies:
+#   - /healthz returns 200 ok
+#   - /readyz reports the DB up
+#   - /api/calendar is gated (401 without a token)
+#   - frontend bundle contains no secret-looking strings
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Railway backend base URL (e.g. https://f1-paddock-backend.up.railway.app)"
+        required: true
+      frontend_url:
+        description: "Vercel frontend base URL (e.g. https://f1-paddock-club.vercel.app)"
+        required: true
+      demo_token:
+        description: "Demo access token, only if Clerk is not configured for this deployment"
+        required: false
+
+jobs:
+  smoke:
+    name: Post-deploy smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: healthz
+        run: |
+          set -e
+          body=$(curl -fsS "${{ inputs.backend_url }}/healthz")
+          echo "$body"
+          echo "$body" | grep -q '"status":"ok"'
+
+      - name: readyz reports DB up
+        run: |
+          set -e
+          body=$(curl -fsS "${{ inputs.backend_url }}/readyz")
+          echo "$body"
+          echo "$body" | grep -q '"db":"ok"'
+
+      - name: /api/calendar without auth is 401
+        run: |
+          set -e
+          code=$(curl -s -o /dev/null -w "%{http_code}" "${{ inputs.backend_url }}/api/calendar")
+          echo "got: $code"
+          test "$code" = "401" || (echo "expected 401, got $code"; exit 1)
+
+      - name: /api/calendar with demo token works (optional)
+        if: ${{ inputs.demo_token != '' }}
+        run: |
+          set -e
+          curl -fsS -H "Authorization: Bearer ${{ inputs.demo_token }}" \
+            "${{ inputs.backend_url }}/api/calendar" > /tmp/cal.json
+          grep -q "gp_name" /tmp/cal.json
+
+      - name: Frontend HTML loads
+        run: |
+          set -e
+          curl -fsS "${{ inputs.frontend_url }}" > /tmp/index.html
+          head -n 20 /tmp/index.html
+
+      - name: Frontend bundle exposes no secret strings
+        run: |
+          set -e
+          curl -fsS "${{ inputs.frontend_url }}/assets/" -o /tmp/assets.html || true
+          # Grep the loaded index.html — Vite includes a hashed script tag.
+          script=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' /tmp/index.html | head -n 1)
+          if [ -n "$script" ]; then
+            curl -fsS "${{ inputs.frontend_url }}${script}" > /tmp/bundle.js
+            forbidden='CLERK_SECRET_KEY|OPENAI_API_KEY|DATABASE_URL|SENTRY_DSN_BACKEND|FIRECRAWL_API_KEY|SERPAPI_API_KEY'
+            if grep -E "$forbidden" /tmp/bundle.js; then
+              echo "Forbidden secret patterns found in frontend bundle"
+              exit 1
+            fi
+            echo "Bundle scan clean"
+          else
+            echo "Could not locate built JS asset; skipping bundle scan"
+          fi

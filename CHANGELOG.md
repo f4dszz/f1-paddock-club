@@ -7,6 +7,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- **Enterprise floor (Phase 4.7).** Real OAuth sign-in via Clerk (`@clerk/clerk-react`), Postgres-backed saved trips with SQLAlchemy + Alembic, Sentry error tracking on both backend and frontend, `/healthz` + `/readyz` endpoints, CSP/HSTS middleware in production, `railway.json` + `vercel.json` deploy configs, `gitleaks` secret-scan CI, and a fresh-machine deploy runbook in the README. The frontend falls back to demo-token mode for local dev when `VITE_CLERK_PUBLISHABLE_KEY` is unset, so existing E2E lanes keep running without external credentials.
 - Selection-aware WebSocket quote previews. Choosing ticket, flight, or hotel cards now recomputes a selected total without mutating the saved plan.
 - Quote completeness metadata. Unpriced selections produce an incomplete amber quote with pending categories instead of a false within-budget result.
 - Structured `active_constraints` memory for direct-only flights, hotel brands, dietary needs, accessibility, avoid-luxury, and budget strategy.

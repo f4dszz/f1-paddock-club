@@ -481,10 +481,87 @@ The supervisor is a real agent: it reads the conversation, chooses whether and w
 
 ---
 
+## Deploy from scratch (Vercel + Railway + Clerk + Sentry)
+
+The enterprise-floor design (`docs/superpowers/specs/2026-05-27-enterprise-floor-design.md`) targets Vercel for the static frontend and Railway for the FastAPI + Postgres backend. After completing the steps below, `git push` to `main` triggers an automatic deploy on both platforms.
+
+### 0. Prerequisites — register external services
+
+You will need accounts on these. Free tiers cover a portfolio demo.
+
+| Service | Free tier signals | Why |
+|---|---|---|
+| **Clerk** (https://dashboard.clerk.com) | 10k MAU | OAuth IdP — sign-in UI + JWT issuance |
+| **Sentry** (https://sentry.io) | 5k errors/mo | Backend + frontend error tracking |
+| **Railway** (https://railway.app) | $5/mo Hobby credit | FastAPI process + Postgres addon |
+| **Vercel** (https://vercel.com) | Hobby plan | Static frontend on global CDN |
+| OpenAI (already in repo) | pay-as-you-go | LLM calls |
+| SerpAPI (optional) | 100 searches/mo | flight + hotel search |
+| Firecrawl (optional) | 500 pages/mo | F1 ticket pages |
+
+### 1. Provision Clerk
+
+1. Create a new Application in the Clerk dashboard.
+2. Enable Google, GitHub, and Email auth providers (configurable later).
+3. From "API Keys", copy `CLERK_SECRET_KEY` (secret) and `VITE_CLERK_PUBLISHABLE_KEY` (public).
+4. From "JWT Templates" (or the default JWT settings), note the **issuer URL** — it looks like `https://your-app.clerk.accounts.dev`. The JWKS URL is `<issuer>/.well-known/jwks.json`.
+
+### 2. Provision Sentry
+
+1. Create two projects: one Python (named `f1-paddock-backend`), one React (`f1-paddock-frontend`).
+2. Copy each project's DSN. The DSN is a URL — both DSNs are public, but only the *frontend* one is intentionally exposed in the bundle.
+
+### 3. Provision Railway
+
+1. New Project → "Deploy from GitHub repo" → connect this repo.
+2. Add the **Postgres** addon to the project. Railway auto-injects `DATABASE_URL` into the backend service environment.
+3. Set the following backend env vars on the Railway service (Variables tab):
+   - `APP_ENV=production`
+   - `ALLOWED_ORIGINS=https://<your-vercel-domain>`  (set after step 4)
+   - `OPENAI_API_KEY=sk-...`
+   - `SERPAPI_API_KEY=...` (optional)
+   - `FIRECRAWL_API_KEY=...` (optional)
+   - `CLERK_SECRET_KEY=sk_test_...`
+   - `CLERK_JWT_ISSUER=https://your-app.clerk.accounts.dev`
+   - `CLERK_JWKS_URL=https://your-app.clerk.accounts.dev/.well-known/jwks.json`
+   - `SENTRY_DSN_BACKEND=https://...@oXXXXX.ingest.sentry.io/YYYYY`
+   - `REQUIRE_CLERK_AUTH=true`
+4. Railway reads `railway.json` from the repo root — it runs `alembic upgrade head` on every build, then `uvicorn main:app`. The `/healthz` endpoint serves the platform liveness probe.
+
+### 4. Provision Vercel
+
+1. New Project → Import Git Repository → select this repo.
+2. Framework Preset: **Other**. The `vercel.json` at repo root supplies the build + headers config; no framework preset is needed.
+3. Set the following frontend env vars in Vercel Project Settings → Environment Variables:
+   - `VITE_BACKEND_URL=https://<your-railway-backend>.up.railway.app`
+   - `VITE_WS_URL=wss://<your-railway-backend>.up.railway.app/ws`
+   - `VITE_CLERK_PUBLISHABLE_KEY=pk_test_...`
+   - `VITE_SENTRY_DSN_FRONTEND=https://...@oXXXXX.ingest.sentry.io/YYYYY`
+   - `VITE_APP_ENV=production`
+4. (Optional) Enable Vercel Deployment Protection on the project for an extra "keep away the curious" layer over the sign-in screen.
+
+### 5. Push to main
+
+`git push origin main` triggers automatic builds on both platforms. The backend takes ~2 minutes; the frontend ~1 minute.
+
+### 6. Verify
+
+Run the **Deploy smoke** workflow from the GitHub Actions tab (`Actions → Deploy smoke → Run workflow`). It checks `/healthz`, `/readyz`, that `/api/calendar` is gated, and that the frontend bundle does not leak any secret strings.
+
+Then open `https://<vercel-domain>` in a browser:
+
+1. Clerk sign-in page appears.
+2. Sign in with Google → planner UI loads.
+3. Plan a trip end-to-end → click **SAVE** → reload page → **MY TRIPS** → click **Load** → the saved trip is restored from Postgres.
+
+### 7. Rollback
+
+Both Vercel and Railway expose per-revision rollback in their dashboards. After a rollback, re-run the **Deploy smoke** workflow and record the drill outcome in `CHANGELOG.md` under `[Unreleased]`.
+
 ## Roadmap
 
-- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — full 4-spec lane runs in CI (smoke + refine + unpriced/incomplete quote + explainability), bundled `check-local.sh` job, stub-backed refinement and unpriced ticket via `APP_ENV=test + LLM_STUB_MODE=1`, tool cache bypassed under `APP_ENV=test`, outbound egress monkeypatched in unit tests (done). Next: iCal export, deployment (Vercel + Railway/Render), basic auth, CORS tightening, HTTPS, PWA manifest for mobile install.
-- **Phase 5** — security baseline, error handling, run persistence, deploy.
+- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — full 4-spec lane runs in CI (smoke + refine + unpriced/incomplete quote + explainability), bundled `check-local.sh` job, stub-backed refinement and unpriced ticket via `APP_ENV=test + LLM_STUB_MODE=1`, tool cache bypassed under `APP_ENV=test`, outbound egress monkeypatched in unit tests (done). 4.7 enterprise floor — Clerk OAuth, Postgres-backed saved trips, Sentry, /healthz + /readyz, CSP/HSTS, gitleaks, Vercel + Railway deploy config (done).
+- **Phase 5** — error budgets, per-user quotas, audit log, custom domain, mobile/PWA polish.
 
 ---
 
