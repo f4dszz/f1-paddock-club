@@ -44,6 +44,19 @@ jobs:
       - name: AGENTS.md and CLAUDE.md stay identical
         run: scripts/check-agent-doc-sync.sh
 
+  gitleaks:
+    name: Secret scan — gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # GITLEAKS_LICENSE only required for org-private repos in the future.
+
   backend:
     name: Backend — compile and tests
     runs-on: ubuntu-latest

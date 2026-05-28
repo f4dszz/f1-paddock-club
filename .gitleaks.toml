@@ -1,0 +1,28 @@
+title = "F1 Paddock Club — gitleaks config"
+
+[extend]
+# Inherit gitleaks' bundled rule set so popular API key shapes still trip.
+useDefault = true
+
+# Allow obviously-test-fixture strings used in docs / examples / tests.
+[allowlist]
+description = "Allow demo/test/fixture strings in docs, examples, and tests"
+paths = [
+  '''(?i).*\.env\.example$''',
+  '''(?i)backend/tests/.*''',
+  '''(?i)frontend/e2e/.*''',
+  '''(?i)docs/superpowers/.*''',
+  '''(?i)docs/.*\.md$''',
+  '''(?i)README.*\.md$''',
+  '''(?i)CHANGELOG\.md$''',
+]
+regexes = [
+  '''sk-\.\.\.''',
+  '''sk_test_(?:stub|placeholder|example)''',
+  '''pk_test_(?:stub|placeholder|example)''',
+  '''sk-ant-\.\.\.''',
+  '''test-demo''',
+  '''pk_test_NONE''',
+  '''demo-123''',
+  '''abc123''',
+]
