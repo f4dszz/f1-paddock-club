@@ -32,6 +32,10 @@ backend/logs/
 # Tool cache files (disk-backed query results)
 backend/tools/.cache/
 
+# Local SQLite databases (dev fallback + tests)
+backend/_dev.sqlite3
+backend/_test*.sqlite3
+
 # Node / frontend (for future Next.js migration)
 node_modules/
 .next/
