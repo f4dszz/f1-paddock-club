@@ -33,7 +33,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError, field_validator
 
@@ -50,6 +50,7 @@ from _session import create_session, append_turn, clear_history, get_history
 from tools._race_calendar import all_races, upcoming_races, is_past
 from tools.recompute import recompute_budget
 from tools._trip_dates import validate_trip_dates
+from auth import AuthError, require_user, require_user_for_ws
 
 
 logger = logging.getLogger(__name__)
@@ -134,26 +135,11 @@ def _ws_client_ip(ws: WebSocket) -> str:
     return ws.client.host if ws.client else "unknown"
 
 
-def _valid_http_token(authorization: str | None) -> bool:
-    if not _REQUIRE_DEMO_TOKEN:
-        return True
-    if not _DEMO_ACCESS_TOKEN:
-        return False
-    return authorization == f"Bearer {_DEMO_ACCESS_TOKEN}"
-
-
-def _valid_ws_token(token: str | None) -> bool:
-    if not _REQUIRE_DEMO_TOKEN:
-        return True
-    return bool(_DEMO_ACCESS_TOKEN and token == _DEMO_ACCESS_TOKEN)
-
-
-def _check_http_access(request: Request, authorization: str | None) -> None:
+def _check_http_rate_limit(request: Request) -> None:
+    """Per-IP rate limit for HTTP routes. Auth is enforced separately via Depends(require_user)."""
     ip = _client_ip(request)
     if not _http_rate_limiter.allow(ip):
         raise HTTPException(status_code=429, detail="Too many requests")
-    if not _valid_http_token(authorization):
-        raise HTTPException(status_code=401, detail="Missing or invalid demo token")
 
 
 def _ws_origin_allowed(ws: WebSocket) -> bool:
@@ -299,10 +285,10 @@ def _state_snapshot(state: dict) -> dict:
 @app.get("/api/calendar")
 async def get_calendar(
     request: Request,
-    authorization: str | None = Header(default=None),
+    user_id: str = Depends(require_user),
 ):
     """Return the 2026 race calendar for the GP selection grid."""
-    _check_http_access(request, authorization)
+    _check_http_rate_limit(request)
     from datetime import date
     today = date.today()
     races = all_races()
@@ -326,7 +312,7 @@ async def get_calendar(
 async def plan(
     payload: dict,
     request: Request,
-    authorization: str | None = Header(default=None),
+    user_id: str = Depends(require_user),
 ):
     """Run the full planning pipeline and return the result.
 
@@ -334,7 +320,7 @@ async def plan(
     input (e.g. unsupported currency) surfaces as a clean 400 rather
     than Pydantic's default 422 or a downstream 500.
     """
-    _check_http_access(request, authorization)
+    _check_http_rate_limit(request)
     try:
         req = _validate_plan_payload(payload)
     except ValueError as e:
@@ -445,12 +431,15 @@ async def websocket_session(ws: WebSocket):
     if not _ws_origin_allowed(ws):
         await ws.close(code=1008)
         return
-    if not _valid_ws_token(ws.query_params.get("demo_token")):
+    try:
+        user_id = require_user_for_ws(ws)
+    except AuthError:
         await ws.close(code=1008)
         return
 
     await ws.accept()
     session = create_session()
+    session["user_id"] = user_id
 
     try:
         while True:
