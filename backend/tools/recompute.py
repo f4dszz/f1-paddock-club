@@ -235,6 +235,13 @@ def recompute_budget(state: dict[str, Any], selections: dict[str, Any] | None = 
             out_cost = _pick_cheapest_in(transport, "OUT", target)
             ret_cost = _pick_cheapest_in(transport, "RET", target)
             flight_cost = out_cost + ret_cost
+            # A one-way-only flight set (priced OUT but no priced RET, or vice
+            # versa) is an INCOMPLETE quote, not a free return leg. Mirror the
+            # selection path so the baseline can't show a green within-budget
+            # total for a half-priced trip.
+            flight_legs = [t for t in transport if t.get("tag") in {"OUT", "RET", "ROUNDTRIP"}]
+            if flight_legs and (out_cost <= 0 or ret_cost <= 0):
+                missing_categories.add("Flights")
         if flight_cost <= 0 and transport:
             missing_categories.add("Flights")
         local_cost = sum(_item_price_in(t, target) for t in local_items)

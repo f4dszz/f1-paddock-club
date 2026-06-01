@@ -40,18 +40,42 @@ def _matches_allowed_hotel_brand(hotel: dict, allowed_brands: list[str]) -> bool
     return any(brand in detected for brand in allowed_brands)
 
 
-def _recompute_after_constraint_filter(state: dict) -> None:
+def _has_price(value) -> bool:
     try:
-        state["budget_summary"] = _raw_recompute_budget(state)
-        state["budget_ok"] = state["budget_summary"].get("within_budget", False)
-        bs = state["budget_summary"]
-        bs_cur = bs.get("currency", state.get("currency", "EUR"))
+        return float(value or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _recompute_after_constraint_filter(state: dict, emptied: set[str] | None = None) -> None:
+    try:
+        summary = _raw_recompute_budget(state)
+        # If a hard constraint stripped out the only priced flight/hotel
+        # options, the recompute prices that category at 0 (its empty-list
+        # guards intentionally keep a genuinely empty plan complete). For a
+        # constraint-driven emptying we must instead surface an INCOMPLETE
+        # quote, never a green within-budget total (product invariant: a
+        # missing priced category cannot be reported as within budget).
+        if emptied:
+            missing = set(summary.get("missing_price_categories") or []) | emptied
+            summary["missing_price_categories"] = sorted(missing)
+            summary["quote_complete"] = False
+            summary["within_budget"] = False
+            summary["feasible_under_budget_found"] = False
+            summary["savings_tip"] = (
+                f"Quote incomplete: no {', '.join(sorted(emptied))} option satisfies your "
+                "active constraints. Relax the constraint or pick another option."
+            )
+        state["budget_summary"] = summary
+        state["budget_ok"] = summary.get("within_budget", False)
+        bs_cur = summary.get("currency", state.get("currency", "EUR"))
         logger.info(
-            "budget recomputed after constraint filter: %s %.0f / %s %.0f",
+            "budget recomputed after constraint filter: %s %.0f / %s %.0f%s",
             bs_cur,
-            bs["total"],
+            summary["total"],
             bs_cur,
-            bs["budget"],
+            summary["budget"],
+            f" (incomplete: emptied {sorted(emptied)})" if emptied else "",
         )
     except Exception:
         logger.exception("budget recomputation failed after constraint filter")
@@ -70,6 +94,7 @@ def _apply_constraint_filters(
 
     constraints = normalize_constraints(state.get("active_constraints"))
     updated: dict[str, bool] = {}
+    emptied: set[str] = set()
 
     if constraints.get("direct_only") and state.get("transport"):
         transport = [t for t in state.get("transport", []) if isinstance(t, dict)]
@@ -83,6 +108,16 @@ def _apply_constraint_filters(
         if kept != transport:
             state["transport"] = kept
             updated["transport"] = True
+            had_flights = any(
+                t.get("tag") in {"OUT", "RET", "ROUNDTRIP"} and _has_price(t.get("price"))
+                for t in transport
+            )
+            has_flights = any(
+                t.get("tag") in {"OUT", "RET", "ROUNDTRIP"} and _has_price(t.get("price"))
+                for t in kept
+            )
+            if had_flights and not has_flights:
+                emptied.add("Flights")
             logger.info(
                 "constraint filter applied: direct_only kept %d/%d transport items",
                 len(kept),
@@ -99,6 +134,16 @@ def _apply_constraint_filters(
         if kept_hotels != hotels:
             state["hotel"] = kept_hotels
             updated["hotel"] = True
+            had_hotels = any(
+                h.get("tag") != "INFO" and _has_price(h.get("price_per_night"))
+                for h in hotels
+            )
+            has_hotels = any(
+                h.get("tag") != "INFO" and _has_price(h.get("price_per_night"))
+                for h in kept_hotels
+            )
+            if had_hotels and not has_hotels:
+                emptied.add("Hotel")
             logger.info(
                 "constraint filter applied: hotel brands %s kept %d/%d hotels",
                 allowed_brands,
@@ -107,5 +152,5 @@ def _apply_constraint_filters(
             )
 
     if updated:
-        _recompute_after_constraint_filter(state)
+        _recompute_after_constraint_filter(state, emptied)
     return updated

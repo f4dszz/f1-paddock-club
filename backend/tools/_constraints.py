@@ -55,13 +55,19 @@ _ACCESSIBILITY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Intent-bearing phrases only. A bare "budget"/"预算" appears in neutral
+# questions ("what is my budget?", "increase my budget") and must NOT flip
+# avoid_luxury; same reasoning for the next regex.
 _AVOID_LUXURY_RE = re.compile(
-    r"\b(avoid\s+luxury|no\s+luxury|not\s+luxury|cheaper|budget|cheap|save\s+money)\b"
-    r"|不要奢华|不要奢華|不要豪华|不要豪華|便宜|省钱|省錢|预算",
+    r"\b(avoid\s+luxury|no\s+luxury|not\s+luxury|cheaper|cheap|save\s+money"
+    r"|budget[-\s]?friendly|low\s+budget|tight\s+budget|on\s+a\s+budget)\b"
+    r"|不要奢华|不要奢華|不要豪华|不要豪華|便宜|省钱|省錢|预算有限|省预算|省預算",
     re.IGNORECASE,
 )
 
-_VIP_RE = re.compile(r"\b(vip|luxury|premium|paddock)\b|奢华|奢華|豪华|豪華", re.IGNORECASE)
+# "paddock" is the product's own name and "premium" is a neutral F1 ticket
+# tier; neither should imply a VIP preference. Keep explicit VIP/luxury intent.
+_VIP_RE = re.compile(r"\b(vip|luxury)\b|奢华|奢華|豪华|豪華", re.IGNORECASE)
 
 
 def empty_constraints() -> dict[str, Any]:

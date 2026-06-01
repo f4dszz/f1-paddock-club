@@ -96,6 +96,10 @@ def target_index(lines: list[str], request: str) -> int:
             token in ll or token in line for token in ("museum", "gallery", "design", "景点", "博物馆", "美术馆", "设计")
         ):
             return idx
+    # A "replace X with Y" request that named a specific target X we could not
+    # locate must NOT silently fall back to mangling line 0. Signal not-found.
+    if requested_target:
+        return -1
     return 0
 
 
@@ -130,6 +134,11 @@ def apply_line_update(lines: list[Any], request: str, label: str, fallback_reque
     if not clean_lines:
         return [f"{label} update requested: {request}"]
     target = target_index(clean_lines, request)
+    if target == -1:
+        # Requested replace target not present in this card list. Leave the
+        # cards untouched (so callers don't falsely report "updated") rather
+        # than overwriting an unrelated entry.
+        return clean_lines
     updated = list(clean_lines)
     replacement = replacement_name(request) if label == "Tour" else ""
     if replacement:

@@ -40,6 +40,7 @@ Usage:
 from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -134,33 +135,45 @@ def query_parallel(
             for name, fn in sources.items()
         }
 
-        for future in as_completed(future_to_name, timeout=timeout):
-            name = future_to_name[future]
-            try:
-                results = future.result()
-                if not results:
-                    # Source returned empty — treat as soft failure
-                    report.sources.append(SourceStatus(name=name, ok=False, error="empty"))
-                    logger.warning("parallel: %s returned empty results", name)
-                    continue
+        # A global-deadline TimeoutError from as_completed must NOT discard the
+        # results that already completed (it would crash the whole search and
+        # drop real provider data into a full mock fallback). Catch it and fall
+        # through to the per-source reconciliation below, which keeps collected
+        # results and marks the unfinished sources as timed out.
+        try:
+            for future in as_completed(future_to_name, timeout=timeout):
+                name = future_to_name[future]
+                try:
+                    results = future.result()
+                    if not results:
+                        # Source returned empty — treat as soft failure
+                        report.sources.append(SourceStatus(name=name, ok=False, error="empty"))
+                        logger.warning("parallel: %s returned empty results", name)
+                        continue
 
-                # Tag each result with its source (only if it's a dict).
-                # WHY this check? Flights/hotels sources return list[dict],
-                # but ticket text sources return list[str] (raw markdown/
-                # snippets). A truly generic parallel framework can't assume
-                # the result shape. Dicts get tagged; strings pass through.
-                for r in results:
-                    if isinstance(r, dict):
-                        r["_source"] = name
-                        r["_degraded"] = False
-                all_results.extend(results)
-                report.sources.append(SourceStatus(name=name, ok=True, count=len(results)))
-                logger.info("parallel: %s returned %d results", name, len(results))
+                    # Tag each result with its source (only if it's a dict).
+                    # WHY this check? Flights/hotels sources return list[dict],
+                    # but ticket text sources return list[str] (raw markdown/
+                    # snippets). A truly generic parallel framework can't assume
+                    # the result shape. Dicts get tagged; strings pass through.
+                    for r in results:
+                        if isinstance(r, dict):
+                            r["_source"] = name
+                            r["_degraded"] = False
+                    all_results.extend(results)
+                    report.sources.append(SourceStatus(name=name, ok=True, count=len(results)))
+                    logger.info("parallel: %s returned %d results", name, len(results))
 
-            except Exception as e:
-                error_msg = f"{e.__class__.__name__}: {str(e)[:100]}"
-                report.sources.append(SourceStatus(name=name, ok=False, error=error_msg))
-                logger.warning("parallel: %s failed — %s", name, error_msg)
+                except Exception as e:
+                    error_msg = f"{e.__class__.__name__}: {str(e)[:100]}"
+                    report.sources.append(SourceStatus(name=name, ok=False, error=error_msg))
+                    logger.warning("parallel: %s failed — %s", name, error_msg)
+        except FuturesTimeout:
+            logger.warning(
+                "parallel: global timeout after %.1fs; keeping %d completed result(s)",
+                timeout,
+                len(all_results),
+            )
 
         # Check for sources that timed out (not in as_completed results)
         completed_names = {future_to_name[f] for f in future_to_name if f.done()}
