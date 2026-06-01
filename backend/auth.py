@@ -15,6 +15,7 @@ set; it falls back to VITE_DEMO_TOKEN otherwise. The backend mirrors that.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -25,13 +26,21 @@ import jwt
 from fastapi import Header, HTTPException, WebSocket
 
 
+logger = logging.getLogger(__name__)
+
 _JWKS_TTL_SECONDS = 3600
 _jwks_cache: dict[str, tuple[float, dict]] = {}
 _jwks_lock = threading.Lock()
 
+_LOCAL_ENVS = {"", "local", "dev", "development", "test"}
+
 
 class AuthError(Exception):
     """Raised by verify_clerk_jwt and require_user_for_ws."""
+
+
+class JwksUnavailableError(AuthError):
+    """JWKS endpoint unreachable and no cached keys available (transient)."""
 
 
 # ── Env readers ─────────────────────────────────────────────────────
@@ -43,6 +52,15 @@ def _app_env() -> str:
 
 def _is_prod_env() -> bool:
     return _app_env() in {"production", "prod"}
+
+
+def _is_local_env() -> bool:
+    """Pure local dev/test. Anything else is a real (non-local) deploy.
+
+    Mirrors main._IS_LOCAL_ENV so the two modules agree on what "local"
+    means; the accept-all passthrough only applies here.
+    """
+    return _app_env() in _LOCAL_ENVS
 
 
 def _require_clerk() -> bool:
@@ -83,7 +101,16 @@ def _jwks(url: str) -> dict:
         cached = _jwks_cache.get(url)
         if cached and now - cached[0] < _JWKS_TTL_SECONDS:
             return cached[1]
-    data = _fetch_jwks(url)
+    try:
+        data = _fetch_jwks(url)
+    except httpx.HTTPError as e:
+        # Transient JWKS blip (connect/timeout/5xx). Serve stale keys if we
+        # have any so already-valid tokens keep working; otherwise signal a
+        # transient-unavailable condition (mapped to 503, never 500/401).
+        if cached:
+            logger.warning("jwks fetch failed (%s); serving stale cache for %s", e, url)
+            return cached[1]
+        raise JwksUnavailableError(f"jwks unavailable: {e}") from e
     with _jwks_lock:
         _jwks_cache[url] = (now, data)
     return data
@@ -176,6 +203,9 @@ def require_user(authorization: str | None = Header(default=None)) -> str:
         try:
             claims = verify_clerk_jwt(token)
             return str(claims["sub"])
+        except JwksUnavailableError as e:
+            # Transient upstream (Clerk JWKS) outage — not the caller's fault.
+            raise HTTPException(status_code=503, detail="auth temporarily unavailable") from e
         except AuthError as e:
             raise HTTPException(status_code=401, detail=f"invalid token: {e}") from e
 
@@ -194,8 +224,14 @@ def require_user(authorization: str | None = Header(default=None)) -> str:
         if token is not None:
             raise HTTPException(status_code=401, detail="invalid demo token")
         raise HTTPException(status_code=401, detail="missing token")
-    # No auth configured at all — pure local dev passthrough
-    return "demo-user"
+    # No auth configured. Pure local dev passes through; a real (non-local)
+    # deploy must NOT silently accept-all — fail closed instead.
+    if _is_local_env():
+        return "demo-user"
+    raise HTTPException(
+        status_code=503,
+        detail="auth not configured: set CLERK_JWT_ISSUER or DEMO_ACCESS_TOKEN",
+    )
 
 
 # ── WebSocket equivalent ────────────────────────────────────────────
@@ -236,7 +272,10 @@ def require_user_for_ws(ws: WebSocket) -> str:
         if token:
             raise AuthError("invalid demo token")
         raise AuthError("missing token")
-    return "demo-user"
+    # Pure local dev passes through; a real deploy must fail closed.
+    if _is_local_env():
+        return "demo-user"
+    raise AuthError("auth not configured")
 
 
 def reset_jwks_cache_for_tests() -> None:

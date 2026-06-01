@@ -83,10 +83,9 @@ _IS_LOCAL_ENV = _APP_ENV.strip().lower() in {"", "local", "dev", "development", 
 _DEV_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 _ALLOWED_ORIGINS = _csv_env("ALLOWED_ORIGINS") or (_DEV_ORIGINS if _IS_LOCAL_ENV else [])
 _ALLOWED_ORIGINS_SET = set(_ALLOWED_ORIGINS)
-_DEMO_ACCESS_TOKEN = os.environ.get("DEMO_ACCESS_TOKEN", "").strip()
-_REQUIRE_DEMO_TOKEN = bool(_DEMO_ACCESS_TOKEN) or (
-    not _IS_LOCAL_ENV
-) or _env_flag("REQUIRE_DEMO_TOKEN", False)
+# Auth gating lives entirely in auth.py (Clerk + demo-token dual mode). The
+# old module-level _REQUIRE_DEMO_TOKEN here was dead code (never read) and
+# implied a "non-local => gated" behavior that auth.py now enforces directly.
 _MAX_CONCURRENT_PLANS = _int_env("MAX_CONCURRENT_PLANS", 5)
 _PLAN_ACQUIRE_TIMEOUT_SECONDS = _int_env("PLAN_ACQUIRE_TIMEOUT_SECONDS", 5)
 _HTTP_LIMIT_PER_MINUTE = _int_env("HTTP_RATE_LIMIT_PER_MINUTE", 60)
@@ -124,17 +123,28 @@ _http_rate_limiter = IPRateLimiter(_HTTP_LIMIT_PER_MINUTE, 60)
 _ws_connect_limiter = IPRateLimiter(_WS_LIMIT_PER_MINUTE, 60)
 
 
+def _trusted_forwarded_ip(forwarded: str) -> str | None:
+    """Pick the RIGHTMOST X-Forwarded-For hop — the one our proxy appended.
+
+    The leftmost entries are client-supplied and forgeable; trusting them lets
+    an attacker rotate a fake IP per request and get a fresh rate-limit bucket.
+    On a single trusted proxy (Railway), the rightmost entry is the real client.
+    """
+    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+    return parts[-1] if parts else None
+
+
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    ip = _trusted_forwarded_ip(request.headers.get("x-forwarded-for", ""))
+    if ip:
+        return ip
     return request.client.host if request.client else "unknown"
 
 
 def _ws_client_ip(ws: WebSocket) -> str:
-    forwarded = ws.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    ip = _trusted_forwarded_ip(ws.headers.get("x-forwarded-for", ""))
+    if ip:
+        return ip
     return ws.client.host if ws.client else "unknown"
 
 
@@ -143,6 +153,13 @@ def _check_http_rate_limit(request: Request) -> None:
     ip = _client_ip(request)
     if not _http_rate_limiter.allow(ip):
         raise HTTPException(status_code=429, detail="Too many requests")
+
+
+def _http_rate_limit_dep(request: Request) -> None:
+    """Dependency form of the rate limit. Declared BEFORE require_user on each
+    route so it runs first — otherwise failed-auth floods never reach the
+    limiter (they 401 out) and so are never counted or throttled."""
+    _check_http_rate_limit(request)
 
 
 def _ws_origin_allowed(ws: WebSocket) -> bool:
@@ -171,11 +188,25 @@ async def lifespan(app: FastAPI):
     # no longer write to the log file.
     log_file = setup_logging()
     logger.info("FastAPI starting, log file: %s", log_file)
+    # Fail fast instead of booting a non-local deploy with an empty origin
+    # allowlist, which would silently break CORS for the real frontend AND
+    # disable the WebSocket Origin gate while /healthz still reported "ok".
+    if not _IS_LOCAL_ENV and not _ALLOWED_ORIGINS:
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must be set in non-local environments "
+            "(empty allowlist breaks frontend CORS and disables the WS Origin gate)."
+        )
     yield
     logger.info("FastAPI shutting down")
 
 
-app = FastAPI(title="F1 Paddock Club", version="0.2.0", lifespan=lifespan)
+# Disable interactive docs on real deploys: the default Swagger/ReDoc pages
+# load assets from cdn.jsdelivr.net, which the production CSP blocks (blank
+# page), and /openapi.json would otherwise expose the full schema unauthed.
+_DOCS_KWARGS = (
+    {} if _IS_LOCAL_ENV else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+)
+app = FastAPI(title="F1 Paddock Club", version="0.2.0", lifespan=lifespan, **_DOCS_KWARGS)
 
 install_observability(app)
 install_security_headers(app)
@@ -292,10 +323,10 @@ def _state_snapshot(state: dict) -> dict:
 @app.get("/api/calendar")
 async def get_calendar(
     request: Request,
+    _rl: None = Depends(_http_rate_limit_dep),
     user_id: str = Depends(require_user),
 ):
     """Return the 2026 race calendar for the GP selection grid."""
-    _check_http_rate_limit(request)
     from datetime import date
     today = date.today()
     races = all_races()
@@ -319,6 +350,7 @@ async def get_calendar(
 async def plan(
     payload: dict,
     request: Request,
+    _rl: None = Depends(_http_rate_limit_dep),
     user_id: str = Depends(require_user),
 ):
     """Run the full planning pipeline and return the result.
@@ -327,7 +359,6 @@ async def plan(
     input (e.g. unsupported currency) surfaces as a clean 400 rather
     than Pydantic's default 422 or a downstream 500.
     """
-    _check_http_rate_limit(request)
     try:
         req = _validate_plan_payload(payload)
     except ValueError as e:
@@ -703,8 +734,88 @@ def _session_user_id(session: dict) -> str:
     return session.get("user_id") or "demo-user"
 
 
+def _persistence_blocked(user_id: str) -> bool:
+    """On a real (non-local) deploy the shared "demo-user" sentinel must not
+    own persisted trips — otherwise every demo visitor collapses into one
+    account and can read/delete each other's trips. Local/test dev legitimately
+    runs as demo-user (single developer), so persistence stays open there.
+    """
+    return user_id == "demo-user" and not _IS_LOCAL_ENV
+
+
+# Each persistence op is a synchronous unit of work. We run it via
+# asyncio.to_thread so a slow/contended DB round-trip does not block the single
+# uvicorn event loop (and with it every other WebSocket session + HTTP probe).
+# JSON-serializable payloads are built inside the session, before offload returns.
+
+
+def _save_trip_sync(user_id: str, data: dict, plan_snapshot: dict) -> dict:
+    with _SessionLocal() as db:
+        user = _repo.upsert_user(
+            db,
+            clerk_user_id=user_id,
+            email=data.get("email"),
+            display_name=data.get("display_name"),
+        )
+        trip = _repo.save_trip(
+            db,
+            user_id=user.id,
+            gp_slug=str(data.get("gp_slug") or "unknown-gp"),
+            depart_date=_parse_date(data.get("depart_date")),
+            return_date=_parse_date(data.get("return_date")),
+            plan_snapshot=plan_snapshot,
+            budget_summary=data.get("budget_summary"),
+            active_constraints=data.get("active_constraints"),
+        )
+        return {"id": str(trip.id), "gp_slug": trip.gp_slug}
+
+
+def _list_trips_sync(user_id: str) -> list[dict]:
+    with _SessionLocal() as db:
+        user = _repo.upsert_user(db, clerk_user_id=user_id, email=None, display_name=None)
+        rows = _repo.list_trips(db, user_id=user.id)
+        return [
+            {
+                "id": str(r.id),
+                "gp_slug": r.gp_slug,
+                "depart_date": r.depart_date.isoformat() if r.depart_date else None,
+                "return_date": r.return_date.isoformat() if r.return_date else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "budget_total": (r.budget_summary or {}).get("total"),
+                "currency": (r.budget_summary or {}).get("currency"),
+            }
+            for r in rows
+        ]
+
+
+def _load_trip_sync(user_id: str, trip_uuid: "_uuid.UUID") -> dict | None:
+    with _SessionLocal() as db:
+        user = _repo.upsert_user(db, clerk_user_id=user_id, email=None, display_name=None)
+        trip = _repo.get_trip(db, trip_id=trip_uuid, user_id=user.id)
+        if trip is None:
+            return None
+        return {
+            "id": str(trip.id),
+            "gp_slug": trip.gp_slug,
+            "depart_date": trip.depart_date.isoformat() if trip.depart_date else None,
+            "return_date": trip.return_date.isoformat() if trip.return_date else None,
+            "plan_snapshot": trip.plan_snapshot,
+            "budget_summary": trip.budget_summary,
+            "active_constraints": trip.active_constraints,
+        }
+
+
+def _delete_trip_sync(user_id: str, trip_uuid: "_uuid.UUID") -> bool:
+    with _SessionLocal() as db:
+        user = _repo.upsert_user(db, clerk_user_id=user_id, email=None, display_name=None)
+        return _repo.delete_trip(db, trip_id=trip_uuid, user_id=user.id)
+
+
 async def _handle_save_trip(ws: WebSocket, data: dict, session: dict) -> None:
     user_id = _session_user_id(session)
+    if _persistence_blocked(user_id):
+        await ws.send_json({"type": "error", "data": "Sign in to save trips."})
+        return
     plan_snapshot = data.get("plan_snapshot")
     if not isinstance(plan_snapshot, dict):
         plan_snapshot = session.get("plan_state") or {}
@@ -715,53 +826,21 @@ async def _handle_save_trip(ws: WebSocket, data: dict, session: dict) -> None:
         })
         return
     try:
-        with _SessionLocal() as db:
-            user = _repo.upsert_user(
-                db,
-                clerk_user_id=user_id,
-                email=data.get("email"),
-                display_name=data.get("display_name"),
-            )
-            trip = _repo.save_trip(
-                db,
-                user_id=user.id,
-                gp_slug=str(data.get("gp_slug") or "unknown-gp"),
-                depart_date=_parse_date(data.get("depart_date")),
-                return_date=_parse_date(data.get("return_date")),
-                plan_snapshot=plan_snapshot,
-                budget_summary=data.get("budget_summary"),
-                active_constraints=data.get("active_constraints"),
-            )
+        ack = await asyncio.to_thread(_save_trip_sync, user_id, data, plan_snapshot)
     except Exception as e:
         logger.exception("save_trip failed")
         await ws.send_json({"type": "error", "data": f"save failed: {e}"})
         return
-    await ws.send_json({
-        "type": "save_trip_ack",
-        "data": {"id": str(trip.id), "gp_slug": trip.gp_slug},
-    })
+    await ws.send_json({"type": "save_trip_ack", "data": ack})
 
 
 async def _handle_list_trips(ws: WebSocket, session: dict) -> None:
     user_id = _session_user_id(session)
+    if _persistence_blocked(user_id):
+        await ws.send_json({"type": "error", "data": "Sign in to view saved trips."})
+        return
     try:
-        with _SessionLocal() as db:
-            user = _repo.upsert_user(
-                db, clerk_user_id=user_id, email=None, display_name=None
-            )
-            rows = _repo.list_trips(db, user_id=user.id)
-            trips = [
-                {
-                    "id": str(r.id),
-                    "gp_slug": r.gp_slug,
-                    "depart_date": r.depart_date.isoformat() if r.depart_date else None,
-                    "return_date": r.return_date.isoformat() if r.return_date else None,
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                    "budget_total": (r.budget_summary or {}).get("total"),
-                    "currency": (r.budget_summary or {}).get("currency"),
-                }
-                for r in rows
-            ]
+        trips = await asyncio.to_thread(_list_trips_sync, user_id)
     except Exception as e:
         logger.exception("list_trips failed")
         await ws.send_json({"type": "error", "data": f"list failed: {e}"})
@@ -771,6 +850,9 @@ async def _handle_list_trips(ws: WebSocket, session: dict) -> None:
 
 async def _handle_load_trip(ws: WebSocket, data: dict, session: dict) -> None:
     user_id = _session_user_id(session)
+    if _persistence_blocked(user_id):
+        await ws.send_json({"type": "error", "data": "Sign in to view saved trips."})
+        return
     raw = data.get("id") or ""
     try:
         trip_uuid = _uuid.UUID(str(raw))
@@ -778,33 +860,23 @@ async def _handle_load_trip(ws: WebSocket, data: dict, session: dict) -> None:
         await ws.send_json({"type": "error", "data": "invalid trip id"})
         return
     try:
-        with _SessionLocal() as db:
-            user = _repo.upsert_user(
-                db, clerk_user_id=user_id, email=None, display_name=None
-            )
-            trip = _repo.get_trip(db, trip_id=trip_uuid, user_id=user.id)
-            if trip is None:
-                await ws.send_json({"type": "error", "data": "trip not found"})
-                return
-            payload = {
-                "id": str(trip.id),
-                "gp_slug": trip.gp_slug,
-                "depart_date": trip.depart_date.isoformat() if trip.depart_date else None,
-                "return_date": trip.return_date.isoformat() if trip.return_date else None,
-                "plan_snapshot": trip.plan_snapshot,
-                "budget_summary": trip.budget_summary,
-                "active_constraints": trip.active_constraints,
-            }
-            session["plan_state"] = trip.plan_snapshot or {}
+        payload = await asyncio.to_thread(_load_trip_sync, user_id, trip_uuid)
     except Exception as e:
         logger.exception("load_trip failed")
         await ws.send_json({"type": "error", "data": f"load failed: {e}"})
         return
+    if payload is None:
+        await ws.send_json({"type": "error", "data": "trip not found"})
+        return
+    session["plan_state"] = payload.get("plan_snapshot") or {}
     await ws.send_json({"type": "trip_loaded", "data": payload})
 
 
 async def _handle_delete_trip(ws: WebSocket, data: dict, session: dict) -> None:
     user_id = _session_user_id(session)
+    if _persistence_blocked(user_id):
+        await ws.send_json({"type": "error", "data": "Sign in to manage saved trips."})
+        return
     raw = data.get("id") or ""
     try:
         trip_uuid = _uuid.UUID(str(raw))
@@ -812,11 +884,7 @@ async def _handle_delete_trip(ws: WebSocket, data: dict, session: dict) -> None:
         await ws.send_json({"type": "error", "data": "invalid trip id"})
         return
     try:
-        with _SessionLocal() as db:
-            user = _repo.upsert_user(
-                db, clerk_user_id=user_id, email=None, display_name=None
-            )
-            ok = _repo.delete_trip(db, trip_id=trip_uuid, user_id=user.id)
+        ok = await asyncio.to_thread(_delete_trip_sync, user_id, trip_uuid)
     except Exception as e:
         logger.exception("delete_trip failed")
         await ws.send_json({"type": "error", "data": f"delete failed: {e}"})
