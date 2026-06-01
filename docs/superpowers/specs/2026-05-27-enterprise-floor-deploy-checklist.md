@@ -117,7 +117,7 @@ Then in a browser, open the Vercel URL:
 | `CLERK_JWT_ISSUER` | Clerk dashboard | yes |
 | `CLERK_JWKS_URL` | derived from issuer | yes |
 | `SENTRY_DSN_BACKEND` | Sentry backend project | yes |
-| `DATABASE_URL` | Railway Postgres addon — **auto-injected** | yes (auto) |
+| `DATABASE_URL` | Railway Postgres addon — **auto-injected** (bare `postgresql://`; `db.py` rewrites it to psycopg3, no override needed) | yes (auto) |
 | `SENTRY_TRACES_SAMPLE_RATE=0.1` | constant (optional override) | no |
 | `MAX_CONCURRENT_PLANS=5` | constant (optional override) | no |
 | `HTTP_RATE_LIMIT_PER_MINUTE=60` | constant (optional override) | no |
@@ -136,9 +136,9 @@ Then in a browser, open the Vercel URL:
 
 ## 4. What you do NOT need to do
 
-- No Postgres setup — Railway's one-click addon handles it. Alembic migrations run automatically on every deploy via `railway.json`'s `buildCommand`.
+- No Postgres setup — Railway's one-click addon handles it. Alembic migrations run automatically on every deploy via `railway.json`'s **start command** (run against the live Postgres at deploy time, not during the build — the build phase has no `DATABASE_URL`).
 - No code changes — every code change is committed to `main`.
-- No CSP tuning — the policy in `vercel.json` + `backend/security_headers.py` already allows Clerk + Sentry; you only revisit it if you add a new external host (e.g. analytics).
+- No CSP tuning — the policy in `vercel.json` + `backend/security_headers.py` already allows Clerk (including the Cloudflare Turnstile bot-challenge and the blob web worker) + Sentry; you only revisit it if you add a new external host (e.g. analytics).
 - No iCal export, custom domain, mobile/PWA polish, or audit log — those live in Phase 5.
 
 ## 5. Rough monthly cost on free tiers
