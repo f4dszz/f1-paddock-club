@@ -26,6 +26,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Frontend prototype structure is split into `components/` and `domain/` modules while preserving the current Vite + React app behavior.
 - Backend planning agents are split into per-domain modules under `backend/agents/`, with `agents/__init__.py` kept as the public import facade.
 - Refinement helpers are split so itinerary/tour editing and hard-constraint reconciliation no longer live inline inside `refine.py`.
+- Saved-trip database operations now run off the event loop via `asyncio.to_thread`, so a slow Postgres round-trip no longer stalls other WebSocket sessions on the single-process backend.
 
 ### Fixed
 - Quote validation rejects malformed selections, unknown categories, numeric strings, nulls, negative indexes, and out-of-range indexes while keeping the WebSocket open.
@@ -43,6 +44,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Dev scripts now resolve `.venv/bin/python`, `python3.12`, `python3.11`, or `python3` instead of assuming a `python` executable exists.
 - Refinement helper code is split out of `backend/refine.py` into state-update and deterministic-reply modules while preserving existing helper imports.
 - `start.sh` is now a true one-command launcher with configurable ports, health checks, and child-process cleanup.
+- **Railway deploy no longer crashes on boot.** `db.py` rewrites Railway's bare `postgresql://` `DATABASE_URL` to the installed psycopg3 driver (`postgresql+psycopg://`), so the engine builds instead of raising `ModuleNotFoundError: psycopg2`.
+- **Database migrations now run at deploy time, not build time.** `railway.json` runs `alembic upgrade head` in the start command against the live Postgres; the build phase has no `DATABASE_URL`, where a migration would have silently targeted a throwaway SQLite and left production unmigrated.
+- **Clerk sign-in works under the production CSP.** `worker-src 'self' blob:` and `https://challenges.cloudflare.com` (script-src + frame-src) are allowed in both `vercel.json` and the backend CSP, so the Cloudflare Turnstile bot-challenge and Clerk's web worker are no longer blocked.
+- **Honest budget on a one-way-only flight set.** The baseline budget marks Flights incomplete when an outbound leg has no priced return, instead of showing a green within-budget total for a half-priced trip.
+- **Honest budget when a hard constraint empties a category.** If a direct-only or hotel-brand constraint removes every priced flight/hotel, the quote is marked incomplete rather than reporting a green within-budget total with that category priced at 0.
+- **Constraint extraction no longer misfires on neutral wording.** "What is my budget?" or mentioning the "Paddock Club" / a "premium ticket" no longer flips `avoid_luxury` / `budget_strategy`; only intent-bearing phrases do.
+- **"Replace X with Y" no longer corrupts an unrelated card.** When the named target is absent from the itinerary/tour, the cards are left untouched instead of overwriting the first card and falsely reporting success.
+- **Parallel provider search keeps partial results on timeout.** A single slow provider hitting the global deadline no longer discards already-completed results into a full mock fallback.
+- **Saved trips restore the Schedule card.** The reload path reads the itinerary under its real `plan` zone key, so the Schedule card is no longer silently dropped on load.
+- **WebSocket recovery.** A clean mid-plan disconnect now surfaces an honest message and unblocks the UI instead of leaving it stuck on "running"; a connect race can no longer open a second leaked socket or trip a false "Connection lost" on a healthy connection.
+- **Stale selected quote no longer overwrites the restored baseline** after all cards are deselected.
+- **Calendar grid degrades honestly.** A non-OK or non-array `/api/calendar` response is no longer stored verbatim (which left the grid stuck on "is backend running?").
+
+### Security
+- **Auth fails closed on misconfiguration.** A non-local deploy with neither Clerk nor a demo token configured now returns 503 instead of silently admitting every request as `demo-user`.
+- **Transient Clerk JWKS outages return 503, not 500.** JWKS fetch failures serve a stale cached key when available, and otherwise surface a clean 503 (HTTP) / close (WS) instead of an unhandled 500 / handshake error.
+- **Saved trips are isolated per identity on real deploys.** The shared `demo-user` sentinel can no longer own persisted trips in a non-local environment (backend guard + the frontend hides SAVE / MY TRIPS when Clerk is absent), preventing cross-visitor read and delete.
+- **Rate limiting hardened.** Per-IP limits key off the trusted right-most `X-Forwarded-For` hop (a forged left-most hop can no longer mint fresh buckets) and run before authentication so failed-auth floods are counted.
+- **Fail-fast on missing `ALLOWED_ORIGINS`.** A non-local deploy refuses to start with an empty origin allowlist instead of silently breaking frontend CORS while disabling the WebSocket Origin gate.
+- **Interactive API docs disabled on real deploys.** `/docs`, `/redoc`, and `/openapi.json` are off outside local dev — no unauthenticated schema exposure and no CSP-broken blank pages.
 
 ## [0.3.0] — 2026-04-20
 

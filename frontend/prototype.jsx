@@ -26,6 +26,12 @@ const API_BASE=cleanBase(import.meta.env.VITE_BACKEND_URL||"");
 const DEFAULT_WS_URL=`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 const RAW_WS_URL=import.meta.env.VITE_WS_URL||DEFAULT_WS_URL;
 const HAS_CLERK = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+// Saved-trip persistence needs per-user identity. Expose it only when Clerk is
+// configured (real per-user accounts) or in local dev (single developer). A
+// production build WITHOUT Clerk would pool every visitor under one shared
+// "demo-user", so we hide SAVE / MY TRIPS there. The backend enforces the same
+// rule (it rejects persistence under demo-user on non-local deploys).
+const PERSIST_ENABLED = HAS_CLERK || import.meta.env.DEV;
 const redactToken=(url)=>url.replace(/(?:demo_)?token=[^&]+/,"token=***");
 
 export default function App(){
@@ -89,6 +95,7 @@ export default function App(){
   const scrollRef=useRef(null);
   const resolveRef=useRef(null);
   const wsRef=useRef(null);
+  const wsConnectingRef=useRef(null);
   const quoteSeqRef=useRef(0);
 
   const pushDebug=useCallback((label, data) => {
@@ -108,9 +115,19 @@ export default function App(){
         const headers = await buildAuthHeaders();
         const r = await fetch(`${API_BASE}/api/calendar`, { headers });
         pushDebug("calendar.fetch.response", { status:r.status, ok:r.ok });
+        if (!r.ok) {
+          if (!cancelled) pushDebug("calendar.fetch.error", `HTTP ${r.status}`);
+          return;
+        }
         const data = await r.json();
         if (cancelled) return;
-        pushDebug("calendar.fetch.success", { count:data?.length || 0 });
+        // Guard against a non-array body (e.g. a {detail:...} error object):
+        // storing it would leave the grid stuck on "is backend running?".
+        if (!Array.isArray(data)) {
+          pushDebug("calendar.fetch.error", "non-array calendar body");
+          return;
+        }
+        pushDebug("calendar.fetch.success", { count:data.length });
         setGpList(data);
       } catch (err) {
         if (!cancelled) pushDebug("calendar.fetch.error", String(err));
@@ -212,7 +229,10 @@ export default function App(){
         // selections?, activeConstraints?} — same as liveResults plus side
         // metadata. Restore the zone keys, then set selections/constraints
         // from either the snapshot or the top-level trip fields.
-        const zoneKeys=["ticket","transport","hotel","itinerary","tour"]
+        // Zone keys must match transformResults output: the itinerary card is
+        // emitted under "plan" (label "Schedule"), NOT "itinerary". Using the
+        // wrong key silently dropped the Schedule card on every reload.
+        const zoneKeys=["ticket","transport","hotel","plan","tour"]
           .filter(k=>snap[k]&&typeof snap[k]==="object");
         if(zoneKeys.length){
           const live={};
@@ -241,25 +261,44 @@ export default function App(){
   // before using the returned WebSocket.
   const connectWs=useCallback(async ()=>{
     if(wsRef.current&&wsRef.current.readyState<=1) return wsRef.current;
-    const wsUrl = await buildWsUrl();
-    const wsLogUrl = redactToken(wsUrl);
-    pushDebug("ws.connect.start", wsLogUrl);
-    const ws=new WebSocket(wsUrl);
-    wsRef.current=ws;
-    ws.onmessage=handleWsMsg;
-    ws.onopen=()=>{
-      pushDebug("ws.open", wsLogUrl);
-    };
-    ws.onerror=()=>{
-      pushDebug("ws.error", wsLogUrl);
-      setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Backend or WebSocket proxy is unreachable."}]);
-      setPhase(prev=>prev==="running"?"done":prev);setSpeaking(false);
-    };
-    ws.onclose=(evt)=>{
-      pushDebug("ws.close", { code:evt.code, reason:evt.reason || "", wasClean:evt.wasClean });
-      wsRef.current=null;
-    };
-    return ws;
+    // A second caller arriving during the async token fetch must reuse this
+    // pending connect instead of opening a second (leaked) socket.
+    if(wsConnectingRef.current) return wsConnectingRef.current;
+    wsConnectingRef.current=(async ()=>{
+      const wsUrl = await buildWsUrl();
+      const wsLogUrl = redactToken(wsUrl);
+      pushDebug("ws.connect.start", wsLogUrl);
+      const ws=new WebSocket(wsUrl);
+      wsRef.current=ws;
+      ws.onmessage=handleWsMsg;
+      ws.onopen=()=>{
+        pushDebug("ws.open", wsLogUrl);
+      };
+      ws.onerror=()=>{
+        pushDebug("ws.error", wsLogUrl);
+        setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Backend or WebSocket proxy is unreachable."}]);
+        setPhase(prev=>prev==="running"?"done":prev);setSpeaking(false);
+      };
+      ws.onclose=(evt)=>{
+        pushDebug("ws.close", { code:evt.code, reason:evt.reason || "", wasClean:evt.wasClean });
+        // Only clear the ref if this socket is still the live one (a leaked
+        // earlier socket closing must not null out a healthy connection).
+        if(wsRef.current===ws) wsRef.current=null;
+        // A clean close (no onerror) mid-plan would otherwise leave the UI
+        // stuck in "running" forever. Recover with an honest message.
+        setPhase(prev=>{
+          if(prev==="running"){
+            setChatMsgs(m=>[...m,{from:"c",text:"Connection closed before planning finished. Please reset and try again."}]);
+            setSpeaking(false);setChatLoading(false);
+            return "done";
+          }
+          return prev;
+        });
+      };
+      return ws;
+    })();
+    try{ return await wsConnectingRef.current; }
+    finally{ wsConnectingRef.current=null; }
   },[handleWsMsg, pushDebug, buildWsUrl]);
 
   // ── WebSocket-driven planning run ────────────────────────────────
@@ -306,7 +345,7 @@ export default function App(){
     }
   };
 
-  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setActiveConstraints({});setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());setExplainState(null);prevResultsRef.current=null;};
+  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;wsConnectingRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setActiveConstraints({});setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());setExplainState(null);prevResultsRef.current=null;};
   const backToSelect=()=>{reset();setScreen("select");setGp(null);};
   const handleGpSelect=useCallback((selectedGp)=>{
     setGp(selectedGp);
@@ -323,6 +362,9 @@ export default function App(){
     if(!arr.length) delete next[zone];
     const hasAny=Object.values(next).some(v=>Array.isArray(v)&&v.length>0);
     if(!hasAny){
+      // Invalidate any in-flight quote so its (now stale) response can't
+      // overwrite the baseline we're restoring here.
+      quoteSeqRef.current=quoteSeqRef.current+1;
       setSelections(next);
       setBudgetSummary(baselineBudgetSummary);
       return;
@@ -364,7 +406,7 @@ export default function App(){
       <AppHeader gp={gp} phase={phase} pipeIdx={pipeIdx} onBack={backToSelect} onReset={reset}
                  extraActions={(
                    <>
-                     {phase==="done" && (
+                     {phase==="done" && PERSIST_ENABLED && (
                        <button
                          data-testid="save-trip-btn"
                          disabled={!wsAlive() || results.length===0}
@@ -392,18 +434,20 @@ export default function App(){
                          {saveStatus?.ok ? "SAVED" : "SAVE"}
                        </button>
                      )}
-                     <button
-                       data-testid="my-trips-btn"
-                       onClick={async ()=>{
-                         // Open WS lazily if not yet connected, then show
-                         // the panel only once we have a ws object to bind to.
-                         if(!wsRef.current) await connectWs();
-                         setShowSavedTrips(true);
-                       }}
-                       style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#888",fontSize:8,cursor:"pointer"}}
-                     >
-                       MY TRIPS
-                     </button>
+                     {PERSIST_ENABLED && (
+                       <button
+                         data-testid="my-trips-btn"
+                         onClick={async ()=>{
+                           // Open WS lazily if not yet connected, then show
+                           // the panel only once we have a ws object to bind to.
+                           if(!wsRef.current) await connectWs();
+                           setShowSavedTrips(true);
+                         }}
+                         style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#888",fontSize:8,cursor:"pointer"}}
+                       >
+                         MY TRIPS
+                       </button>
+                     )}
                    </>
                  )}
                  rightSlot={HAS_CLERK ? <UserMenu /> : null}/>
