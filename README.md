@@ -514,7 +514,7 @@ You will need accounts on these. Free tiers cover a portfolio demo.
 ### 3. Provision Railway
 
 1. New Project → "Deploy from GitHub repo" → connect this repo.
-2. Add the **Postgres** addon to the project. Railway auto-injects `DATABASE_URL` into the backend service environment.
+2. Add the **Postgres** addon to the project. Railway auto-injects `DATABASE_URL` into the backend service environment as a bare `postgresql://…` URL; the backend rewrites it to the installed psycopg3 driver (`postgresql+psycopg://`) automatically, so no manual override is needed.
 3. Set the following backend env vars on the Railway service (Variables tab):
    - `APP_ENV=production`
    - `ALLOWED_ORIGINS=https://<your-vercel-domain>`  (set after step 4)
@@ -526,7 +526,7 @@ You will need accounts on these. Free tiers cover a portfolio demo.
    - `CLERK_JWKS_URL=https://your-app.clerk.accounts.dev/.well-known/jwks.json`
    - `SENTRY_DSN_BACKEND=https://...@oXXXXX.ingest.sentry.io/YYYYY`
    - `REQUIRE_CLERK_AUTH=true`
-4. Railway reads `railway.json` from the repo root — it runs `alembic upgrade head` on every build, then `uvicorn main:app`. The `/healthz` endpoint serves the platform liveness probe.
+4. Railway reads `railway.json` from the repo root. On each deploy the **start command** runs `alembic upgrade head` against the live Postgres and then `uvicorn main:app` — migrations run at deploy time, not during the build (the build phase has no `DATABASE_URL`, so a build-time migration would silently target a throwaway SQLite instead of the real database). The `/healthz` endpoint serves the platform liveness probe.
 
 ### 4. Provision Vercel
 

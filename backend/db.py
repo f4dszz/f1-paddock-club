@@ -15,11 +15,20 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
 def _database_url() -> str:
-    return (
+    url = (
         os.environ.get("TEST_DATABASE_URL")
         or os.environ.get("DATABASE_URL")
         or "sqlite:///./_dev.sqlite3"
     )
+    # Railway/Heroku inject bare `postgres://` / `postgresql://` URLs, which
+    # SQLAlchemy maps to the psycopg2 dialect. We only ship psycopg3
+    # (`psycopg[binary]`), so force the installed driver to avoid a
+    # ModuleNotFoundError: psycopg2 at engine-build time (build + boot).
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
 
 
 def _make_engine():
