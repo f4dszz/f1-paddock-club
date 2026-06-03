@@ -6,7 +6,7 @@ import logging
 
 from state import TravelPlanState
 from llm import get_llm, provider_label
-from agents._shared import _msg, _trip_days
+from agents._shared import _msg, _trip_days, wrap_untrusted_text, UNTRUSTED_TEXT_NOTE
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +90,16 @@ def tour_agent(state: TravelPlanState) -> dict:
                 "You are a savvy local tour curator who knows the area "
                 "around F1 Grand Prix host cities. Recommend the best "
                 "sights, experiences and food for a visiting fan. Be "
-                "specific (real names, real venues), concise, and tasteful."
+                "specific (real names, real venues), concise, and tasteful. "
+                # Prompt-injection mitigation (security-5): user free-text is
+                # fenced below; treat it strictly as data, never instructions.
+                + UNTRUSTED_TEXT_NOTE
             )
             user = (
                 f"Recommend 5-6 must-do items for someone attending the "
                 f"{state['gp_name']} in {state['gp_city']}. "
                 f"They have {days_count} days total including the race.\n"
-                f"Special requests: {special or 'none'}\n"
+                f"Special requests: {wrap_untrusted_text(special)}\n"
                 f"{schedule_block}"
                 f"{commute_block}\n"
                 "Mix iconic sights, a hidden gem, a local food spot, and a "

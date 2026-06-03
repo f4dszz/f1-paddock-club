@@ -82,6 +82,17 @@ def _clerk_jwks_url() -> str:
     return f"{iss}/.well-known/jwks.json" if iss else ""
 
 
+def _clerk_audience() -> str:
+    """Optional expected `aud` claim.
+
+    When CLERK_AUDIENCE is set, tokens must carry a matching audience —
+    this blocks tokens minted for a different application on the same
+    Clerk issuer/JWKS (security-1). When unset, audience is not checked
+    so local/demo setups (which mint no `aud`) keep working.
+    """
+    return (os.environ.get("CLERK_AUDIENCE") or "").strip()
+
+
 def _demo_token() -> str:
     return (os.environ.get("DEMO_ACCESS_TOKEN") or "").strip()
 
@@ -158,13 +169,23 @@ def verify_clerk_jwt(token: str, *, issuer: str | None = None) -> dict[str, Any]
             _jwks_cache.pop(jwks_url, None)
         key = _public_key_for_kid(_jwks(jwks_url), kid)
 
+    audience = _clerk_audience()
+    require = ["exp", "iss", "sub"]
+    decode_kwargs: dict[str, Any] = {}
+    if audience:
+        # Pin the expected audience and require its presence so a token
+        # minted for another app on the same Clerk instance is rejected.
+        decode_kwargs["audience"] = audience
+        require = require + ["aud"]
+
     try:
         claims = jwt.decode(
             token,
             key=key,
             algorithms=["RS256"],
             issuer=iss,
-            options={"require": ["exp", "iss", "sub"]},
+            options={"require": require},
+            **decode_kwargs,
         )
         return claims
     except jwt.InvalidTokenError as e:

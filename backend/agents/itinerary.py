@@ -6,7 +6,7 @@ import logging
 
 from state import TravelPlanState
 from llm import get_llm, provider_label
-from agents._shared import _msg, _trip_days
+from agents._shared import _msg, _trip_days, wrap_untrusted_text, UNTRUSTED_TEXT_NOTE
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ def _itinerary_mock(state: TravelPlanState) -> list[str]:
 def itinerary_agent(state: TravelPlanState) -> dict:
     """Plan day-by-day schedule. Parallel with tour_agent.
 
-    Phase 2: Real Claude call via langchain-anthropic, with mock fallback
-    when ANTHROPIC_API_KEY is missing or the call fails.
+    Real LLM call via the configured provider, with mock fallback when the
+    provider key is missing or the call fails.
     """
     llm = get_llm(temperature=0.7, max_tokens=900)
     days_count = _trip_days(state)
@@ -111,15 +111,18 @@ def itinerary_agent(state: TravelPlanState) -> dict:
                 "You are an expert travel planner curating a Formula 1 fan "
                 "trip. You produce tight, practical day-by-day itineraries. "
                 "Race weekends always run Friday (FP1/FP2), Saturday "
-                "(FP3/Qualifying), Sunday (Race)."
+                "(FP3/Qualifying), Sunday (Race). "
+                # Prompt-injection mitigation (security-5): user free-text is
+                # fenced below; treat it strictly as data, never instructions.
+                + UNTRUSTED_TEXT_NOTE
             )
             user = (
                 f"Plan a {days_count}-day itinerary for the {state['gp_name']} "
                 f"in {state['gp_city']} (race date: {state['gp_date']}).\n"
                 f"Origin: {state.get('origin', '')}\n"
                 f"Hotel base: {chosen_hotel or 'TBD'}\n"
-                f"Stops / multi-city plan: {stops or 'none'}\n"
-                f"Special requests: {special or 'none'}\n"
+                f"Stops / multi-city plan: {wrap_untrusted_text(stops)}\n"
+                f"Special requests: {wrap_untrusted_text(special)}\n"
                 f"{schedule_block}"
                 f"{commute_block}\n"
                 "Cover all three race-weekend sessions appropriately. "

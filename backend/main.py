@@ -33,7 +33,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError, field_validator
 
@@ -45,7 +45,8 @@ except ImportError:
 
 from logging_config import setup_logging
 from graph import plan_trip
-from refine import refine_plan
+from refine import refine_plan, RefineDeadlineError
+from llm import LLMDailyLimitError, check_llm_quota
 from _session import create_session, append_turn, clear_history, get_history
 from tools._race_calendar import all_races, upcoming_races, is_past
 from tools.recompute import recompute_budget
@@ -92,6 +93,23 @@ _HTTP_LIMIT_PER_MINUTE = _int_env("HTTP_RATE_LIMIT_PER_MINUTE", 60)
 _WS_LIMIT_PER_MINUTE = _int_env("WS_CONNECT_LIMIT_PER_MINUTE", 20)
 _plan_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_PLANS)
 
+# Number of trusted reverse-proxy hops in front of the app. The rightmost
+# N entries of X-Forwarded-For were appended by our own proxies; the entry
+# just before them is the real client. Defaults to 1 (single Railway proxy).
+# Set to 0 only when the app is directly internet-facing (then XFF is fully
+# untrusted and we ignore it). See _trusted_forwarded_ip (security-3).
+_TRUSTED_PROXY_HOPS = _int_env("TRUSTED_PROXY_HOPS", 1, minimum=0)
+
+# WebSocket hardening (BS-05). Idle timeout closes silent sockets that
+# authenticated then went quiet (slow-loris); the concurrency cap bounds
+# the number of simultaneously OPEN sessions on this single process.
+# Both env-configurable. NOTE: the concurrency counter is in-process only
+# (no cross-replica coordination) — consistent with IPRateLimiter.
+_WS_IDLE_TIMEOUT_SECONDS = _int_env("WS_IDLE_TIMEOUT_SECONDS", 300)
+_MAX_WS_CONNECTIONS = _int_env("MAX_WS_CONNECTIONS", 100)
+_ws_open_connections = 0
+_ws_conn_lock = asyncio.Lock()
+
 
 class ServerBusyError(RuntimeError):
     pass
@@ -124,14 +142,36 @@ _ws_connect_limiter = IPRateLimiter(_WS_LIMIT_PER_MINUTE, 60)
 
 
 def _trusted_forwarded_ip(forwarded: str) -> str | None:
-    """Pick the RIGHTMOST X-Forwarded-For hop — the one our proxy appended.
+    """Pick the real client IP from X-Forwarded-For, honoring trusted-proxy hops.
 
-    The leftmost entries are client-supplied and forgeable; trusting them lets
-    an attacker rotate a fake IP per request and get a fresh rate-limit bucket.
-    On a single trusted proxy (Railway), the rightmost entry is the real client.
+    XFF is "client, proxy1, proxy2, ..." where the rightmost _TRUSTED_PROXY_HOPS
+    entries were appended by proxies we control (e.g. Railway's edge). The entry
+    immediately to the left of those is the genuine client. Earlier (leftmost)
+    entries are client-supplied and forgeable; trusting them lets an attacker
+    rotate a fake IP per request to get a fresh rate-limit bucket (security-3).
+
+    With _TRUSTED_PROXY_HOPS=1 (default, single trusted proxy) this is the
+    rightmost entry. With 0 (app is directly internet-facing) XFF is fully
+    untrusted and we return None so the caller falls back to the socket peer.
+
+    NOTE: this enforces the hop COUNT, not a proxy IP allow-list. The deeper
+    fix is uvicorn --proxy-headers + forwarded-allow-ips, or a vetted
+    ProxyHeadersMiddleware; documented as a known limitation.
     """
+    if _TRUSTED_PROXY_HOPS <= 0:
+        return None
     parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-    return parts[-1] if parts else None
+    if not parts:
+        return None
+    # Index from the right: hops=1 -> parts[-1]; hops=2 -> parts[-2], etc.
+    idx = len(parts) - _TRUSTED_PROXY_HOPS
+    if idx < 0:
+        # Fewer entries than declared trusted hops: the chain is shorter than
+        # expected (someone may be talking to us without going through all
+        # proxies). Fall back to the leftmost entry rather than an out-of-range
+        # index; the socket-peer fallback in _client_ip still applies upstream.
+        idx = 0
+    return parts[idx] or None
 
 
 def _client_ip(request: Request) -> str:
@@ -196,8 +236,64 @@ async def lifespan(app: FastAPI):
             "ALLOWED_ORIGINS must be set in non-local environments "
             "(empty allowlist breaks frontend CORS and disables the WS Origin gate)."
         )
+    _startup_config_checks()
     yield
     logger.info("FastAPI shutting down")
+
+
+def _startup_config_checks() -> None:
+    """Fail fast (or loudly warn) on misconfigured production deploys.
+
+    Previously only ALLOWED_ORIGINS was guarded at boot, so a prod deploy
+    with auth enforced but a missing/typo'd CLERK_JWT_ISSUER booted clean and
+    passed /healthz, then 503'd on every authenticated request — a green probe
+    on a dead app. Likewise a prod deploy with no LLM key silently served mock
+    itineraries. We now assert the auth config and warn loudly on mock LLM
+    (deploy-cicd-8). Pure local/dev/test is exempt so demos still boot.
+    """
+    if _IS_LOCAL_ENV:
+        return
+
+    # Auth: when Clerk is enforced, the issuer (and resolvable JWKS) MUST be
+    # present, or every authenticated request will 503 behind a green probe.
+    from auth import _require_clerk, _clerk_issuer, _clerk_jwks_url, _clerk_audience
+
+    if _require_clerk():
+        if not _clerk_issuer():
+            raise RuntimeError(
+                "REQUIRE_CLERK_AUTH/production is set but CLERK_JWT_ISSUER is "
+                "missing — authenticated requests would 503 on a green probe."
+            )
+        if not _clerk_jwks_url():
+            raise RuntimeError(
+                "Clerk auth is enforced but no JWKS URL is resolvable "
+                "(set CLERK_JWKS_URL or a valid CLERK_JWT_ISSUER)."
+            )
+        if not _clerk_audience():
+            # Per GLOBAL DECISIONS: missing CLERK_AUDIENCE in production is a
+            # config WARNING (audience check stays optional), not a hard crash.
+            logger.warning(
+                "CLERK_AUDIENCE is not set in production: JWT audience is NOT "
+                "verified, so a token minted for another app on the same Clerk "
+                "issuer would be accepted. Set CLERK_AUDIENCE to harden."
+            )
+
+    # LLM: a prod deploy with no provider key silently degrades to mock plans.
+    # Don't hard-fail (mock is a valid graceful-degradation path) but make the
+    # degraded state impossible to miss in logs.
+    from llm import PROVIDER as _LLM_PROVIDER
+
+    _provider_key_env = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }.get(_LLM_PROVIDER)
+    if _provider_key_env and not os.environ.get(_provider_key_env):
+        logger.warning(
+            "LLM_PROVIDER=%s but %s is not set in a non-local environment: "
+            "the app will serve MOCK itineraries/plans, not real LLM output.",
+            _LLM_PROVIDER,
+            _provider_key_env,
+        )
 
 
 # Disable interactive docs on real deploys: the default Swagger/ReDoc pages
@@ -372,6 +468,116 @@ async def plan(
     return snapshot
 
 
+# ── Clerk webhook: user.deleted → erase user_profiles (+ cascade trips) ──
+# Right-to-erasure path (BS-03). When a user deletes their Clerk account,
+# Clerk POSTs a svix-signed `user.deleted` event here and we drop the
+# corresponding user_profiles row; the saved_trips FK cascade removes their
+# trips + stored email. Verification:
+#   - If CLERK_WEBHOOK_SECRET is set, the svix signature is REQUIRED. We use
+#     the `svix` library when installed; otherwise we verify the HMAC-SHA256
+#     signature defensively in-process (same scheme svix uses) so the endpoint
+#     is never an unauthenticated delete primitive.
+#   - If CLERK_WEBHOOK_SECRET is unset, the endpoint is disabled (404-style
+#     503) so it cannot be abused before it is configured.
+def _clerk_webhook_secret() -> str:
+    return (os.environ.get("CLERK_WEBHOOK_SECRET") or "").strip()
+
+
+def _verify_svix_signature(secret: str, headers: dict, body: bytes) -> bool:
+    """Verify a svix webhook signature. Returns True iff valid.
+
+    Tries the official `svix` library first; falls back to a defensive
+    in-process HMAC-SHA256 check matching svix's signing scheme
+    (signed content = "{id}.{timestamp}.{body}", key = base64 of the part
+    after the "whsec_" prefix). Either path is constant-time on the digest.
+    """
+    svix_id = headers.get("svix-id") or headers.get("webhook-id") or ""
+    svix_ts = headers.get("svix-timestamp") or headers.get("webhook-timestamp") or ""
+    svix_sig = headers.get("svix-signature") or headers.get("webhook-signature") or ""
+    if not (svix_id and svix_ts and svix_sig):
+        return False
+
+    try:  # Preferred: the vetted svix verifier (handles tolerance, rotation).
+        from svix.webhooks import Webhook  # type: ignore
+
+        Webhook(secret).verify(
+            body,
+            {
+                "svix-id": svix_id,
+                "svix-timestamp": svix_ts,
+                "svix-signature": svix_sig,
+            },
+        )
+        return True
+    except ImportError:
+        # svix not installed — defensive in-process verification. Note the
+        # dependency so it can be added to requirements by the ci-deploy batch.
+        logger.warning(
+            "svix library not installed; using in-process HMAC verification "
+            "for the Clerk webhook (add `svix` to requirements to use the "
+            "vetted verifier)."
+        )
+    except Exception:
+        return False
+
+    import base64
+    import hashlib
+    import hmac
+
+    key = secret
+    if key.startswith("whsec_"):
+        key = key[len("whsec_"):]
+    try:
+        secret_bytes = base64.b64decode(key)
+    except Exception:
+        return False
+    signed_content = f"{svix_id}.{svix_ts}.".encode() + body
+    expected = base64.b64encode(
+        hmac.new(secret_bytes, signed_content, hashlib.sha256).digest()
+    ).decode()
+    # svix-signature header is a space-separated list of "v1,<sig>" entries.
+    for part in svix_sig.split(" "):
+        _, _, sig = part.partition(",")
+        if sig and hmac.compare_digest(sig, expected):
+            return True
+    return False
+
+
+def _delete_clerk_user_sync(clerk_user_id: str) -> bool:
+    with _SessionLocal() as db:
+        return _repo.delete_user_by_clerk_id(db, clerk_user_id=clerk_user_id)
+
+
+@app.post("/webhooks/clerk")
+async def clerk_webhook(
+    request: Request,
+    _rl: None = Depends(_http_rate_limit_dep),
+):
+    """Handle Clerk webhooks. Only user.deleted triggers a side effect."""
+    secret = _clerk_webhook_secret()
+    if not secret:
+        # Not configured: refuse rather than expose an unauthenticated path.
+        raise HTTPException(status_code=503, detail="webhooks not configured")
+    body = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    if not _verify_svix_signature(secret, headers, body):
+        raise HTTPException(status_code=401, detail="invalid webhook signature")
+    try:
+        event = json.loads(body.decode() or "{}")
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    event_type = event.get("type")
+    if event_type != "user.deleted":
+        # Acknowledge other events so Clerk does not retry; no side effect.
+        return {"status": "ignored", "type": event_type}
+    clerk_user_id = str((event.get("data") or {}).get("id") or "")
+    if not clerk_user_id:
+        raise HTTPException(status_code=400, detail="missing user id")
+    deleted = await asyncio.to_thread(_delete_clerk_user_sync, clerk_user_id)
+    logger.info("clerk webhook user.deleted: id=%s deleted=%s", clerk_user_id, deleted)
+    return {"status": "ok", "deleted": deleted}
+
+
 # ── WebSocket /ws (two-lane session routing) ────────────────────────
 
 MAX_WS_MESSAGE_SIZE = 16 * 1024  # 16KB max per ws message
@@ -475,13 +681,38 @@ async def websocket_session(ws: WebSocket):
         await ws.close(code=1008)
         return
 
+    # Concurrency cap (BS-05): bound the number of simultaneously OPEN sessions
+    # so an attacker cannot hold the single process hostage with many silent
+    # connections. The connect-RATE limiter above does not cap concurrency.
+    global _ws_open_connections
+    async with _ws_conn_lock:
+        if _ws_open_connections >= _MAX_WS_CONNECTIONS:
+            # 1013 = "Try Again Later" (server overloaded). Reject before accept.
+            await ws.close(code=1013)
+            return
+        _ws_open_connections += 1
+
     await ws.accept()
     session = create_session()
     session["user_id"] = user_id
 
     try:
         while True:
-            raw = await ws.receive_text()
+            # Idle timeout (BS-05): close sockets that authenticated then went
+            # silent. asyncio.wait_for raises TimeoutError when no frame arrives
+            # within the window, which we map to a clean 1001 (going away) close.
+            try:
+                raw = await asyncio.wait_for(
+                    ws.receive_text(), timeout=_WS_IDLE_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                logger.info("WebSocket idle timeout after %ss", _WS_IDLE_TIMEOUT_SECONDS)
+                try:
+                    await ws.send_json({"type": "error", "data": "Idle timeout"})
+                except Exception:
+                    pass
+                await ws.close(code=1001)
+                return
 
             # Minimal safety: reject oversized messages
             if len(raw) > MAX_WS_MESSAGE_SIZE:
@@ -538,6 +769,11 @@ async def websocket_session(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
+    finally:
+        # Always release the concurrency slot, however the loop exited
+        # (disconnect, idle timeout, handler error). (BS-05)
+        async with _ws_conn_lock:
+            _ws_open_connections = max(_ws_open_connections - 1, 0)
 
 
 async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
@@ -560,6 +796,15 @@ async def _handle_plan(ws: WebSocket, data: dict, session: dict) -> None:
     except ValueError as e:
         await ws.send_json({"type": "error", "data": f"Invalid plan input: {e}"})
         return  # socket stays open for retry
+
+    # Per-identity daily LLM-call ceiling (BS-15). A full plan fans out to the
+    # itinerary/tour LLM agents; charge one unit and refuse past the ceiling so
+    # a single identity cannot run up unbounded provider cost.
+    try:
+        check_llm_quota(_session_user_id(session))
+    except LLMDailyLimitError as e:
+        await ws.send_json({"type": "error", "data": str(e)})
+        return
 
     await ws.send_json({
         "type": "message",
@@ -603,6 +848,16 @@ async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
     user_message = data if isinstance(data, str) else str(data)
     logger.info("/ws chat: %s", user_message[:100])
 
+    # Per-identity daily LLM-call ceiling (BS-15). A refine turn drives the
+    # supervisor (and its fan-out tools), so charge one unit and refuse past
+    # the ceiling — same guard the /plan path uses — so a single identity
+    # cannot run up unbounded provider cost via repeated chat refinements.
+    try:
+        check_llm_quota(_session_user_id(session))
+    except LLMDailyLimitError as e:
+        await ws.send_json({"type": "error", "data": str(e)})
+        return
+
     await ws.send_json({
         "type": "message",
         "data": {"agent": "concierge", "text": "Processing your request..."},
@@ -627,6 +882,15 @@ async def _handle_chat(ws: WebSocket, data, session: dict) -> None:
     except ValueError as e:
         # Known, user-actionable: surface plainly, keep session intact
         await ws.send_json({"type": "error", "data": f"Refine failed: {e}"})
+        return
+    except RefineDeadlineError:
+        # Provider/tool stalled past the hard deadline (backend-completeness-2).
+        # The working copy is discarded, so the session plan is unchanged.
+        logger.warning("_handle_chat refine deadline exceeded")
+        await ws.send_json({
+            "type": "error",
+            "data": "That request timed out. Your plan is unchanged — please try again.",
+        })
         return
     except Exception:
         logger.exception("_handle_chat unexpected error")
@@ -827,6 +1091,10 @@ async def _handle_save_trip(ws: WebSocket, data: dict, session: dict) -> None:
         return
     try:
         ack = await asyncio.to_thread(_save_trip_sync, user_id, data, plan_snapshot)
+    except _repo.SavedTripQuotaError as e:
+        # Per-user storage quota reached (BS-02). User-actionable, not a 500.
+        await ws.send_json({"type": "error", "data": str(e)})
+        return
     except Exception as e:
         logger.exception("save_trip failed")
         await ws.send_json({"type": "error", "data": f"save failed: {e}"})

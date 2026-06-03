@@ -84,7 +84,7 @@ def _transport_mock(state: TravelPlanState) -> list[dict]:
 def transport_agent(state: TravelPlanState) -> dict:
     """Search for flights and local transport. Parallel with hotel_agent.
 
-    Phase 3: tries tools.search_flights first, falls back to mock.
+    Tries tools.search_flights first, falls back to mock.
     """
     origin = state.get("origin", "NYC")
     city = state.get("gp_city", "Milan")

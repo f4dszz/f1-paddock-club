@@ -59,8 +59,8 @@ def _ticket_mock(state: TravelPlanState) -> list[dict]:
 def ticket_agent(state: TravelPlanState) -> dict:
     """Search for ticket options. Runs before transport/hotel.
 
-    Phase 3: tries tools.search_tickets first (parallel Firecrawl +
-    Bing → LLM extract → LLM estimate), falls back to mock.
+    Tries tools.search_tickets first (parallel Firecrawl + SerpAPI Google
+    Search → LLM extract → LLM estimate), falls back to mock.
     """
     try:
         from tools.search_tickets import search_tickets
