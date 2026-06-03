@@ -1,18 +1,46 @@
 # Deployment Design
 
-_This document is the production-readiness design for getting the F1 Paddock Club out of a local demo and onto public hosting. It is a design doc — no deploy workflow is implemented here. Implementation follows once this design is accepted._
+> **Status: IMPLEMENTED as of Phase 4.7 (enterprise floor).** This was originally
+> a design doc; the design has since been built. `vercel.json`, `railway.json`,
+> and `.github/workflows/deploy-smoke.yml` are committed, and the enterprise
+> floor went further than this doc's original "no accounts / no database" scope:
+> Clerk OAuth, Postgres (SQLAlchemy + Alembic), Sentry, `/healthz` + `/readyz`,
+> and CSP/HSTS all shipped. The authoritative, step-by-step deploy runbook now
+> lives in the README **"Deploy from scratch (Vercel + Railway + Clerk + Sentry)"**
+> section and in
+> `docs/superpowers/specs/2026-05-27-enterprise-floor-design.md`. This document is
+> retained as the predecessor rationale (target comparison, CORS/Origin, token
+> model, concurrency, disk-state limits) plus the new backup/restore section
+> ([Section 13](#13-database-backup-pitr-and-restore)). Sections that described
+> the pre-enterprise-floor state are annotated inline where they are now
+> superseded.
+>
+> _Deploy-gate verification is still pending: the `T-001` deterministic-E2E review
+> and the `T-DEPLOY-VERIFY` gate are in progress, so treat the deploy as
+> "config shipped, end-to-end gate verification pending" rather than fully signed
+> off._
+
+_This document is the production-readiness design for getting the F1 Paddock Club out of a local demo and onto public hosting._
 
 _中文版在 [`deployment-design.zh-CN.md`](./deployment-design.zh-CN.md)。_
 
-Scope is deliberately narrow. Search-provider expansion (Tavily and friends), mobile/PWA polish, session persistence, and user accounts are all deferred; see [Out of scope](#12-out-of-scope) for the explicit list.
+The original scope was deliberately narrow (search-provider expansion, mobile/PWA polish, session persistence, and user accounts were all deferred; see [Out of scope](#12-out-of-scope)). **Note:** the enterprise floor (Phase 4.7) has since added user accounts (Clerk OAuth) and persistence (Postgres-backed saved trips), so those two "out of scope" items are now implemented — the [Out of scope](#12-out-of-scope) list is annotated accordingly.
 
 ## 1. Current runtime assumptions
+
+> **Superseded note.** This section describes the *pre-enterprise-floor* runtime.
+> Since Phase 4.7 the system additionally has Clerk auth, a Postgres database
+> (SQLAlchemy ORM in `backend/models.py`, Alembic migrations, CRUD in
+> `backend/repository.py`), Sentry + structured logging (`backend/observability.py`),
+> `/healthz` + `/readyz` probes, a CORS **allowlist** (not `["*"]`), and CSP/HSTS
+> middleware in production. Read the items below as the historical baseline; the
+> corrections are called out inline.
 
 The system as it runs today. The design below either preserves or replaces each of these cleanly.
 
 ### Processes
 
-- **Backend**: FastAPI + Uvicorn on `127.0.0.1:8001`. Two surfaces — `/plan` (HTTP POST), `/ws` (WebSocket). State lives per WebSocket connection in in-process memory (`session = create_session()` in `main.py`). There is no database.
+- **Backend**: FastAPI + Uvicorn on `127.0.0.1:8001`. Two surfaces — `/plan` (HTTP POST), `/ws` (WebSocket). State lives per WebSocket connection in in-process memory (`session = create_session()` in `main.py`). _**Superseded:** a Postgres database now backs saved trips and user profiles (`backend/db.py`, `backend/models.py`, `backend/repository.py`); per-WebSocket in-memory state is still used for the live planning session, but durable saved trips persist to Postgres._
 - **Frontend**: Vite dev server on `localhost:3000`, serving `prototype.jsx` as a React app. Production build (`npm run build`) emits a plain static bundle in `frontend/dist/`.
 
 ### Dev-time topology — implicit same-origin
@@ -32,13 +60,19 @@ Calls go to the same host that served the page. In development this works becaus
 
 ### CORS
 
-Currently wide open in `backend/main.py`:
+> **Superseded:** CORS is no longer `["*"]` in production. `backend/main.py` now
+> reads an explicit allowlist from `ALLOWED_ORIGINS`, falls back to
+> `http://localhost:3000` only in local dev, and a non-local deploy
+> **fails fast** (refuses to start) if `ALLOWED_ORIGINS` is empty. The design
+> below is what was built.
+
+The original local default was wide open in `backend/main.py`:
 
 ```python
 CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 ```
 
-The `tighten in production` comment is the debt this document pays down.
+The `tighten in production` comment was the debt this document paid down — now realized as the allowlist in [Section 6](#6-cors-and-websocket-origin).
 
 ### WebSocket message loop
 
@@ -116,9 +150,9 @@ Reasons:
 ```
 
 - Frontend bundle served by Vercel's CDN.
-- Backend is a single Railway service running `uvicorn main:app`. Same-process FastAPI serves both REST `/api/*` routes and the WebSocket at `/ws`.
+- Backend is a single Railway service running `uvicorn main:app`. Same-process FastAPI serves both REST `/api/*` routes and the WebSocket at `/ws`. _**Superseded:** the Railway start command now runs `alembic upgrade head` before `uvicorn`, applying migrations against the live Postgres at deploy time._
 - All external-provider traffic (OpenAI, SerpAPI, Firecrawl) flows outbound from Railway. The frontend never sees or embeds those keys.
-- No database, no cache layer, no queue in this phase. Per-WebSocket in-process state is sufficient.
+- _**Superseded:** the enterprise floor added a Railway **Postgres addon** for durable saved trips + user profiles. The original "no database" assumption held only for the pre-4.7 demo; per-WebSocket in-process state still drives the live planning session, but saved trips now persist. There is still no separate cache layer or queue._
 
 ## 4. Runtime URL / topology assumptions (production-critical)
 
@@ -454,6 +488,12 @@ This verifies the two things that must hold before anything ships. Future additi
 
 ### CD for this phase — no repository-controlled CD
 
+> **Implemented as described.** Vercel and Railway auto-deploy on push to `main`;
+> there is no repository-controlled deploy job. A separate manual-trigger
+> `.github/workflows/deploy-smoke.yml` runs the post-deploy smoke checks
+> (`/healthz`, `/readyz`, calendar gating, bundle secret scan) — it is a
+> verification workflow, not a deploy pipeline.
+
 Vercel and Railway both run their own automatic deployments on `git push` to the configured branch. **This is "CD" in the practical sense**, just not CD controlled from a workflow file inside the repo.
 
 This phase does **not** add a deploy job to GitHub Actions. The reasons:
@@ -528,11 +568,11 @@ Everything below has to be demonstrable before this phase can be called done.
 
 ## 12. Out of scope
 
-Explicit list of what this design does not cover and does not pretend to. Each is deferred to a named later phase.
+Explicit list of what this design does not cover and does not pretend to. Each is deferred to a named later phase. _**Update:** items marked **IMPLEMENTED (4.7)** below were delivered by the enterprise floor after this design was written._
 
-- **User accounts, JWT, OAuth, password login** — multi-user phase.
-- **Session persistence across reconnects** — multi-user phase. Current state is per-WebSocket in-memory; a reconnect starts fresh.
-- **Per-user quotas / attribution / audit** — multi-user phase.
+- **User accounts, JWT, OAuth, password login** — ~~multi-user phase~~ **IMPLEMENTED (4.7):** Clerk OAuth + JWT verification (JWKS, per-identity isolation, fail-closed on misconfig).
+- **Session persistence across reconnects** — the live per-WebSocket planning state is still in-memory and a reconnect starts fresh, **but** saved trips now persist to Postgres (**IMPLEMENTED (4.7)**) so a user can reload a saved trip across sessions.
+- **Per-user quotas / attribution / audit** — partially deferred. Per-identity attribution (each saved trip is owned by a Clerk identity) shipped in 4.7; per-user storage quotas and an audit log remain Phase 5 work.
 - **Preview / staging environments** — one production environment is enough at this stage.
 - **Custom domain** — Vercel and Railway default subdomains are fine for the first deploy; a `.com` is a 15-minute dashboard task later.
 - **Tavily / `search_web` provider adapter** — separate design, separate phase.
@@ -542,6 +582,112 @@ Explicit list of what this design does not cover and does not pretend to. Each i
 - **Structured log shipping / APM / distributed tracing** — platform log viewers are sufficient for now.
 - **Redis or any shared cache / state store** — revisit when multi-instance is actually needed.
 - **Production-grade WS rate limit across instances** — same as above.
+
+## 13. Database backup, PITR, and restore
+
+The enterprise floor (Phase 4.7) added a Railway **Postgres** addon that stores
+durable user data: `user_profiles` (including each user's email) and
+`saved_trips` (the saved plan snapshots). This is real user data, so it needs a
+documented backup, point-in-time-recovery (PITR), and restore procedure — not
+just an implicit "Railway probably backs it up". This section is the canonical
+record of that procedure until it is automated.
+
+### What is at risk
+
+- `user_profiles` — one row per Clerk identity, lazily created on first
+  persistence op; holds `clerk_user_id` and `email`.
+- `saved_trips` — one row per SAVE; holds the JSON plan snapshot, GP slug, and
+  dates, scoped to a `user_profiles` row by FK (`ondelete=CASCADE`).
+
+Loss scenarios this procedure must cover:
+
+1. **Accidental destructive migration** (e.g. a `DROP`/`ALTER` that loses data).
+2. **Operator error** (a bad manual SQL statement against prod).
+3. **Platform-side data loss** (Railway Postgres volume failure).
+
+### RPO / RTO targets
+
+For a portfolio-stage single-instance deploy, the agreed targets are deliberately
+modest and honest about the platform tier:
+
+| Metric | Target | Rationale |
+|---|---|---|
+| **RPO** (max acceptable data loss) | **≤ 24h** with daily snapshots; **≤ a few minutes** if Railway PITR is enabled on the plan | A lost day of saved trips is acceptable for a demo; PITR tightens it when available. |
+| **RTO** (max acceptable time to restore) | **≤ 1h** | Restore is a manual dashboard/`pg_restore` step, not an automated failover. |
+
+These are best-effort targets for a one-person project, not a contractual SLA.
+
+### Backup configuration (Railway Postgres)
+
+1. **Enable automated backups** on the Railway Postgres service (Database →
+   Backups). Railway's managed Postgres offers scheduled snapshots; on plans that
+   support it, enable PITR for sub-day RPO. Record in the Railway project notes
+   whether PITR is actually enabled, because the RPO target above depends on it.
+2. **Set a retention window** of at least 7 days so a bad migration discovered a
+   few days later is still recoverable.
+3. **Keep one off-platform copy.** Once a week, take a logical dump and store it
+   off Railway (so a whole-project loss is still recoverable):
+
+   ```bash
+   # DATABASE_URL is the Railway-injected connection string (bare postgresql://…).
+   pg_dump "$DATABASE_URL" --format=custom --no-owner \
+     --file="f1pc-$(date +%F).dump"
+   ```
+
+   Store the resulting `.dump` somewhere durable (encrypted cloud storage or a
+   password manager attachment for a demo-scale dataset). The dump contains user
+   emails — treat it as sensitive and do not commit it to git.
+
+### Pair every destructive migration with a verified backup
+
+Because migrations run inline in the Railway start command (see the deploy
+runbook), a destructive Alembic migration would execute against live data on the
+next deploy. Rule:
+
+- **Before deploying any migration that drops/renames a column/table or rewrites
+  data,** take an on-demand backup first (Railway Database → Backups → "Back up
+  now", or the `pg_dump` above) and confirm it completed.
+- Note the backup id / dump filename in the PR description and in the
+  `CHANGELOG.md` `[Unreleased]` entry for that migration.
+
+### Restore procedure
+
+**From a Railway snapshot / PITR:**
+
+1. In the Railway dashboard, Database → Backups → choose the snapshot (or PITR
+   timestamp) just before the data loss.
+2. Restore into a **new** database service first (do not overwrite prod blind),
+   point a scratch backend at it, and verify the data looks right.
+3. Once verified, cut prod over to the restored database (swap `DATABASE_URL`)
+   and redeploy.
+
+**From an off-platform logical dump:**
+
+```bash
+# Restore into a fresh database, then verify before cutting prod over.
+pg_restore --clean --no-owner --dbname="$TARGET_DATABASE_URL" f1pc-YYYY-MM-DD.dump
+```
+
+After any restore, run `alembic current` against the restored database to confirm
+the schema revision matches the deployed code (`alembic heads`); if it lags, run
+`alembic upgrade head`.
+
+### Restore drill (do this at least once, then quarterly)
+
+A backup that has never been restored is not a backup. The drill:
+
+1. Take a fresh backup of prod (snapshot or `pg_dump`).
+2. Restore it into a throwaway database (new Railway service or local Postgres).
+3. Confirm row counts for `user_profiles` and `saved_trips` match prod, and that
+   a known saved trip loads correctly through a scratch backend pointed at the
+   restored DB.
+4. Tear down the throwaway database.
+5. **Record the drill outcome** (date, snapshot id, row counts, pass/fail) as a
+   one-line note in `CHANGELOG.md` under `[Unreleased]`, the same way rollback
+   drills are recorded ([Section 11.6](#116-rollback-drill)).
+
+Until this drill has been run at least once, the backup story is "configured but
+unverified" — track it the same way the deploy gate is tracked as pending.
 
 ## Summary of decisions
 
@@ -563,4 +709,5 @@ Explicit list of what this design does not cover and does not pretend to. Each i
 | Rollback | Platform per-revision rollback + README runbook + drill | ✅ |
 | Logging | File handler kept for convenience; STDOUT is canonical on managed platforms | ✅ |
 | Tool cache | Best-effort only; not persistence, not source of truth | ✅ |
+| DB backup / PITR / restore | Railway snapshots + weekly off-platform `pg_dump`; RPO ≤24h (≤min with PITR), RTO ≤1h; restore drill recorded in CHANGELOG ([Section 13](#13-database-backup-pitr-and-restore)) | ✅ |
 | Mobile distribution | Orthogonal product decision, evaluated in a later dedicated document | — |

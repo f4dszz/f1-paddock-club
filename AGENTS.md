@@ -92,8 +92,13 @@ curl http://localhost:3000/api/calendar
 - Keep mock data as a permanent graceful-degradation path.
 - Prefer shared tools in `backend/tools/` over duplicating provider logic in agents.
 - Keep Lane 1 and Lane 2 behavior consistent by sharing state and tool contracts.
-- Do not add payments, accounts, or persisted sessions unless the user explicitly asks.
-- Treat `DEMO_ACCESS_TOKEN` as demo abuse gating, not production authentication.
+- Accounts and persistence have shipped by user request (Phase 4.7 enterprise
+  floor: Clerk OAuth + Postgres-backed saved trips). Do not add *new* surfaces
+  of this kind — payments, broader account features, or additional persisted
+  data — unless the user explicitly asks. Keep the existing scope minimal.
+- `DEMO_ACCESS_TOKEN` is demo abuse gating; Clerk JWT verification is the real
+  production authentication. The frontend falls back to demo-token mode for
+  local dev when Clerk is unconfigured.
 - No `Co-Authored-By` or AI attribution in commit messages.
 
 ## Code Quality Rules
@@ -141,6 +146,11 @@ Use these destinations instead:
 
 ## Current Priority
 
-Phase 4 remains the active phase: hardening, deterministic E2E automation,
-deployment readiness, CORS/token tightening, and responsive polish. The next
-major engineering milestone is deploy readiness, not a framework rewrite.
+Phase 4 (including the 4.7 enterprise floor — Clerk OAuth, Postgres-backed saved
+trips, Sentry, `/healthz` + `/readyz`, CSP/HSTS, gitleaks, and Vercel + Railway
+deploy config) has shipped. The deploy **config** is committed but the end-to-end
+deploy **gate** is still being verified (`T-001` awaiting reviewer verdict,
+`T-DEPLOY-VERIFY` planned); treat deploy as "config shipped, verification
+pending". The next milestone is closing that gate and the Phase 5 operate/scale
+items — not a framework rewrite. See `docs/current.md` for the canonical
+shipped-vs-pending breakdown.

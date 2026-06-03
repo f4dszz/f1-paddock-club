@@ -4,11 +4,10 @@
 
 [简体中文](./README.zh-CN.md) · English
 
-![F1 Paddock Club demo](docs/demo.gif)
-
-<!-- TODO: replace docs/demo.gif with a 5-second screen recording of:
-     GP card click → calendar load → plan generated → first refine.
-     Record at 1280x720, 8fps, ~3MB. -->
+<!-- Demo recording placeholder. To add one: record a 5-second screen capture of
+     GP card click → calendar load → plan generated → first refine
+     (1280x720, ~8fps, ~3MB), save it as docs/demo.gif, and add the image here:
+     ![F1 Paddock Club demo](docs/demo.gif) -->
 
 ---
 
@@ -78,15 +77,22 @@ The shared `TravelPlanState` uses `Annotated[list, operator.add]` on the `messag
 
 ---
 
-## Current State (Phase 4 functional build in progress)
+## Current State (Phase 4 complete through the enterprise floor)
 
 | Phase | Status | What's in it |
 |---|---|---|
 | **1 — Graph + mock data** | ✅ Done | Full LangGraph wired up, all 7 agents return mock data, CLI test runs end-to-end, FastAPI endpoints work. |
 | **2 — Real LLM calls** | ✅ Done | `itinerary_agent` and `tour_agent` call real LLM via `with_structured_output`. Provider selectable (OpenAI/Anthropic). Mock fallback when no key. |
 | **3 — External data + supervisor** | ✅ Done | SerpAPI (flights/hotels), Firecrawl (tickets), supervisor agent for chat refinement, `/ws` dual-lane routing, currency conversion (EUR/USD/CNY), trip date computation. See details below. |
-| **4 — Frontend + trust layer** | 🟡 In progress | Hookup, hardening, currency/date controls, selected quote previews, structured constraints, itinerary/tour card edits, ticket/flight/hotel explainability, and the first frontend/backend file split are done. Next: strict E2E automation, iCal export, and deployment hardening. |
-| **5 — Polish + deploy** | ⏳ Planned | Security baseline, persistence, production deployment, PWA/mobile polish. |
+| **4 — Frontend + trust + enterprise floor** | ✅ Done | Hookup, hardening, currency/date controls, selected quote previews, structured constraints, itinerary/tour card edits, ticket/flight/hotel explainability, the frontend/backend file split, deterministic E2E in CI, and the 4.7 **enterprise floor**: Clerk OAuth, Postgres-backed saved trips (SQLAlchemy + Alembic), Sentry, `/healthz` + `/readyz`, CSP/HSTS, gitleaks. Deploy config (Vercel + Railway) is **shipped; gate verification is pending** (see note below). |
+| **5 — Operate + scale** | ⏳ Planned | Error budgets, per-user quotas, audit log, custom domain, mobile/PWA polish. |
+
+> **Deploy status caveat.** The deploy configuration (`vercel.json`, `railway.json`,
+> `deploy-smoke` workflow) is committed and the enterprise-floor code has shipped,
+> but the full deploy-gate verification (the `T-001` deterministic-E2E review and
+> the `T-DEPLOY-VERIFY` gate) is still in progress. Treat "deploy" as
+> **config shipped, end-to-end gate verification pending** rather than fully
+> signed off.
 
 ### Phase 3 — what was built
 
@@ -117,6 +123,11 @@ f1-paddock-club/
 │   ├── refine_state.py        # Tool-result → state apply + failure tracking
 │   ├── _session.py            # WebSocket session manager (chat memory + plan state layered)
 │   ├── tools/                 # External data tools (SerpAPI, Firecrawl, cache, currency, dates)
+│   ├── db.py                  # SQLAlchemy engine/session; rewrites Railway's bare DATABASE_URL to psycopg3
+│   ├── models.py              # ORM models for the persistence layer (UserProfile, SavedTrip, SavedConstraints)
+│   ├── repository.py          # CRUD helpers for saved trips / user profiles (one unit of work per call)
+│   ├── observability.py       # Sentry init + structured JSON logging + per-request request_id binding
+│   ├── alembic/               # Alembic migrations (run via `alembic upgrade head` at deploy time)
 │   ├── logging_config.py      # File logger setup (writes to logs/)
 │   ├── requirements.txt
 │   └── .env.example           # Documents all supported env vars
@@ -194,16 +205,18 @@ cd frontend && npm run e2e
 
 ### E2E test layout
 
-`frontend/e2e/` has four spec files in two lanes:
+`frontend/e2e/` has five spec files (seven test cases) in three lanes:
 
 - **Default lane** (`smoke.spec.js`, `explain.spec.js`) — no LLM keys. Runs locally with `./scripts/e2e-local.sh`. Covers initial planning, selection/quote, links, a date-input regression, and the "Why this card?" explainability panel content.
-- **Stub-gated lane** (`refine.spec.js`, `quote_incomplete.spec.js`) — env-gated by `E2E_INCLUDE_REFINE=1` via `playwright.config.js` `testIgnore`, requires `LLM_STUB_MODE=1` against the backend. Covers refinement (direct-only constraint, English Explore-card replacement) and the unpriced/incomplete quote amber path (`backend/agents/tickets.py` appends a price=0 ticket under `APP_ENV=test + LLM_STUB_MODE=1`). The refine stub in `backend/refine.py` calls `_apply_constraint_filters` / `apply_line_update` directly — no real LLM, no `$` per run.
+- **Stub-gated refine lane** (`refine.spec.js`, `quote_incomplete.spec.js`) — env-gated by `E2E_INCLUDE_REFINE=1` via `playwright.config.js` `testIgnore`, requires `LLM_STUB_MODE=1` against the backend. Covers refinement (direct-only constraint, English Explore-card replacement) and the unpriced/incomplete quote amber path (`backend/agents/tickets.py` appends a price=0 ticket under `APP_ENV=test + LLM_STUB_MODE=1`). The refine stub in `backend/refine.py` calls `_apply_constraint_filters` / `apply_line_update` directly — no real LLM, no `$` per run.
+- **Saved-trips lane** (`saved_trips.spec.js`) — env-gated by `E2E_INCLUDE_SAVED=1` (also needs the `LLM_STUB_MODE=1` stub to get a deterministic plan first). Exercises the enterprise-floor save/load WebSocket round-trip against the SQLite-backed persistence layer (plan → SAVE → reload → MY TRIPS → Load → restored). This is the flagship enterprise-floor feature E2E.
 
 **CI gate** (`.github/workflows/ci.yml`): the `e2e` job runs the full lane (`E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`); the `bundled-check-local` job runs `./scripts/check-local.sh` to gate the same bundled contract contributors are told to trust. Both run on every push/PR; Playwright artifacts upload on failure.
 
 ```bash
-./scripts/e2e-local.sh                                       # default lane (smoke + explain)
-E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # full deterministic lane (4 specs)
+./scripts/e2e-local.sh                                                          # default lane (smoke + explain)
+E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh                      # + stub-backed refine + incomplete quote
+E2E_INCLUDE_REFINE=1 E2E_INCLUDE_SAVED=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # full deterministic lane (5 specs / 7 cases)
 ```
 
 The stub is gated by `APP_ENV=test + LLM_STUB_MODE=1`; production with empty keys still returns the honest `LLM not configured`.
@@ -560,11 +573,11 @@ Both Vercel and Railway expose per-revision rollback in their dashboards. After 
 
 ## Roadmap
 
-- **Phase 4 (in progress)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — full 4-spec lane runs in CI (smoke + refine + unpriced/incomplete quote + explainability), bundled `check-local.sh` job, stub-backed refinement and unpriced ticket via `APP_ENV=test + LLM_STUB_MODE=1`, tool cache bypassed under `APP_ENV=test`, outbound egress monkeypatched in unit tests (done). 4.7 enterprise floor — Clerk OAuth, Postgres-backed saved trips, Sentry, /healthz + /readyz, CSP/HSTS, gitleaks, Vercel + Railway deploy config (done).
+- **Phase 4 (functional build done through the enterprise floor)** — 4.0 prototype.jsx connected to `/ws` (done). 4.1 frontend hardening (done). 4.2 currency selector + editable trip dates + grounded refine replies + opt-in debug trace (done). 4.3 selection-aware quotes + structured constraints + editable itinerary/tour cards (done). 4.4 ticket/flight/hotel explainability panel (done). 4.5 internal stabilization/file split (done). 4.6 deterministic E2E in CI — the full deterministic lane (5 spec files / 7 cases: smoke + explain + refine + unpriced/incomplete quote + saved-trips round-trip) runs with `E2E_INCLUDE_REFINE=1 E2E_INCLUDE_SAVED=1 LLM_STUB_MODE=1`, bundled `check-local.sh` job, stub-backed refinement and unpriced ticket via `APP_ENV=test + LLM_STUB_MODE=1`, tool cache bypassed under `APP_ENV=test`, outbound egress monkeypatched in unit tests (done). 4.7 enterprise floor — Clerk OAuth, Postgres-backed saved trips, Sentry, /healthz + /readyz, CSP/HSTS, gitleaks (done); Vercel + Railway deploy config is **shipped, with end-to-end gate verification still pending** (the `T-001` deterministic-E2E review and `T-DEPLOY-VERIFY` gate are in progress).
 - **Phase 5** — error budgets, per-user quotas, audit log, custom domain, mobile/PWA polish.
 
 ---
 
 ## License
 
-TBD.
+[MIT](./LICENSE) © 2026 Shawn (szding0119@gmail.com).

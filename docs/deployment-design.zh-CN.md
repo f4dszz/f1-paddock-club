@@ -1,10 +1,26 @@
 # 部署设计
 
-_这份文档是让 F1 Paddock Club 从本地 demo 迁到公开托管环境的生产就绪设计。它是设计稿，不含部署实施代码；实施放在本设计通过之后。_
+> **状态：Phase 4.7（企业级底座）已实现。** 本文最初是设计稿，设计现已落地。
+> `vercel.json`、`railway.json`、`.github/workflows/deploy-smoke.yml` 均已提交，
+> 而且企业级底座的范围比本文最初的「无账号 / 无数据库」更大：Clerk OAuth、
+> Postgres（SQLAlchemy + Alembic）、Sentry、`/healthz` + `/readyz`、CSP/HSTS 全部
+> 已发布。**权威、逐步的从零部署 runbook 以英文版为准**，见英文 README 的
+> 「Deploy from scratch (Vercel + Railway + Clerk + Sentry)」一节，以及
+> `docs/superpowers/specs/2026-05-27-enterprise-floor-design.md`。本中文文档作为
+> 前身设计依据（目标对比、CORS/Origin、token 模型、并发、磁盘状态限制）保留；
+> 下文中描述「企业级底座之前」状态的段落（例如「没有数据库」「CORS 完全放开」
+> 「不含部署实施代码」）**现已被取代，请以英文 [`deployment-design.md`](./deployment-design.md)
+> 的对应 superseded 注解为准**。数据库备份 / PITR / 恢复流程见英文版第 13 节
+> [Database backup, PITR, and restore](./deployment-design.md#13-database-backup-pitr-and-restore)。
+>
+> _部署门禁验证仍在进行：`T-001` 确定性 E2E 终审与 `T-DEPLOY-VERIFY` 门禁进行中，
+> 因此请把部署理解为「配置已就绪、端到端验证待完成」，而非完全签收。_
+
+_这份文档是让 F1 Paddock Club 从本地 demo 迁到公开托管环境的生产就绪设计。它原本是设计稿；该设计现已落地（见上方状态横幅）。_
 
 _English version: [`deployment-design.md`](./deployment-design.md)._
 
-范围**刻意收窄**。search 提供者扩展（Tavily 等）、移动端 / PWA、会话持久化、用户账号系统都不在本阶段；见 [12. 不做事项](#12-不做事项) 的显式清单。
+范围最初**刻意收窄**（search 提供者扩展、移动端 / PWA、会话持久化、用户账号系统都曾被推迟；见 [12. 不做事项](#12-不做事项)）。**注意：** 企业级底座（Phase 4.7）此后已补上用户账号（Clerk OAuth）与持久化（Postgres saved trips），因此这两项「不做事项」现已实现。
 
 ## 1. 当前运行假设
 

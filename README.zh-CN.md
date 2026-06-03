@@ -4,6 +4,15 @@
 
 简体中文 · [English](./README.md)
 
+> **⚠️ 中文文档落后于英文版。** 英文 [`README.md`](./README.md) 是权威版本。
+> Phase 4.7「企业级底座」（Clerk OAuth、Postgres 持久化 saved trips、Sentry、
+> `/healthz` + `/readyz`、CSP/HSTS、gitleaks、Vercel + Railway 部署配置）已经发布，
+> 但**完整的从零部署指南只有英文版有**：见英文 README 的
+> [Deploy from scratch (Vercel + Railway + Clerk + Sentry)](./README.md#deploy-from-scratch-vercel--railway--clerk--sentry)。
+> 部署的**配置**已提交，但端到端部署**门禁**仍在验证中（`T-001` 待 reviewer 终审、
+> `T-DEPLOY-VERIFY` 待启动），所以请把部署理解为「配置已就绪、端到端验证待完成」。
+> 数据库备份 / PITR / 恢复流程见 [`docs/deployment-design.md` 第 13 节](./docs/deployment-design.md#13-database-backup-pitr-and-restore)。
+
 ---
 
 ## 项目缘起
@@ -74,15 +83,15 @@
 
 ---
 
-## 当前进度（Phase 4 功能建设中）
+## 当前进度（Phase 4 已完成，含企业级底座）
 
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | **1 — 图 + Mock 数据** | ✅ 已完成 | LangGraph 完整接好，7 个智能体返回 mock 数据，CLI 端到端跑通，FastAPI 端点可用。 |
 | **2 — 真实大模型调用** | ✅ 已完成 | `itinerary_agent` 与 `tour_agent` 调用真实大模型（`with_structured_output`）。Provider 可切换（OpenAI/Anthropic）。无 key 时自动回退 mock。 |
 | **3 — 外部数据 + Supervisor** | ✅ 已完成 | SerpAPI（机票/酒店）、Firecrawl（门票抓取）、Supervisor 对话式调整、`/ws` 双通道路由、多币种预算（EUR/USD/CNY）、行程日期计算。详见下方。 |
-| **4 — 前端 + 信任层** | 🟡 进行中 | 接入、加固、币种/日期、selected quote、结构化约束、itinerary/tour 卡片编辑、票/航班/酒店 explainability、第一轮前后端文件拆分已完成。下一步是严格 E2E 自动化、iCal 和部署加固。 |
-| **5 — 打磨与部署** | ⏳ 待定 | 安全基线、持久化、生产部署、PWA/移动端打磨。 |
+| **4 — 前端 + 信任层 + 企业级底座** | ✅ 已完成 | 接入、加固、币种/日期、selected quote、结构化约束、itinerary/tour 卡片编辑、票/航班/酒店 explainability、前后端文件拆分、CI 内确定性 E2E，以及 4.7 **企业级底座**：Clerk OAuth、Postgres 持久化 saved trips（SQLAlchemy + Alembic）、Sentry、`/healthz` + `/readyz`、CSP/HSTS、gitleaks。部署配置（Vercel + Railway）**已提交；端到端门禁验证待完成**（见上方横幅）。 |
+| **5 — 运营与扩展** | ⏳ 待定 | error budget、按用户配额、审计日志、自定义域名、移动端/PWA 打磨。 |
 
 ### Phase 3 —— 具体做了什么
 
@@ -113,6 +122,11 @@ f1-paddock-club/
 │   ├── refine_state.py        # 工具结果 → state 应用 + 失败追踪
 │   ├── _session.py            # WebSocket 会话管理（对话记忆 + plan state 分层）
 │   ├── tools/                 # 外部数据工具（SerpAPI、Firecrawl、缓存、币种、日期、赛历）
+│   ├── db.py                  # SQLAlchemy engine/session；把 Railway 裸 DATABASE_URL 改写成 psycopg3
+│   ├── models.py              # 持久化层 ORM 模型（UserProfile、SavedTrip、SavedConstraints）
+│   ├── repository.py          # saved trips / user profiles 的 CRUD（每次调用一个工作单元）
+│   ├── observability.py       # Sentry 初始化 + 结构化 JSON 日志 + 每请求 request_id 绑定
+│   ├── alembic/               # Alembic 迁移（部署时通过 `alembic upgrade head` 执行）
 │   ├── logging_config.py      # 文件日志配置（写到 logs/）
 │   ├── requirements.txt
 │   └── .env.example           # 列出所有支持的环境变量
@@ -190,16 +204,18 @@ cd frontend && npm run e2e
 
 ### E2E 测试结构
 
-`frontend/e2e/` 四条 spec，分两个 lane：
+`frontend/e2e/` 共 **五条 spec（七个用例）**，分三个 lane：
 
 - **默认 lane**（`smoke.spec.js`、`explain.spec.js`）—— 无需 LLM key。本地 `./scripts/e2e-local.sh` 即可跑。覆盖初次规划、selection/quote、链接、日期输入回归，以及 "Why this card?" explainability 面板内容断言。
-- **Stub-gated lane**（`refine.spec.js`、`quote_incomplete.spec.js`）—— 由 `playwright.config.js` 的 `testIgnore` 把守，需 `E2E_INCLUDE_REFINE=1` 解锁，且后端要带 `LLM_STUB_MODE=1`。覆盖 refinement（direct-only 约束、英文 Explore 卡替换）和 unpriced/incomplete quote 琥珀路径（`backend/agents/tickets.py` 在 `APP_ENV=test + LLM_STUB_MODE=1` 下追加一个 `price=0` 票）。开 `LLM_STUB_MODE=1` 时，`backend/refine.py` 走测试专用确定性 stub，直接调 `_apply_constraint_filters` / `apply_line_update`，无真 LLM、零成本。
+- **Stub-gated refine lane**（`refine.spec.js`、`quote_incomplete.spec.js`）—— 由 `playwright.config.js` 的 `testIgnore` 把守，需 `E2E_INCLUDE_REFINE=1` 解锁，且后端要带 `LLM_STUB_MODE=1`。覆盖 refinement（direct-only 约束、英文 Explore 卡替换）和 unpriced/incomplete quote 琥珀路径（`backend/agents/tickets.py` 在 `APP_ENV=test + LLM_STUB_MODE=1` 下追加一个 `price=0` 票）。开 `LLM_STUB_MODE=1` 时，`backend/refine.py` 走测试专用确定性 stub，直接调 `_apply_constraint_filters` / `apply_line_update`，无真 LLM、零成本。
+- **Saved-trips lane**（`saved_trips.spec.js`）—— 由 `E2E_INCLUDE_SAVED=1` 把守（同样需要 `LLM_STUB_MODE=1` 先拿到确定性 plan）。覆盖企业级底座的 save → reload → MY TRIPS → Load 往返流程（计划 → SAVE → 刷新页面 → MY TRIPS → Load → 从 SQLite 持久化层恢复），是企业级底座旗舰功能的 E2E。
 
-**CI gate**（`.github/workflows/ci.yml`）：`e2e` job 跑全 4 条 spec（`E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`）；新增的 `bundled-check-local` job 跑 `./scripts/check-local.sh`，与开发者本地契约一致。两者每次 push/PR 都跑，失败时上传 Playwright artifacts。
+**CI gate**（`.github/workflows/ci.yml`）：`e2e` job 跑完整 lane（`E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`）；`bundled-check-local` job 跑 `./scripts/check-local.sh`，与开发者本地契约一致。两者每次 push/PR 都跑，失败时上传 Playwright artifacts。
 
 ```bash
-./scripts/e2e-local.sh                                       # 默认 lane（smoke + explain）
-E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # 全确定性 lane（4 条 spec）
+./scripts/e2e-local.sh                                                          # 默认 lane（smoke + explain）
+E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh                      # + stub-backed refine + incomplete quote
+E2E_INCLUDE_REFINE=1 E2E_INCLUDE_SAVED=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh  # 全确定性 lane（5 条 spec / 7 个用例）
 ```
 
 Stub 由 `APP_ENV=test + LLM_STUB_MODE=1` 把守；生产环境空 key 仍按 `LLM not configured` 老路兜底。
@@ -456,11 +472,11 @@ Supervisor 是真正的 agent：它读对话、自己决定要不要调搜索或
 
 ## 后续路线图
 
-- **Phase 4（进行中）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（已完成）。4.6 deterministic E2E in CI —— CI 跑全 4 条 spec lane（smoke + refine + unpriced/incomplete quote + explainability），新增 bundled `check-local.sh` job，stub-backed refinement 和 unpriced ticket 通过 `APP_ENV=test + LLM_STUB_MODE=1` 走确定性路径，tool cache 在 `APP_ENV=test` 下绕过，outbound egress 在单测中 monkeypatch（已完成）。后续：iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS、PWA 手机安装。
-- **Phase 5** —— 安全基线、错误处理、运行结果持久化、部署上线。
+- **Phase 4（已完成，含企业级底座）** —— 4.0 `prototype.jsx` 已接 `/ws`（完成）。4.1 前端加固（完成）。4.2 币种选择器 + 可编辑行程日期 + grounded refine 回复 + opt-in debug trace（完成）。4.3 selection-aware quote + structured constraints + itinerary/tour 卡片编辑（完成）。4.4 票/航班/酒店 explainability panel（完成）。4.5 内部稳定和文件拆分（完成）。4.6 deterministic E2E in CI —— 完整确定性 lane（5 条 spec / 7 个用例：smoke + explain + refine + unpriced/incomplete quote + saved-trips 往返）通过 `E2E_INCLUDE_REFINE=1 E2E_INCLUDE_SAVED=1 LLM_STUB_MODE=1` 运行，新增 bundled `check-local.sh` job，stub-backed refinement 和 unpriced ticket 通过 `APP_ENV=test + LLM_STUB_MODE=1` 走确定性路径，tool cache 在 `APP_ENV=test` 下绕过，outbound egress 在单测中 monkeypatch（完成）。4.7 企业级底座 —— Clerk OAuth、Postgres 持久化 saved trips、Sentry、`/healthz` + `/readyz`、CSP/HSTS、gitleaks（完成）；Vercel + Railway 部署配置**已提交，端到端门禁验证待完成**（`T-001` 确定性 E2E 终审与 `T-DEPLOY-VERIFY` 门禁进行中）。完整从零部署步骤见英文 README。
+- **Phase 5** —— error budget、按用户存储配额、审计日志、自定义域名、移动端/PWA 打磨。
 
 ---
 
 ## 协议
 
-待定。
+[MIT](./LICENSE) © 2026 Shawn (szding0119@gmail.com)。

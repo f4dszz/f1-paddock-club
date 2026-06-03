@@ -121,7 +121,8 @@ Run only the categories relevant to the changed code:
 
 ## Automation track
 
-The Playwright suite at `frontend/e2e/` is split into two lanes:
+The Playwright suite at `frontend/e2e/` has **five spec files (seven cases)**
+split into three lanes (default no-key, stub-gated refine, and saved-trips):
 
 - **Default no-key smoke (`smoke.spec.js`)** — runs in CI on every push and via
   `./scripts/e2e-local.sh` with provider and LLM keys empty. Covers initial
@@ -174,6 +175,22 @@ The Playwright suite at `frontend/e2e/` is split into two lanes:
     `BudgetPanel.jsx:39` 渲染琥珀色 incomplete-quote 文案，并通过
     `trace.budget_final` 把 `quote_complete:false` + `Tickets` 写入
     debug trace。spec 同时断言可视面板内容与 debug-trace metadata。
+
+- **Saved-trips 往返（`saved_trips.spec.js`）** —— 由 `E2E_INCLUDE_SAVED=1`
+  把守（`playwright.config.js` 的 `testIgnore` 在未设置该 env 时忽略它），同样
+  需要 `LLM_STUB_MODE=1` 先拿到确定性 plan。覆盖企业级底座（Phase 4.7）的
+  save → reload → MY TRIPS → Load 往返：生成 plan 后点 **SAVE**、刷新页面、
+  打开 **MY TRIPS** 列表、点 **Load**，断言计划从 SQLite 持久化层恢复（Schedule
+  卡在 `plan` zone key 下正确回填）。这是企业级底座旗舰功能的浏览器级回归。
+  本地完整跑法：
+
+  ```bash
+  E2E_INCLUDE_REFINE=1 E2E_INCLUDE_SAVED=1 LLM_STUB_MODE=1 ./scripts/e2e-local.sh
+  ```
+
+  注意：CI 的 `e2e` job 当前只设了 `E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1`，
+  尚未默认开启 `E2E_INCLUDE_SAVED=1`；让这条 lane 进 CI gate 是
+  `T-DEPLOY-VERIFY` 要确认的事项之一。
 
 This matrix remains the broader regression contract; use the automated default
 smoke on every substantial UI/backend change, then sample the manual rows that

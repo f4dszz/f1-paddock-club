@@ -1,0 +1,1016 @@
+{
+  "generated": "2026-06-02",
+  "totalRaised": 67,
+  "groundTruth": [
+    {
+      "area": "backend",
+      "commands": [
+        {
+          "cmd": "ls /Users/shawn/dev/f1-paddock-club/backend/.venv/bin/python",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "venv python exists (symlink -> python3.11). PY=/Users/shawn/dev/f1-paddock-club/backend/.venv/bin/python used for all subsequent steps."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club && PYTHONPYCACHEPREFIX=/tmp/f1pc-pyc $PY -m compileall -q backend",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "Byte-compile clean. Exit 0, no syntax errors across backend/."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club/backend && $PY -c \"import main, graph, db, auth, models, repository, observability\"",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "Import smoke passed. Exit 0. Only a non-fatal LangChainPendingDeprecationWarning from langgraph/cache/base (JsonPlusSerializer allowed_objects default). No import errors."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club && PYTHONPYCACHEPREFIX=/tmp/f1pc-pyc $PY -m unittest discover -s backend/tests -v 2>&1 | tail -60",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "Ran 131 tests in ~1.3s -> OK. 131 passed, 0 failed, 0 errored, 0 skipped (grep for skip/fail/error/expected-failure/unexpected returned empty). Across test_links, test_main_auth, test_main_trip_ws, test_outbound_egress, test_p0_trust_fixes, test_rationale, test_repository, test_security_headers."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club && $PY skills/url-normalizer/scripts/test_normalize.py 2>&1 | tail -20",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "url-normalizer skill tests: 19 PASS, 0 FAIL. Exit code 0."
+        }
+      ],
+      "failures": [],
+      "notes": "All 5 ground-truth steps RUN with real results; nothing guessed.\n\nVENV: /Users/shawn/dev/f1-paddock-club/backend/.venv/bin/python exists (symlink to python3.11), so PY = that path (not python3 fallback).\n\nSTEP 2 compileall: PASS (exit 0), used PYTHONPYCACHEPREFIX=/tmp/f1pc-pyc.\n\nSTEP 3 import smoke: PASS (exit 0) for main, graph, db, auth, models, repository, observability. ONLY warning (non-fatal, not an error): LangChainPendingDeprecationWarning from /Users/shawn/dev/f1-paddock-club/backend/.venv/lib/python3.11/site-packages/langgraph/cache/base/__init__.py:8 about JsonPlusSerializer allowed_objects default changing in a future version. No deps missing.\n\nSTEP 4 unit tests: PASS. Exact: 'Ran 131 tests in 1.305s' / 'OK'. Counts = 131 passed, 0 failed, 0 errored, 0 SKIPPED. Verified via secondary grep over full verbose output for skip/fail/error/expected failure/unexpected -> empty result. No tracebacks. Test files exercised: test_links (BookingComTests, ContractShapeTests, F1OfficialTests, FallbackForTests, GoogleFlightsTests, GoogleMapsTests, HomepageFallbackTests, UnknownProviderTests), test_main_auth.CalendarAuthTests, test_main_trip_ws.WsSaveLoadTests, test_outbound_egress.OutboundEgressTests, test_p0_trust_fixes.P0TrustFixTests, test_rationale.RationaleBuilderTests, test_repository.RepositoryTests, test_security_headers.SecurityHeadersTests.\n\nSTEP 5 skill tests (skills/url-normalizer/scripts/test_normalize.py): PASS. 19 PASS, 0 FAIL, exit code 0.\n\nNo missing dependencies detected anywhere. No import errors. No tracebacks. Total green: byte-compile OK, imports OK, 131/131 unit tests OK, 19/19 skill tests OK."
+    },
+    {
+      "area": "frontend",
+      "commands": [
+        {
+          "cmd": "node -v ; npm -v",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "node v25.9.0, npm 11.12.1. NOTE: package.json engines require node ^20.19.0 || >=22.12.0 and npm >=11 — npm satisfies, but node v25.9.0 is technically outside the declared range (no caret upper bound covers 25.x). Build still ran fine."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club/frontend && npm run build 2>&1 | tail -40",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "Build SUCCEEDS. vite v8.0.8, 422 modules transformed, built in 88ms. Output: dist/index.html 0.42 kB (gzip 0.30 kB); dist/assets/index-DfwDndjF.js 333.83 kB (gzip 100.57 kB). Single JS chunk, no code-splitting. NO console warnings or errors emitted during build (no chunk-size warning since under Vite's 500 kB default limit)."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club/frontend && npm audit --audit-level=moderate 2>&1 | tail -30",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "found 0 vulnerabilities. JSON metadata confirms: info 0, low 0, moderate 0, high 0, critical 0, total 0."
+        },
+        {
+          "cmd": "cd /Users/shawn/dev/f1-paddock-club/frontend && npx playwright test --list 2>&1 | tail -40",
+          "exitCode": 0,
+          "passed": true,
+          "summary": "Default list: 3 tests in 2 files (explain.spec.js x1, smoke.spec.js x2). The e2e/ dir actually contains 5 spec files; playwright.config.js testIgnore default-ignores refine.spec.js + quote_incomplete.spec.js (need E2E_INCLUDE_REFINE=1) and saved_trips.spec.js (needs E2E_INCLUDE_SAVED=1). With both flags set: 7 tests in 5 files."
+        },
+        {
+          "cmd": "grep scripts/config for lint/typecheck (package.json + eslint/tsconfig search)",
+          "exitCode": 0,
+          "passed": false,
+          "summary": "NO lint or typecheck script. package.json scripts are only: dev, build, preview, e2e. No eslint config, no tsconfig, no prettier config, and no .ts/.tsx files anywhere (src/components/domain are all JS/JSX). Project has zero static-analysis gate on the frontend."
+        }
+      ],
+      "failures": [
+        "No lint/typecheck script or config exists in the frontend (package.json scripts: dev, build, preview, e2e only). No eslint/tsconfig/prettier config files present; codebase is plain JS/JSX with no type checking. There is no static-analysis gate for the frontend.",
+        "Node version mismatch: installed node v25.9.0 falls outside package.json engines range (^20.19.0 || >=22.12.0 has no upper-bound caret for 25.x). npm 11.12.1 satisfies >=11. Build worked regardless, but engines field is not honored by the local environment."
+      ],
+      "notes": "All commands were actually executed inside /Users/shawn/dev/f1-paddock-club/frontend (node_modules present, did not run npm ci). RESULTS: (1) Build SUCCEEDS cleanly — vite 8.0.8, 422 modules, 88ms, no warnings/errors. (2) Bundle: single JS chunk dist/assets/index-DfwDndjF.js = 333.83 kB raw / 100.57 kB gzip; index.html 0.42 kB. No chunk-splitting; under Vite's 500 kB warn threshold so no size warning. (3) Vulns: 0 across all severities (info/low/moderate/high/critical all 0). (4) E2E cases: 3 collected by default (2 spec files); 7 total across 5 spec files (e2e/explain, smoke, refine, quote_incomplete, saved_trips) — 3 files are gated behind opt-in env flags E2E_INCLUDE_REFINE=1 and E2E_INCLUDE_SAVED=1 per playwright.config.js testIgnore. Note: --list does NOT run tests; actual pass/fail not verified per task instructions. (5) No lint/typecheck script or config — frontend has no static-analysis gate; pure JS/JSX, no TypeScript. Relevant files: /Users/shawn/dev/f1-paddock-club/frontend/package.json, /Users/shawn/dev/f1-paddock-club/frontend/playwright.config.js, /Users/shawn/dev/f1-paddock-club/frontend/dist/assets/index-DfwDndjF.js, /Users/shawn/dev/f1-paddock-club/frontend/e2e/.\""
+    },
+    {
+      "area": "Git & File Hygiene",
+      "commands": [
+        {
+          "cmd": "git status -sb ; git log --oneline -5",
+          "passed": true,
+          "summary": "Branch main, in sync with origin/main. Working tree clean except one untracked dir: docs/evals/. Last 5 commits are fix/docs commits (deploy, security, correctness, frontend, enterprise-floor checklist)."
+        },
+        {
+          "cmd": "git ls-files | grep -iE '\\.(log|sqlite3?|db|DS_Store)$|/logs/|/dist/|__pycache__|\\.pyc$|node_modules|test-results|playwright-report'",
+          "passed": true,
+          "summary": "Zero matches (exit 1). No build/runtime artifacts are tracked."
+        },
+        {
+          "cmd": "cat .gitignore",
+          "passed": true,
+          "summary": "Comprehensive. Covers all required patterns: backend/logs/ (L30), *.py[cod]/__pycache__ (L1-4), .DS_Store (L19), dist/ (L43), frontend/test-results/ (L45), frontend/playwright-report/ (L46), .venv/ (L7), .env + .env.local + .env.*.local (L12-14), .harness/ (L27), node_modules/ (L40), backend/_dev.sqlite3 + backend/_test*.sqlite3 (L36-37)."
+        },
+        {
+          "cmd": "git status --porcelain | grep '^??'",
+          "passed": true,
+          "summary": "One untracked entry: docs/evals/ (10 files, 52K, all markdown eval docs/golden cases/run notes). No DB/log/binary inside. Either commit it or add to ignore depending on intent; not a hygiene violation."
+        },
+        {
+          "cmd": "git ls-files | xargs -I{} ls -la {} | sort -k5 -n -r | head -15",
+          "passed": true,
+          "summary": "Largest tracked files are all text: docs/superpowers/plans/2026-05-27-enterprise-floor.md (71KB), frontend/package-lock.json (40KB), backend/refine.py (37KB), backend/main.py (33KB). No oversized binaries or generated blobs tracked."
+        },
+        {
+          "cmd": "git check-ignore -v .harness ; git check-ignore -v backend/_dev.sqlite3 ; git ls-files | grep sqlite ; ls backend/logs/",
+          "passed": true,
+          "summary": ".harness ignored via .gitignore:27. backend/_dev.sqlite3 ignored via .gitignore:36 and NOT tracked. No sqlite files tracked. 13 backend_*.log files exist on disk in backend/logs/ but all are gitignored (.gitignore:30) — none committed."
+        },
+        {
+          "cmd": "git ls-files | grep -E '\\.env$'",
+          "passed": true,
+          "summary": "No tracked .env (exit 1). Only backend/.env.example and frontend/.env.example are tracked, which is correct. No secret files committed."
+        }
+      ],
+      "failures": [],
+      "notes": "Git & file hygiene is CLEAN — no concrete hygiene problems found. All ground-truth checks pass.\\n\\nKey facts:\\n- No tracked artifacts (logs, sqlite/db, .DS_Store, dist, __pycache__, .pyc, node_modules, test-results, playwright-report). Artifact grep returns zero matches.\\n- .gitignore (/Users/shawn/dev/f1-paddock-club/.gitignore) is thorough and covers every required pattern (verified each via git check-ignore where applicable).\\n- .harness/ correctly ignored (line 27); confirms harness state stays gitignored as expected.\\n- backend/_dev.sqlite3 correctly ignored (line 36) and not tracked.\\n- backend/logs/ ignored (line 30); 13 backend_YYYY-MM-DD.log files (largest ~132KB, 2026-05-27) sit on disk but NONE are committed — good.\\n- No committed secrets: only *.env.example tracked; no real .env tracked or even present on disk.\\n- Largest tracked files are all human-readable text/markdown/source; nothing bloated.\\n\\nMinor / non-blocking observations (not hygiene violations):\\n1. docs/evals/ is untracked (10 markdown files, 52K, incl. golden/ and runs/ subdirs). It is neither committed nor ignored — decide intent: commit it (looks like intentional eval harness docs referenced by the project) or add an ignore rule. Currently it is the ONLY thing dirtying the working tree.\\n2. .gitignore comment on line 39 says node ignores are 'for future Next.js migration' but the project is React+Vite — comment is stale/misleading though the rules themselves are still valid and useful.\\n\\nRelevant absolute paths:\\n- /Users/shawn/dev/f1-paddock-club/.gitignore\\n- /Users/shawn/dev/f1-paddock-club/backend/logs/ (untracked, ignored — 13 log files)\\n- /Users/shawn/dev/f1-paddock-club/docs/evals/ (untracked, not ignored)\\n- /Users/shawn/dev/f1-paddock-club/backend/.env.example, /Users/shawn/dev/f1-paddock-club/frontend/.env.example (tracked, correct)"
+    }
+  ],
+  "count": 74,
+  "findings": [
+    {
+      "id": "backend-completeness-2",
+      "source": "audit",
+      "dimension": "backend-completeness",
+      "severity": "high",
+      "title": "LLM client has no request timeout or retry — refine supervisor call can hang a worker thread indefinitely",
+      "whatExists": "llm.py builds ChatOpenAI/ChatAnthropic clients. The search tools (flights/hotels/tickets) bound their provider calls with query_parallel(timeout=20/25). main.py bounds full plans with a semaphore + PLAN_ACQUIRE_TIMEOUT and runs them via asyncio.to_thread.",
+      "whatsMissing": "get_llm() constructs the chat models with only model/temperature/max_tokens/base_url — no `timeout`/`request_timeout` and no `max_retries` (llm.py:80-89 for OpenAI, 105-114 for Anthropic). The agent LLM calls (itinerary/tour structured_output.invoke) and especially refine.py's supervisor.invoke (refine.py:772) are NOT wrapped by query_parallel's wall-clock timeout. refine_plan's create_react_agent + supervisor.invoke has no internal timeout; if the provider stalls, the call blocks the asyncio.to_thread worker for as long as the underlying HTTP client's default allows (langchain/httpx defaults can be very long or effectively unbounded behind a proxy). With MAX_CONCURRENT_PLANS workers, a few stalled LLM calls can exhaust the pool. _handle_chat catches exceptions but cannot interrupt a blocked synchronous call.",
+      "evidence": "backend/llm.py:80-89 and backend/llm.py:105-114 (kwargs build with no timeout/max_retries); backend/refine.py:772 (`result = supervisor.invoke({...})` with no timeout); agents/itinerary.py:133 and agents/tour.py:112 (structured.invoke with no timeout).",
+      "recommendation": "Add an explicit `timeout=` (e.g. 30-60s) and `max_retries=` to both ChatOpenAI and ChatAnthropic in llm.py, and/or run supervisor.invoke under a hard deadline (e.g. asyncio.wait_for around the to_thread, or a concurrent.futures timeout). This bounds tail latency and prevents worker-pool exhaustion under provider degradation.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "backend-completeness-3",
+      "source": "audit",
+      "dimension": "backend-completeness",
+      "severity": "low",
+      "title": "saved_constraints table and its repository CRUD are dead code (no callers)",
+      "whatExists": "models.py defines the SavedConstraints ORM model (table saved_constraints) with a user relationship; repository.py implements upsert_constraints() and get_constraints(); the table is created by the Alembic migration. The UserProfile.constraints relationship is declared.",
+      "whatsMissing": "Nothing reads or writes constraints through this path. grep for upsert_constraints / get_constraints / SavedConstraints across backend (excluding models.py and repository.py) returns zero hits — no WS handler, no HTTP endpoint, and no test uses them. The 'durable per-user default constraints' feature the table implies is unfinished: active_constraints are only persisted inside each SavedTrip row (main.py _save_trip_sync), never as reusable user defaults. So a whole model + two CRUD functions + a DB table ship with no behavior behind them.",
+      "evidence": "backend/models.py:99-110 (SavedConstraints model); backend/repository.py:99-114 (upsert_constraints/get_constraints); backend/alembic/versions/36ee394e0625_init_enterprise_floor.py:36-42 (table created); grep across backend for callers returned empty (only the defs themselves).",
+      "recommendation": "Either wire it (add load/save-default-constraints WS messages or merge SavedConstraints.defaults into new plans on session start) or remove the unused model/CRUD/table+migration to avoid carrying schema and code that imply a capability the app does not have.",
+      "verdict": "partial"
+    },
+    {
+      "id": "backend-completeness-4",
+      "source": "audit",
+      "dimension": "backend-completeness",
+      "severity": "medium",
+      "title": "CI runs backend tests without a database or alembic upgrade, and has no migration/model-drift check",
+      "whatExists": "There is exactly one Alembic migration (36ee394e0625_init_enterprise_floor.py) and it matches models.py (user_profiles, saved_trips with the composite index, saved_constraints). railway.json runs `alembic upgrade head` in the deploy start command. db.py falls back to a SQLite file locally and tests use rebind_for_tests + Base.metadata.create_all.",
+      "whatsMissing": "The CI backend job (.github/workflows/ci.yml:60-86) installs deps, byte-compiles, and runs `python -m unittest discover -s tests` with NO Postgres service container and NO `alembic upgrade head` step. So migrations are never executed in CI against a real Postgres — a broken migration (bad SQL, JSONB/UUID dialect issue, or missing migration after a model change) would not be caught until a live Railway deploy. There is also no autogenerate-drift guard (e.g. `alembic check` / `alembic revision --autogenerate` diff), even though the enterprise-floor plan (docs/superpowers/plans/2026-05-27-enterprise-floor.md:53) explicitly called for CI to 'add db service, alembic check'. Because nothing in app boot calls create_all/upgrade, a future model edit without a matching migration would pass all 131 unit tests (they create_all from current models) yet break production where only migrations run.",
+      "evidence": ".github/workflows/ci.yml:60-86 (backend job: no services:, no alembic step); railway.json:8 (only place alembic upgrade runs — at deploy time); docs/superpowers/plans/2026-05-27-enterprise-floor.md:53 ('ci.yml MODIFY (add db service, alembic check ...)') vs actual ci.yml which has neither; tests create schema via Base.metadata.create_all (tests/test_repository.py:30, tests/test_main_trip_ws.py:29) not via migrations.",
+      "recommendation": "Add a Postgres `services:` block to the CI backend (or a dedicated migration) job and run `alembic upgrade head` against it, plus an `alembic check` (or autogenerate-diff that fails on non-empty output) so model/migration drift and broken migrations are caught before deploy rather than on the live database.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "backend-completeness-5",
+      "source": "audit",
+      "dimension": "backend-completeness",
+      "severity": "low",
+      "title": "slowapi is a declared-but-unused dependency",
+      "whatExists": "requirements.txt pins slowapi>=0.1.9. main.py implements rate limiting entirely with a custom in-process IPRateLimiter (sliding window) for both HTTP and WS.",
+      "whatsMissing": "slowapi is never imported or used anywhere in application code (only the in-process IPRateLimiter is). It ships in the deploy image for nothing, and its presence misleads readers into thinking the production-grade slowapi limiter is in use when the actual limiter is a single-process deque that does not work correctly across multiple uvicorn workers.",
+      "evidence": "backend/requirements.txt:19 (`slowapi>=0.1.9`); grep for slowapi/Limiter/@limit in backend app code returns only main.py's custom IPRateLimiter (main.py:100-123,154,466) — no slowapi import.",
+      "recommendation": "Either adopt slowapi (or a shared store like Redis) so rate limiting survives multiple workers/instances, or drop slowapi from requirements.txt and document that the limiter is single-process demo-grade only.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "backend-completeness-6",
+      "source": "audit",
+      "dimension": "backend-completeness",
+      "severity": "low",
+      "title": "Unused import and stale code-comment markers in backend",
+      "whatExists": "main.py imports fastapi.Header; auth.py is where Header is actually used. Several modules carry phase-era TODO/aspirational comments.",
+      "whatsMissing": "main.py:36 imports Header but never references it (auth.require_user uses Header internally). Stale markers that overstate/understate state: tools/_race_calendar.py:45 ('TODO: enrich with local clock times once known'), agents/tickets.py:62-63 docstring still says 'parallel Firecrawl + Bing' though the code uses Firecrawl + SerpAPI Google Search (no Bing), and agents/itinerary.py/transport.py reference 'Phase 2/Phase 3' which is internal churn noise. These are cosmetic but accumulate confusion about what is/isn't wired (cf. the search_web docstring lie in finding #1).",
+      "evidence": "backend/main.py:36 (`Header` imported, unused — grep shows no other reference in main.py); backend/tools/_race_calendar.py:45 (TODO comment); backend/agents/tickets.py:62-63 (docstring says 'Bing' but code calls SerpAPI google_search).",
+      "recommendation": "Remove the unused Header import and reconcile the stale docstrings (Bing→Google Search, drop or resolve the _race_calendar TODO). Low priority but cheap; keeps comments trustworthy.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-1",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Cross-currency budget math (USD/CNY EUR-pivot) is never tested — every budget test uses EUR only",
+      "whatExists": "tools/_currency.py defines to_eur/from_eur/convert with non-trivial rates (USD 1.08, CNY 7.85, _currency.py:21-25); tools/recompute.py imports and uses convert+from_eur to convert every price source_currency→target via EUR pivot (recompute.py:23,54-59,283); refine.py has _convert_eur_to (refine.py:605). test_feature_completion.py exercises recompute/quote math extensively.",
+      "whatsMissing": "No test feeds a non-EUR state.currency and asserts the converted budget total. All budget/recompute fixtures hard-code currency='EUR' (test_feature_completion.py:18,23-33,63). The only USD references in tests are rationale display strings (test_rationale.py:83,93) with no math assertion. So the EUR-pivot conversion (the rates and convert() round-trip) is dead in the suite — a wrong rate or inverted division would not be caught.",
+      "evidence": "backend/tools/_currency.py:21-25 (rates), backend/tools/recompute.py:23,54-59,283 (uses convert/from_eur); all budget tests EUR-only: backend/tests/test_feature_completion.py:18,23-33,63; grep for USD/CNY in tests returns only display strings test_rationale.py:83,93. tools/_currency.py has zero direct unit test (no test imports to_eur/from_eur/convert/supported_currencies).",
+      "recommendation": "Add unit tests for _currency.to_eur/from_eur/convert (round-trip, unknown-currency fail-open at _currency.py:42-44) AND an integration test running recompute_budget with state.currency='USD' and 'CNY' asserting the converted total against hand-computed expected amounts.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-2",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Rate limiting (IPRateLimiter / HTTP 429 / WS 1008 close) has zero tests",
+      "whatExists": "main.py implements IPRateLimiter sliding-window (main.py:100-119), _http_rate_limiter/_ws_connect_limiter (122-123), _check_http_rate_limit raising 429 (151-155), the dep wired before require_user on /plan (353) and /quote-equivalent (571 area), and WS connect limiter close(1008) (466-468). _trusted_forwarded_ip picks the rightmost XFF hop to prevent spoofed-IP bucket rotation (126-134).",
+      "whatsMissing": "No test exercises the limiter at all: no test references IPRateLimiter, 429, .allow(), _check_http_rate_limit, _ws_connect_limiter, _trusted_forwarded_ip, or 'Too many requests'. The window-expiry eviction (main.py:114-115), the max<=0 disabled path (109-110), the 429 raise, the WS 1008 close, and the XFF anti-spoof selection are all untested. This is a security/abuse-control control with no regression guard.",
+      "evidence": "backend/main.py:100-119 (IPRateLimiter), 151-155 (429), 466-468 (WS 1008), 126-134 (_trusted_forwarded_ip); grep 'IPRateLimiter|429|_check_http_rate|_ws_connect_limiter|Too many requests|.allow(' over backend/tests/ returns zero matches.",
+      "recommendation": "Add unit tests: limiter allows up to N then denies, window eviction restores capacity, max<=0 disables; integration test hammering /plan with TestClient to get a 429; WS test asserting close code 1008 on connect flood; unit test of _trusted_forwarded_ip rightmost-hop selection.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-3",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Parallel query / degradation / timeout framework (tools/_parallel.py) has zero tests",
+      "whatExists": "tools/_parallel.py provides query_parallel (ThreadPoolExecutor + as_completed with global timeout) and DegradationReport (any_failed/all_failed/succeeded/failed/summary). It has carefully-commented behavior: empty-source soft-failure (line 150), per-result _source/_degraded tagging only for dicts (159-162), and a global-timeout catch that must KEEP already-completed results instead of crashing into full-mock fallback (143-176).",
+      "whatsMissing": "No test imports _parallel or references query_parallel/DegradationReport. The most subtle and dangerous path — FuturesTimeout caught at line 171 so partial results survive and unfinished sources get marked 'timeout' (179-183) — is completely untested, as are: a source raising (167-170), a source returning empty (148-151), all-sources-failed, and the str-result pass-through (159). A regression here silently drops real provider data into mock fallback.",
+      "evidence": "backend/tools/_parallel.py:100-188 (query_parallel + timeout handling 143-183); grep '_parallel|query_parallel|DegradationReport|as_completed|asyncio.gather' over backend/tests/ returns zero matches.",
+      "recommendation": "Add unit tests with fake callables: success+empty+raising mix asserting merged results and report fields; a deliberately slow callable to trigger the global-timeout branch and assert completed results are kept and slow source marked timeout; DegradationReport property/summary tests.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-4",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Graph orchestration (build_graph wiring, budget retry loop) is untested",
+      "whatExists": "graph.py defines build_graph with the parallel DAG and the conditional budget retry loop via should_retry_budget → increment_retry → hotel_agent (graph.py:62-110) and plan_trip (115-183). budget retry exhaustion marking is tested in isolation (test_p0_trust_fixes.py:209 with retry_count=2) and individual agents are tested.",
+      "whatsMissing": "No test invokes build_graph or asserts the orchestration: the parallel tiers, the converge-to-budget edge, and especially the conditional retry loop (does over-budget actually route back through increment_retry→hotel and eventually terminate?). plan_trip is called only by test_outbound_egress.py:127 which asserts zero outbound sockets — an egress test, not an orchestration/outcome test. should_retry_budget and increment_retry are never called directly. A broken edge or infinite-retry condition would not be caught.",
+      "evidence": "backend/graph.py:62-110 (build_graph + conditional edges 98-108), 115-183 (plan_trip); grep 'build_graph|should_retry_budget|increment_retry' over backend/tests/ shows only test_p0_trust_fixes.py:215 retry_count fixture and test_outbound_egress.py:105-127 egress-only plan_trip call.",
+      "recommendation": "Add an integration test that runs plan_trip (stub/mock agents) with a budget low enough to force at least one retry, asserting retry_count increments, the loop terminates, and the final budget_summary shape is correct; plus direct unit tests of should_retry_budget for done vs retry_hotel branches.",
+      "verdict": "partial"
+    },
+    {
+      "id": "test-coverage-5",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "/plan HTTP route + ServerBusyError/503 semaphore concurrency are untested",
+      "whatExists": "main.py POST /plan validates via _validate_plan_payload (400 on ValueError), runs _run_plan_with_limit, maps ServerBusyError→503 (main.py:349-372). _run_plan_with_limit acquires _plan_semaphore with asyncio.timeout(_PLAN_ACQUIRE_TIMEOUT_SECONDS) raising ServerBusyError on contention (172-181). _validate_plan_payload is unit-tested directly (PlanValidationTests, test_feature_completion.py:387-406) and TestClient is used for /api/calendar, /healthz, security headers.",
+      "whatsMissing": "No test issues client.post('/plan'): the HTTP route's 400-on-invalid path, the happy path (auth+rate-limit Depends stack + 200 snapshot), and the 503-on-ServerBusyError path are untested. The semaphore acquire-timeout concurrency logic in _run_plan_with_limit (the only place ServerBusyError is raised) has no test. grep shows no '/plan' POST and no 'ServerBusy'/'503' tied to /plan in tests.",
+      "evidence": "backend/main.py:349-372 (/plan route, 503 at 368-369), 172-181 (_run_plan_with_limit semaphore/timeout); grep over backend/tests shows TestClient used only for /api/calendar (test_main_auth.py:33-53), /healthz (test_health.py), headers (test_security_headers.py); no client.post('/plan'), no ServerBusy reference.",
+      "recommendation": "Add TestClient tests for /plan: invalid currency→400, happy path→200 with snapshot shape, and a test that pre-acquires the semaphore (or sets _PLAN_ACQUIRE_TIMEOUT low) to force ServerBusyError→503.",
+      "verdict": "partial"
+    },
+    {
+      "id": "test-coverage-6",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "WS chat/refine flow (_handle_chat) and most refine.py paths are untested",
+      "whatExists": "refine.py helpers are partially tested: _intent_max_stops/_intent_allowed_brands (test_p0_trust_fixes.py:63,132), _build_tools and tool factories (test_feature_completion.py:231-339), _apply_constraint_filters/apply_line_update (test_audit_fixes.py:141,188). The refine stub drives the gated E2E. WS quote handler has negative tests (QuoteWebSocketTests).",
+      "whatsMissing": "_handle_chat (the WS refine entry, main.py:593-657) has no test: its copy-on-write rollback discipline (deepcopy at 622, commit-only-on-success at 640), the ValueError→'Refine failed' surface (627-630), and the generic Exception→'Internal chat error, plan unchanged' path (631-637) are all untested. refine_plan itself (refine.py:691) and _refine_plan_stub (618), _format_state/_format_state_impl (471/488), _convert_eur_to (605), _unapplied_change_reply (126) have no direct unit tests. refine_reply.py and refine_state.py are not referenced by any test at all.",
+      "evidence": "backend/main.py:593-657 (_handle_chat error/rollback paths); grep '_handle_chat' over backend/tests returns zero; grep 'refine_reply|refine_state' over backend/tests returns zero; refine.py:605 _convert_eur_to, 618 _refine_plan_stub, 691 refine_plan have no direct test reference.",
+      "recommendation": "Add async _handle_chat tests with a DummyWS: refine_plan patched to raise ValueError (assert 'Refine failed' + session unchanged) and to raise a generic Exception (assert 'Internal chat error' + plan unchanged), plus a success path asserting session commit + reply/result/trace/done sequence. Add direct unit tests for refine._convert_eur_to and the refine_reply/refine_state helpers.",
+      "verdict": "partial"
+    },
+    {
+      "id": "test-coverage-7",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "saved_trips E2E never runs in CI (E2E_INCLUDE_SAVED never set)",
+      "whatExists": "frontend/e2e/saved_trips.spec.js exercises the full save→reload→list→load round-trip via the SavedTrips UI against the persistence layer. The backend WS persistence handlers do have unit coverage via test_main_trip_ws.py.",
+      "whatsMissing": "playwright.config.js default-ignores saved_trips.spec.js unless E2E_INCLUDE_SAVED=1 (playwright.config.js testIgnore block). CI's e2e job sets only 'E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1' (ci.yml:157) and the job name even enumerates 'smoke + refine + quote_incomplete + explain' — omitting saved_trips. scripts/e2e-local.sh never defaults E2E_INCLUDE_SAVED either. So the only browser-level test of the save/load user journey is dead in the automated gate; a frontend regression in SavedTrips wiring would ship.",
+      "evidence": "frontend/playwright.config.js testIgnore pushes '**/saved_trips.spec.js' unless E2E_INCLUDE_SAVED==='1'; .github/workflows/ci.yml:156-157 runs with only E2E_INCLUDE_REFINE=1; scripts/e2e-local.sh:36-53 forwards LLM_STUB_MODE but never sets E2E_INCLUDE_SAVED; ground-truth confirms 'With both flags set: 7 tests in 5 files' but default/CI runs fewer.",
+      "recommendation": "Either add E2E_INCLUDE_SAVED=1 to the CI e2e step (with a SQLite-backed run) so the save/load journey is gated, or document explicitly why it is excluded; update the job name to reflect what actually runs.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-8",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Frontend has no JS unit-test runner; domain logic (date validation, result transform) is untested except incidentally via E2E",
+      "whatExists": "frontend/domain/ contains real pure logic: tripDates.js validateTripDates (edge cases: partial dates, bad format, day-trip rejection, >30 nights, arrive-after-race warnings — tripDates.js:30-49), transformResults.js (tag filtering, price formatting, regex parsing of itinerary/tour lines — transformResults.js:1-86), display.js label/constraint helpers. Playwright E2E covers some of this indirectly (smoke.spec.js date inputs, explain panel).",
+      "whatsMissing": "package.json scripts are only dev/build/preview/e2e — no vitest/jest, no @testing-library, no 'test' script (confirmed by ground-truth: 'No lint/typecheck script'; no unit runner). So none of the domain pure functions have unit tests; their many branches (validateTripDates warning/error permutations, transformResults regex fallbacks at lines 71/79-81, useBackendToken hook) are only ever hit by whatever the 5 E2E specs happen to render. Edge cases like invalid ISO dates, 0-night trips, unparseable tour lines have no direct assertion.",
+      "evidence": "frontend/package.json scripts block (dev/build/preview/e2e only; no test runner); frontend/domain/tripDates.js:30-49 (branchy validation), transformResults.js:67-84 (regex fallbacks), display.js:100-109; frontend/hooks/useBackendToken.js exists with no test. Ground-truth frontend area: 'NO lint or typecheck script ... pure JS/JSX'.",
+      "recommendation": "Add Vitest with unit tests for domain/tripDates.validateTripDates (all error+warning branches), domain/transformResults (priced/unpriced, INFO/LOCAL skipping, regex fallback), and domain/display helpers; wire a 'test' script and add it to CI.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-9",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Date/trip-date utilities (_date_util.py, _trip_dates.py) have no direct unit tests",
+      "whatExists": "tools/_date_util.py (normalize_date over 9 formats, compute_checkout) and tools/_trip_dates.py (validate_trip_dates hard gate, compute_trip_dates legacy+explicit modes, trip_nights) are core boundary utilities used throughout agents/recompute. validate_trip_dates semantics are partially asserted indirectly via test_feature_completion.py:387 (same-day-trip rejection through plan validation).",
+      "whatsMissing": "No test imports _date_util or _trip_dates directly: normalize_date's multi-format parsing + no-year default-year fill (_date_util.py:63-74) and the unparseable pass-through (73-74) are untested; compute_checkout's bad-checkin→'' path (86-87) untested; compute_trip_dates legacy 'Friday→race+extra' math (128-134), explicit-date mode (116-125), and the unparseable-gp_date safe skeleton (111-113) are untested; trip_nights defensive floor (162-166) untested. These feed budget night-counts and API date params, so off-by-one or format regressions would be silent.",
+      "evidence": "backend/tools/_date_util.py:41-87, backend/tools/_trip_dates.py:37-166; grep '_date_util|normalize_date|compute_checkout|_trip_dates|validate_trip_dates|compute_trip_dates|trip_nights' over backend/tests returns zero direct imports (only the incidental plan-validation rejection in test_feature_completion.py:387).",
+      "recommendation": "Add unit tests for normalize_date (each format, no-year fill, garbage pass-through), compute_checkout, validate_trip_dates (both-empty OK, one-empty error, bad-format, day-trip, >30 nights), and compute_trip_dates legacy vs explicit modes + unparseable fallback + trip_nights floor.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-10",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "low",
+      "title": "Multi-tenant persistence isolation (_persistence_blocked demo-user collapse) is untested",
+      "whatExists": "main.py _persistence_blocked blocks the shared 'demo-user' sentinel from owning persisted trips on non-local deploys, so demo visitors don't collapse into one account and read/delete each other's trips (main.py:737-743). repository.py has good owner-scoping tests (test_repository.py:get_trip_scoped_to_user, delete_trip_only_owner). WS save/list/load round-trip is tested as a single demo-user (test_main_trip_ws.py).",
+      "whatsMissing": "The non-local guard itself is never tested: no test sets a non-local env and asserts that save_trip/load_trip/list_trips are blocked for user_id='demo-user' (the multi-tenant data-leak protection). All WS persistence tests run under APP_ENV=test (local), where _persistence_blocked returns False, so the True branch (the actual security control) has no coverage.",
+      "evidence": "backend/main.py:737-743 (_persistence_blocked); backend/tests/test_main_trip_ws.py:41 always APP_ENV=test (local); grep '_persistence_blocked|persistence' over backend/tests returns zero.",
+      "recommendation": "Add a WS/handler test under a non-local env (e.g. APP_ENV=production with auth configured) asserting that a demo-user session is refused persistence (save/list/load blocked), and that a real clerk user is allowed and scoped.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-11",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "low",
+      "title": "WebSocket connection gates (origin allowlist, auth close, oversized/invalid-JSON, unknown type) lack negative tests",
+      "whatExists": "websocket_session enforces connect rate-limit close(1008), origin allowlist close(1008), auth close(1008) on AuthError, oversized-message reject, invalid-JSON reject, and unknown-type error (main.py:465-540). test_main_trip_ws.py connects a WS and exercises save/list/load/delete handlers; test_main_auth.py covers /api/calendar auth (HTTP).",
+      "whatsMissing": "No test drives the WS connect-time gates: _ws_origin_allowed rejection (main.py:469-471, 165-169), the require_user_for_ws AuthError→close(1008) path (473-476), MAX_WS_MESSAGE_SIZE oversized reject (487-489), invalid-JSON reject (491-495), and unknown-type error (526-530) are untested. The audit_fixes suite tests one WS auth fail-closed case (test_audit_fixes.py: 'non_local_without_any_auth_config_closes_ws') but origin gate, oversized, and bad-JSON branches are not covered.",
+      "evidence": "backend/main.py:465-540 (WS gates), 165-169 (_ws_origin_allowed); test_main_trip_ws.py connects WS but only sends valid envelopes; grep for origin/oversize/Invalid JSON over WS tests is absent except the single audit_fixes WS-close auth case.",
+      "recommendation": "Add WS tests: disallowed Origin → connection closed 1008; oversized message → 'Message too large'; non-JSON text → 'Invalid JSON'; unknown msg type → error. Use TestClient.websocket_connect with appropriate headers/env.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-12",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "medium",
+      "title": "Search tools lack provider-error/timeout negative tests (only filter logic + zero-egress covered)",
+      "whatExists": "search_flights/search_hotels have targeted post-filter tests (direct-only, brand strictness, no-fallback-on-strict) in test_p0_trust_fixes.py:34-186, and test_outbound_egress.py asserts zero outbound sockets when keys are empty. search_tickets is referenced only by the egress test.",
+      "whatsMissing": "No test simulates a provider raising/timing out and asserts graceful degradation behavior of the search tool itself (e.g. SerpAPI raising, returning a 401/429-shaped payload, or partial-source failure flowing into DegradationReport). The error-handling/fallback branches inside search_flights.py/search_hotels.py/search_tickets.py (beyond the strict post-filter) and search_web.py (no test reference at all) are untested. Combined with finding test-coverage-3 (_parallel untested), the whole degraded-provider path is a blind spot.",
+      "evidence": "backend/tests/test_p0_trust_fixes.py:34-186 (filter logic only, via __wrapped__ with patched _try_serpapi_* returning canned data, not raising); test_outbound_egress.py:91-93 (egress only); grep 'search_web' over backend/tests returns zero; search_tickets only referenced in egress test.",
+      "recommendation": "Add tests patching the SerpAPI/Firecrawl call to raise and to return empty, asserting the tool returns mock fallback with the correct _source/_degraded flags and does not crash; add at least one direct test for search_web.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "test-coverage-13",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "low",
+      "title": "Infra modules (llm.py, observability.py, logging_config.py, agents/_shared.py) have no direct tests",
+      "whatExists": "observability.py is installed via install_observability and its request-id header behavior is asserted indirectly by test_health.py (request_id header echo, test_health.py: test_response_carries/echoes_request_id). security_headers.py and health.py have dedicated tests.",
+      "whatsMissing": "llm.py (model client construction / no-key behavior) has no direct test; logging_config.setup_logging has no test; agents/_shared.py helpers (link-metadata defaults etc.) are not referenced by any test by name; observability.py beyond the request-id header (e.g. Sentry init gating) is untested. These are lower-risk (config/wiring) but represent uncovered surface that could regress silently (e.g. Sentry accidentally initialized in local).",
+      "evidence": "grep 'import llm|logging_config|_shared|observability' over backend/tests shows only false-positive substring hits (test_feature_completion.py:477, test_f1_domain.py:34) — no real import of llm/logging_config/_shared; observability only indirectly via test_health.py request-id assertions.",
+      "recommendation": "Add light unit tests: llm client selection with/without keys; setup_logging returns a path and is idempotent; observability does NOT initialize Sentry when DSN unset in local; _shared default-metadata helper.",
+      "verdict": "partial"
+    },
+    {
+      "id": "test-coverage-14",
+      "source": "audit",
+      "dimension": "test-coverage",
+      "severity": "low",
+      "title": "_handle_quote/_handle_plan happy and exception-fallback paths under-tested (negative-only)",
+      "whatExists": "QuoteWebSocketTests cover _handle_quote non-mutation, before-plan error, and a thorough invalid-selection-shape matrix (test_feature_completion.py:409-475); _handle_plan has a non-object-payload rejection test (477-493).",
+      "whatsMissing": "_handle_quote's generic Exception fallback ('Quote recomputation failed. Your plan is unchanged.', main.py:682-688) is not triggered by any test (only the ValueError path via invalid selections is). _handle_plan has no success-path test (no test asserts a valid plan request produces result/trace/done over WS) — only the rejection branch is covered. _build_trace_events (main.py:380-441) is only exercised indirectly via the quote budget_final event, not its state_apply content-diff or tool_fail branches.",
+      "evidence": "backend/main.py:682-688 (_handle_quote generic-exception path), 543-591 (_handle_plan success path), 380-441 (_build_trace_events); tests cover only negatives: test_feature_completion.py:409-493.",
+      "recommendation": "Add a _handle_quote test with recompute_budget patched to raise a non-ValueError asserting the 'Quote recomputation failed' error; a _handle_plan success-path test (stubbed plan) asserting result+trace+done sequence; direct _build_trace_events unit tests for state_apply (content diff) and tool_fail branches.",
+      "verdict": "partial"
+    },
+    {
+      "id": "frontend-completeness-1",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "medium",
+      "title": "No React error boundary — Sentry is initialized but never used to catch render errors; any component throw blanks the entire app",
+      "whatExists": "Sentry.init() runs at startup in src/main.jsx:11-17 when VITE_SENTRY_DSN_FRONTEND is set. @sentry/react is a dependency (package.json:18).",
+      "whatsMissing": "No <ErrorBoundary> wraps the app (neither Sentry.ErrorBoundary nor a custom one), and no componentDidCatch/getDerivedStateFromError exists anywhere. The only Sentry reference in the whole codebase is the init call. Because React 19 unmounts the entire tree on an uncaught render error, any throw inside App/ResultCard/BudgetPanel/transformResults etc. produces a permanently blank black screen (body background #0a0a0a) with no fallback UI and no error reported to Sentry from the render path.",
+      "evidence": "grep for ErrorBoundary|componentDidCatch|getDerivedStateFromError|Sentry\\. across frontend returns only src/main.jsx:12 (Sentry.init). frontend/src/main.jsx:19-29 renders <App/> (optionally wrapped in ClerkProvider/AuthGate) with no error boundary. @sentry/react imported at frontend/src/main.jsx:4 but Sentry.ErrorBoundary never used.",
+      "recommendation": "Wrap the rendered tree in Sentry.ErrorBoundary (from @sentry/react) with a fallback UI (e.g. a 'Something went wrong — Reload' card), or a custom class ErrorBoundary when Sentry DSN is unset. This both prevents the blank-screen failure and ensures render errors reach Sentry.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "frontend-completeness-3",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "low",
+      "title": "Stuck 'GO' spinner: a WebSocket close/error during chat (phase 'done') never resets chatLoading",
+      "whatExists": "On the normal chat path the backend sends reply->result->done and the 'done' handler resets chatLoading (prototype.jsx:210-214); the 'error' handler also resets it (prototype.jsx:215-219).",
+      "whatsMissing": "chatLoading is set true in handleChat (prototype.jsx:392) but the ws onerror handler (prototype.jsx:277-281) only does setPhase(running?done) + setSpeaking(false) and does NOT reset chatLoading. The ws onclose handler (prototype.jsx:282-297) only resets chatLoading inside the prev==='running' branch. During a chat refinement the phase is already 'done', so if the socket errors/closes after the user hits GO but before reply/done arrives, chatLoading stays true forever: the input stays disabled and the GO button is stuck showing '...' with no way to recover except RESET.",
+      "evidence": "frontend/prototype.jsx:384-396 handleChat sets setChatLoading(true) with no timeout. onerror frontend/prototype.jsx:277-281 omits setChatLoading(false). onclose frontend/prototype.jsx:289-296 calls setChatLoading(false) ONLY when prev==='running'; chat runs while phase==='done'. ChatInput disables input/button on chatLoading (frontend/components/ChatPanel.jsx:19,22).",
+      "recommendation": "Always setChatLoading(false) in both ws.onerror and ws.onclose handlers (unconditionally, not just in the running branch), and/or add a watchdog timeout that clears chatLoading after N seconds with an error message.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "frontend-completeness-4",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "low",
+      "title": "Calendar fetch failure has no distinct error/empty/retry UI — grid is stuck on 'Loading... (is backend running?)' indefinitely",
+      "whatExists": "The calendar fetch (prototype.jsx:109-137) logs failures to the debug trace (calendar.fetch.error) and guards against non-array bodies. GpSelect shows a placeholder when gpList is empty (GpSelect.jsx:45-49).",
+      "whatsMissing": "There is exactly one state for both 'still loading' and 'fetch failed': the empty-list branch renders the static string 'Loading calendar... (is backend running?)'. On HTTP error, network error, or non-array body, gpList stays [] and the user sees the same perpetual 'Loading' message with no error styling, no retry button, and no distinction between in-progress and failed. There is no loading skeleton/spinner either; debugMode is required to even see the error reason in the trace.",
+      "evidence": "frontend/components/GpSelect.jsx:45-49 single empty-state branch text 'Loading calendar... (is backend running?)'. frontend/prototype.jsx:118-134 error paths only call pushDebug and return; no error state is surfaced to GpSelect (no prop for fetch status/error). No retry control anywhere.",
+      "recommendation": "Track calendar fetch status (loading|error|empty|ready) in App and pass it to GpSelect; render a real error state with a Retry button on failure and a spinner/skeleton while loading.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "frontend-completeness-5",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "low",
+      "title": "No global unhandledrejection / window.onerror handler — async failures outside try/catch are silently dropped",
+      "whatExists": "Most async paths have local try/catch (calendar fetch, clipboard copy, JSON.parse in handlers). Sentry, when DSN is set, captures via its default integrations.",
+      "whatsMissing": "There is no window 'unhandledrejection' or 'error' listener registered by the app (grep returns none). When Sentry DSN is unset (the documented local/prod-without-Sentry fallback per the enterprise-floor description), unhandled rejections (e.g. a throw inside an awaited buildWsUrl/getToken not wrapped, or future async additions) vanish with no user-facing feedback and no logging beyond the browser console. handleWsMsg's JSON.parse (prototype.jsx:150) is not wrapped in try/catch, so a malformed frame throws inside the ws onmessage callback as an uncaught error.",
+      "evidence": "grep for unhandledrejection|window.onerror|addEventListener('error' across frontend returns none. frontend/prototype.jsx:149-150 handleWsMsg does JSON.parse(evt.data) with no try/catch (contrast SavedTrips.jsx:17-21 which wraps its parse). Sentry is conditional on DSN (src/main.jsx:11).",
+      "recommendation": "Register window 'unhandledrejection' and 'error' listeners (report to Sentry when available, otherwise console.error + optional toast), and wrap the JSON.parse in handleWsMsg in try/catch like SavedTrips already does.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "frontend-completeness-6",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "low",
+      "title": "Accessibility gaps on primary interactive elements: clickable <div> cards/rows lack role/keyboard, buttons lack type, modals lack focus trap",
+      "whatExists": "Good spots exist: ExplainabilityPanel has role='dialog', aria-label, Escape-to-close (ExplainabilityPanel.jsx:7-11,25,37), and explain buttons carry aria-label (ResultCard.jsx:68). WelcomeForm inputs have associated <label> text. index.html sets lang='en' (index.html:2) and a viewport meta.",
+      "whatsMissing": "(a) GP cards are plain <div onClick> with no role='button', tabIndex, or onKeyDown — keyboard users cannot select a Grand Prix (GpSelect.jsx:23-37). (b) Result rows are clickable <div onClick> with no role/keyboard (ResultCard.jsx:48). (c) Many <button>s omit type (default 'submit') — harmless today since there's no <form>, but a latent bug (e.g. WelcomeForm currency/stand/submit buttons, ChatPanel, AppChrome). (d) The Explainability and SavedTrips slide-over modals do not trap focus or move focus to the panel on open / restore it on close (ExplainabilityPanel.jsx, SavedTrips.jsx:79). (e) WelcomeForm labels are visually associated by proximity but not programmatically linked via htmlFor/id, so screen readers may not pair them (WelcomeForm.jsx:25-27).",
+      "evidence": "frontend/components/GpSelect.jsx:23-37 (div onClick, no role/tabIndex/onKeyDown). frontend/components/ResultCard.jsx:48 (div onClick toggle, no keyboard). frontend/components/WelcomeForm.jsx:25-40 (<label> + <input> with no htmlFor/id pairing). No focus-trap/initial-focus logic in ExplainabilityPanel.jsx or SavedTrips.jsx. Buttons across components omit type= attribute.",
+      "recommendation": "Make GP cards and result rows keyboard-operable (role='button', tabIndex=0, onKeyDown for Enter/Space), add type='button' to all non-submit buttons, link form labels via htmlFor/id, and add focus management (move focus in on open, restore on close, trap Tab) to both slide-over panels.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "frontend-completeness-7",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "low",
+      "title": "Frontend has zero static-analysis gate (no lint, no typecheck, no TypeScript) — UX/dead-code regressions go uncaught",
+      "whatExists": "package.json scripts are only dev/build/preview/e2e (package.json:10-15). Build succeeds and 0 npm vulns per ground truth.",
+      "whatsMissing": "No eslint config, no tsconfig, no prettier config, and the codebase is plain JS/JSX (no .ts/.tsx). There is no lint or typecheck script. The code even relies on eslint-disable comments (prototype.jsx:41) for a real Rules-of-Hooks edge, but no ESLint actually runs to enforce hooks rules, unused imports, undefined vars, or a11y (eslint-plugin-jsx-a11y). This is why issues like missing keyboard handlers and unused-prop drift can accumulate silently. Confirmed by ground truth: 'NO lint or typecheck script... zero static-analysis gate on the frontend.'",
+      "evidence": "frontend/package.json:10-15 scripts only dev/build/preview/e2e. Ground-truth frontend step 5 (passed:false): 'No eslint config, no tsconfig, no prettier config, and no .ts/.tsx files anywhere'. eslint-disable comment present at frontend/prototype.jsx:41 with no ESLint to honor it.",
+      "recommendation": "Add ESLint (with react-hooks and jsx-a11y plugins) and a lint script wired into scripts/check-local.sh and CI; optionally add type checking via JSDoc + checkJs or migrate to TS for the domain/ layer.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "frontend-completeness-8",
+      "source": "audit",
+      "dimension": "frontend-completeness",
+      "severity": "low",
+      "title": "Saved-trips load relies on a fire-and-forget WS message with no per-card loading/error feedback; load failures are partially silent",
+      "whatExists": "SavedTrips lists trips with loading/empty/error states (SavedTrips.jsx:108-118) and confirms deletes via window.confirm (SavedTrips.jsx:73). The trip_loaded handler restores state and closes the panel (prototype.jsx:224-256).",
+      "whatsMissing": "Clicking 'Load' (SavedTrips.jsx:62-68) sends load_trip and returns immediately with no loading indicator on the row; if the backend errors on load and the error string does NOT match /trip/i, the SavedTrips error filter (SavedTrips.jsx:31-37) drops it and nothing happens — the panel just sits there. The SAVE button shows 'SAVED' only on save_trip_ack (prototype.jsx:220-223) but has no error/failure state if no ack arrives (e.g. ws drops) — it silently stays 'SAVE'. window.confirm for delete is also a blocking native dialog rather than an in-app confirm (minor UX inconsistency).",
+      "evidence": "frontend/components/SavedTrips.jsx:31-37 error filter requires /trip/i match, dropping unrelated load errors. frontend/components/SavedTrips.jsx:62-68 loadTrip has no pending/loading UI. frontend/prototype.jsx:220-223 save ack handler has no timeout/failure counterpart (no 'SAVE FAILED' state).",
+      "recommendation": "Show a per-row loading state on Load, broaden/route load errors to the panel reliably, and add a save-failure state (timeout if no save_trip_ack within N seconds).",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deploy-cicd-1",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "medium",
+      "title": "No lint, type-check, or coverage gate in CI or local scripts (backend or frontend)",
+      "whatExists": "ci.yml runs backend byte-compile + unittest + skill tests, frontend build + npm audit, full Playwright lane, bundled check-local.sh, gitleaks, agent-doc-sync. check-local.sh mirrors the same compile/test/build/audit steps.",
+      "whatsMissing": "Zero static analysis: no ruff/flake8/black/mypy on Python, no eslint/prettier/tsc on JS/JSX. No test coverage measurement (no pytest-cov, no coverage in requirements.txt or CI). frontend package.json has only dev/build/preview/e2e scripts — no lint/typecheck. The codebase is plain JS/JSX with no TypeScript, so there is no type safety at all on the frontend.",
+      "evidence": ".github/workflows/ci.yml:88 (\"# Future steps go here: mypy, ruff\") and :119 (\"# Future steps go here: npm run lint\"); ci.yml:21 (\"Lint / type-check: new step\"); grep for ruff|mypy|black|eslint|prettier|coverage|pytest-cov across backend/requirements.txt, ci.yml, scripts/check-local.sh, frontend/package.json returns only the TODO comments; ground-truth frontend step 5 confirms 'NO lint or typecheck script... no eslint config, no tsconfig'.",
+      "recommendation": "Add ruff (lint) + mypy (type-check) steps to the backend job and pytest-cov with a coverage floor; add eslint to the frontend job and an `npm run lint` script. Mirror them in check-local.sh so the local gate and CI stay equivalent. Even a non-blocking eslint pass would catch the kind of dead-import/undefined-var bugs that JS/JSX silently ships.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deploy-cicd-2",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "medium",
+      "title": "Flagship enterprise feature E2E (saved_trips Postgres round-trip) never runs in CI",
+      "whatExists": "frontend/e2e/saved_trips.spec.js exists and exercises the save/load round-trip (the headline enterprise-floor feature). playwright.config.js gates it behind E2E_INCLUDE_SAVED=1.",
+      "whatsMissing": "The CI e2e job sets only E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 — it never sets E2E_INCLUDE_SAVED=1, so saved_trips.spec.js is silently excluded from every CI run. The single most important enterprise-floor capability (Postgres-backed saved trips, which the deploy runbook step 6.3 manually verifies) has no automated regression coverage in the pipeline.",
+      "evidence": ".github/workflows/ci.yml:157 (`run: E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1 PYTHON_BIN=python ./scripts/e2e-local.sh`); frontend/playwright.config.js:18-19 (testIgnore pushes **/saved_trips.spec.js unless E2E_INCLUDE_SAVED===\"1\"); grep for E2E_INCLUDE_SAVED|saved_trips across .github/workflows/ and scripts/ returns nothing (exit 1).",
+      "recommendation": "Add E2E_INCLUDE_SAVED=1 to the CI e2e lane (the spec already runs against the SQLite local fallback, so no Postgres service is needed). If it requires a DB service, add a Postgres service container to the e2e job and run the saved-trips spec there.",
+      "verdict": "partial"
+    },
+    {
+      "id": "deploy-cicd-3",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "No Python runtime version pin for Railway/NIXPACKS; CI, local venv, and prod can diverge",
+      "whatExists": "railway.json uses NIXPACKS builder with buildCommand `pip install -r requirements.txt`. CI pins python-version '3.12'. Local venv is python3.11.",
+      "whatsMissing": "No runtime.txt, .python-version, nixpacks.toml, or pyproject [requires-python] anywhere in the repo, so Railway's NIXPACKS picks its own default Python at build time. Production therefore runs an unpinned, possibly different interpreter than both CI (3.12) and local (3.11). For a stack with psycopg3 binary wheels, alembic, and pydantic, a silent major-version drift can change behavior or break wheels.",
+      "evidence": "railway.json:3-5 (builder NIXPACKS, no python pin); find for backend/runtime.txt, runtime.txt, backend/.python-version, .python-version, backend/pyproject.toml all MISSING; ci.yml:72 pins '3.12'; ground-truth backend step 1 shows local venv -> python3.11.",
+      "recommendation": "Add a runtime pin Railway honors (e.g. nixpacks.toml `[phases.setup] nixPkgs = ['python311']` or a `.python-version`/`runtime.txt`) matching the CI Python (3.12) so all three environments agree. Align CI to the same version too.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deploy-cicd-4",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "Database migration rollback (alembic downgrade) is undocumented; runbook 'rollback' only reverts code, not schema",
+      "whatExists": "README section 7 and docs/deployment-design.md sections 10/11.6 document a rollback drill via platform per-revision rollback + re-running deploy-smoke. The init migration has a working downgrade() (backend/alembic/versions/36ee394e0625_init_enterprise_floor.py:63-72).",
+      "whatsMissing": "Neither the runbook nor deployment-design mentions `alembic downgrade` or what to do when a deploy that included a schema migration is rolled back. Railway per-revision rollback reverts the *code* to a prior revision, but the schema migration already applied at deploy time (`alembic upgrade head` in railway.json:8) is NOT undone. If a future migration is destructive or backward-incompatible, code-rollback alone leaves old code running against a newer schema — a data/availability hazard with no documented procedure.",
+      "evidence": "grep for 'alembic downgrade|downgrade head|schema rollback' across docs/deployment-design.md and README.md returns nothing; README.md:557-559 (rollback = dashboard per-revision only); railway.json:8 (migrations applied at every deploy start); deployment-design.md:476-482 rollback section covers only platform revision + log/cache notes.",
+      "recommendation": "Add a 'Migration rollback' subsection to the runbook: when a rolled-back deploy crossed a migration boundary, document running `cd backend && alembic downgrade -1` (or to a named revision) against the live DB, and state the policy that migrations must stay backward-compatible across one deploy (expand-contract) so code-only rollback is always safe.",
+      "verdict": "partial"
+    },
+    {
+      "id": "deploy-cicd-5",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "deploy-smoke workflow is manual-only and disconnected from the deploy pipeline",
+      "whatExists": "deploy-smoke.yml verifies /healthz, /readyz (DB up), /api/calendar 401-gating, optional demo-token path, frontend HTML load, and a frontend-bundle secret-leak scan. README step 6 instructs running it after each deploy.",
+      "whatsMissing": "The workflow only has a workflow_dispatch trigger (manual, requires hand-typing backend_url/frontend_url each time). It is not invoked on deploy, not scheduled, and not chained from CI. A bad production deploy (DB down, auth misconfigured, secret leak) is therefore only caught if a human remembers to run it. There is no automated post-deploy gate despite the project framing 'deploy-gate verification' as the T-DEPLOY-VERIFY deliverable.",
+      "evidence": ".github/workflows/deploy-smoke.yml:11 (only `workflow_dispatch:`, no schedule/push/repository_dispatch); no deploy job in ci.yml references it (ci.yml has no deploy/smoke chaining); README.md:549 (manual 'Run workflow').",
+      "recommendation": "Add a `schedule` (e.g. daily cron) trigger with the prod URLs hardcoded or read from repo variables, and/or a `repository_dispatch`/`workflow_run` trigger so the smoke runs automatically after a deploy. At minimum store backend_url/frontend_url as repo variables so the manual run is one click.",
+      "verdict": "partial"
+    },
+    {
+      "id": "deploy-cicd-6",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "Documented-but-unused env vars in backend/.env.example (REQUIRE_DEMO_TOKEN, CLERK_SECRET_KEY, FLIGGY_*, BOCHA_API_KEY)",
+      "whatExists": "backend/.env.example documents these as configurable.",
+      "whatsMissing": "None of them is read by any non-test project code. REQUIRE_DEMO_TOKEN (.env.example:52) is explicitly dead — main.py:87 comment says the old _REQUIRE_DEMO_TOKEN was removed as never-read dead code. CLERK_SECRET_KEY (.env.example:73 AND README:524 prod instructions) is never referenced — backend Clerk auth is pure JWKS verification (CLERK_JWT_ISSUER + CLERK_JWKS_URL only), so operators are told to set an unused secret in production. FLIGGY_APP_KEY/FLIGGY_APP_SECRET/BOCHA_API_KEY (.env.example:59-61) have no reader anywhere.",
+      "evidence": "grep REQUIRE_DEMO_TOKEN backend (non-venv,non-test) -> only main.py:87 dead-code comment; grep CLERK_SECRET_KEY backend (non-venv) -> exit 1 (no matches) while .env.example:73 and README.md:524 list it; grep FLIGGY|BOCHA backend (non-venv) -> exit 1, only present at .env.example:59-61.",
+      "recommendation": "Remove REQUIRE_DEMO_TOKEN, FLIGGY_*, and BOCHA_* from .env.example (or implement them). For CLERK_SECRET_KEY, drop it from both .env.example:73 and README:524 prod instructions, or add a code comment that it is reserved/unused so operators don't provision an unnecessary secret.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deploy-cicd-7",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "Used-but-undocumented env vars (ENV, LOG_LEVEL, LLM_STUB_MODE)",
+      "whatExists": "These vars are read at runtime but absent from backend/.env.example.",
+      "whatsMissing": "ENV is read as a fallback for APP_ENV (auth.py:50, main.py:81) but never documented — an operator who sets ENV=production expecting it to enable prod gating would be relying on undocumented behavior. LOG_LEVEL controls logging verbosity (logging_config.py:55) and is undocumented. LLM_STUB_MODE (refine.py:724, agents/tickets.py:43, agents/transport.py:57) is a test/CI determinism switch with no .env.example mention, so its production-safety implications are undocumented.",
+      "evidence": "auth.py:50 (`os.environ.get(\"APP_ENV\") or os.environ.get(\"ENV\")`), main.py:81 (same); logging_config.py:55 (`os.environ.get(\"LOG_LEVEL\", \"INFO\")`); refine.py:724 + agents/tickets.py:43 + agents/transport.py:57 read LLM_STUB_MODE; none of ENV/LOG_LEVEL/LLM_STUB_MODE appear in backend/.env.example (grep confirmed).",
+      "recommendation": "Document LOG_LEVEL (with default INFO) and the ENV alias in .env.example. Document LLM_STUB_MODE in the testing/E2E section noting it must never be set in production (it forces deterministic mock LLM output).",
+      "verdict": "partial"
+    },
+    {
+      "id": "deploy-cicd-8",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "Required production config (Clerk issuer, OPENAI_API_KEY) has only request-time guards, not a startup fail-fast",
+      "whatExists": "main.py lifespan fails fast if ALLOWED_ORIGINS is empty in a non-local env (main.py:194-198). auth.py returns HTTP 503 at request time if CLERK_JWT_ISSUER is unset while in prod/require-clerk mode (auth.py:196-200, 253-254). llm.py logs and falls back to mock if OPENAI/ANTHROPIC keys are missing (llm.py:71-72, 96-97).",
+      "whatsMissing": "Only ALLOWED_ORIGINS is guarded at boot. A production deploy with REQUIRE_CLERK_AUTH=true (or APP_ENV=production) but a missing/typo'd CLERK_JWT_ISSUER boots cleanly and passes /healthz (and even /readyz if DB is up), then 503s on every authenticated request — green probe, dead app. Likewise a prod deploy missing OPENAI_API_KEY boots green and silently serves mock itineraries instead of failing or warning loudly. There is no startup assertion that the auth/LLM config required by the active APP_ENV is actually present.",
+      "evidence": "main.py:194-198 guards only ALLOWED_ORIGINS in lifespan; auth.py:196-200 (503 'CLERK_JWT_ISSUER required in production' is request-time, inside require_user, not startup); llm.py:71-72 (`if not os.environ.get(\"OPENAI_API_KEY\"): logger.info(... mock fallback)`); health.py:24-26 /healthz returns 200 unconditionally regardless of auth/LLM config.",
+      "recommendation": "Extend the lifespan startup guard: when not local, also require CLERK_JWT_ISSUER (and JWKS URL) whenever Clerk auth is enforced, and require the LLM key for the selected LLM_PROVIDER (or at least emit a WARNING-level startup log when prod is running on mock LLM). Fail fast so the platform healthcheck reflects a genuinely-misconfigured deploy instead of reporting green.",
+      "verdict": "partial"
+    },
+    {
+      "id": "deploy-cicd-10",
+      "source": "audit",
+      "dimension": "deploy-cicd",
+      "severity": "low",
+      "title": "CI does not run the secret-scan or agent-doc-sync inside the local gate, and the local gate omits them — partial CI/local contract mismatch",
+      "whatExists": "CI has dedicated gitleaks and agent-docs jobs (ci.yml:38-58) plus a bundled-check-local job that runs scripts/check-local.sh (ci.yml:170-201). The .githooks/pre-push runs check-agent-doc-sync.sh + check-local.sh.",
+      "whatsMissing": "scripts/check-local.sh (the script contributors are told to trust) does NOT include a secret scan (gitleaks) at all, so a developer running only the local gate gets no secret-leak signal that CI enforces. The local gate and CI are therefore not equivalent for the security-relevant gitleaks check — a contributor can pass the full local gate and still be blocked by CI on secrets. The README/deployment-design frame check-local.sh as the trustworthy local mirror of CI.",
+      "evidence": "scripts/check-local.sh:14-34 (steps 1-7: agent-sync, compile, unit tests, skill tests, frontend install/build/audit — no gitleaks); ci.yml:47-58 gitleaks job exists only in CI; .githooks/pre-push runs check-local.sh but not gitleaks.",
+      "recommendation": "Either add an optional gitleaks step to check-local.sh (skipped gracefully if the binary is absent) or document explicitly in the script header that secret scanning is CI-only, so the local-gate contract is honest about what it does and does not cover.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "security-1",
+      "source": "audit",
+      "dimension": "security",
+      "severity": "medium",
+      "title": "Clerk JWT verification never checks the audience (aud) claim",
+      "whatExists": "verify_clerk_jwt pins algorithm to RS256, verifies issuer, and requires exp/iss/sub via jwt.decode options (backend/auth.py:162-168).",
+      "whatsMissing": "No audience verification. jwt.decode is called without an `audience=` argument and `aud` is not in the require list. Any RS256 token signed by the same Clerk issuer/JWKS — including tokens minted for a different application, a different API, or a different audience on the same Clerk instance/infra — is accepted as a valid user. There is no CLERK_AUDIENCE / expected-aud env var anywhere (grep for 'aud'/'audience' across backend returns nothing; .env.example has no audience var).",
+      "evidence": "backend/auth.py:161-169 (jwt.decode with algorithms=[\"RS256\"], issuer=iss, options={\"require\": [\"exp\",\"iss\",\"sub\"]} — no audience). Confirmed absent: grep -rn 'audience|\\baud\\b' backend/*.py backend/tests/*.py returns empty; backend/.env.example:70-76 lists CLERK_JWT_ISSUER/CLERK_JWKS_URL/REQUIRE_CLERK_AUTH but no audience.",
+      "recommendation": "Add an expected audience (e.g. CLERK_AUDIENCE env or the configured Clerk JWT template aud) and pass audience=... to jwt.decode plus add 'aud' to options['require']. Reject tokens whose aud does not match the API's identifier.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "security-3",
+      "source": "audit",
+      "dimension": "security",
+      "severity": "low",
+      "title": "X-Forwarded-For rightmost-hop trust has no trusted-proxy allow-list and is bypassable",
+      "whatExists": "_trusted_forwarded_ip deliberately takes the RIGHTMOST XFF entry to avoid trusting forgeable leftmost client-supplied hops (backend/main.py:126-134), used for both HTTP and WS client-IP derivation (main.py:137-148).",
+      "whatsMissing": "The rightmost-hop assumption is only valid behind EXACTLY ONE trusted proxy that overwrites/appends XFF. There is no TRUSTED_PROXY / trusted hop-count config and no validation that the request actually arrived via the expected proxy. If the Railway backend is ever reachable directly (public URL) or sits behind a multi-hop edge, an attacker can append their own rightmost XFF value and rotate the rate-limit bucket per request — defeating both HTTP and WS limiters. The comment hardcodes the single-Railway-proxy assumption rather than enforcing it.",
+      "evidence": "backend/main.py:126-141 (parts[-1] taken unconditionally; comment 'On a single trusted proxy (Railway), the rightmost entry is the real client' — assumption is not enforced anywhere). No trusted-proxy env var in main.py or .env.example.",
+      "recommendation": "Make the trusted hop count configurable (e.g. TRUSTED_PROXY_HOPS) and pick the (N+1)th-from-right entry; or use a vetted library (uvicorn --proxy-headers + forwarded-allow-ips, or starlette ProxyHeadersMiddleware) with an explicit trusted-proxy allow-list. Ensure the backend is not directly reachable bypassing the proxy.",
+      "verdict": "partial"
+    },
+    {
+      "id": "security-4",
+      "source": "audit",
+      "dimension": "security",
+      "severity": "low",
+      "title": "Rate limiter is in-process only (resets on restart, ineffective across instances); declared slowapi dependency is unused",
+      "whatExists": "IPRateLimiter keeps per-IP deques in a process-local dict (backend/main.py:100-119). slowapi>=0.1.9 is declared in requirements.",
+      "whatsMissing": "State lives only in one process: a restart wipes all buckets, and if Railway runs more than one instance/replica each has its own counters, multiplying the effective limit by the instance count and giving no global guarantee. There is no shared store (Redis) backing the limiter. slowapi is listed in backend/requirements.txt but is imported/used nowhere (grep returns no slowapi usage in backend/*.py), so the dependency is dead and the custom limiter is the only control — self-described as 'demo-stage abuse control' (main.py:101).",
+      "evidence": "backend/main.py:101-119 (in-memory self._events dict, no external store); backend/requirements.txt:19 lists slowapi but grep -rn 'slowapi' backend/*.py backend/**/*.py returns no usage.",
+      "recommendation": "For multi-instance production, back rate limiting with a shared store (Redis) or use slowapi with a Redis backend; otherwise document that the backend must run single-instance. Remove the unused slowapi dependency or actually wire it.",
+      "verdict": "partial"
+    },
+    {
+      "id": "security-5",
+      "source": "audit",
+      "dimension": "security",
+      "severity": "low",
+      "title": "Unsanitized user free-text is injected directly into LLM prompts (prompt injection)",
+      "whatExists": "TripRequest validates currency, budget, and trip-date semantics (backend/main.py:241-305); WS rejects oversized/non-JSON messages (main.py:487-495).",
+      "whatsMissing": "Free-text fields special_requests and stops (and the entire type=chat user message) are interpolated verbatim into LLM system/user prompts with no delimiting, escaping, or instruction-isolation. A user can inject directives like 'ignore previous instructions' into special_requests to steer agent output. Blast radius is limited (output is itinerary/plan text, no privileged tool execution off the injected text, no SSRF), but there is zero prompt-injection defense.",
+      "evidence": "backend/agents/itinerary.py:91-92 (stops/special read from state) and itinerary.py:116-129 (f-string interpolates `Special requests: {special}` and `Stops / multi-city plan: {stops}` straight into the user prompt). Chat path: backend/main.py:603-624 forwards user_message verbatim into refine_plan.",
+      "recommendation": "Wrap user free-text in clearly delimited, labeled blocks, instruct the model to treat it as data not instructions, and/or run a lightweight injection filter. Keep treating LLM output as untrusted.",
+      "verdict": "partial"
+    },
+    {
+      "id": "security-6",
+      "source": "audit",
+      "dimension": "security",
+      "severity": "low",
+      "title": "Clerk JWT / demo token passed in WebSocket query string and never redacted server-side",
+      "whatExists": "The frontend reads the WS token from the query string and redacts it in its own debug UI (frontend/prototype.jsx:35). The backend reads token from ?token= / ?demo_token= (backend/auth.py:245-249).",
+      "whatsMissing": "Bearer credentials in a URL query string are routinely captured in proxy/server access logs, browser history, and APM breadcrumbs. The backend never redacts the WS query: any uvicorn/proxy access log of the WS handshake path, and any Sentry/Starlette breadcrumb that records the request URL, would contain the live Clerk JWT or demo token. There is no scrubbing of token query params in observability (observability.py installs Sentry with default integrations; no before_send scrubber for query strings).",
+      "evidence": "frontend/prototype.jsx:48-54 (token appended as ?token=/&demo_token= to the WS URL); backend/auth.py:245-249 (reads ws.query_params token); backend/observability.py:54-73 (sentry init with FastApi/Starlette integrations and no before_send/url scrubbing).",
+      "recommendation": "Prefer sending the token via the Sec-WebSocket-Protocol header or a short-lived ticket exchanged over an authenticated HTTP call, rather than the URL. At minimum add a Sentry before_send scrubber that strips token/demo_token query params and ensure access logs do not record the WS query string.",
+      "verdict": "partial"
+    },
+    {
+      "id": "docs-consistency-1",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "medium",
+      "title": "docs/current.md is badly stale — wrong date, wrong test count, and missing the entire enterprise-floor/deploy era that agents are told to follow",
+      "whatExists": "docs/current.md headed '# Current Project Status — 2026-05-07', covering Round 2/Round 3 feature work, selection quotes, constraints, explainability, and a frontend/backend file split.",
+      "whatsMissing": "It predates the enterprise floor entirely: no Clerk auth, no Postgres/SQLAlchemy/Alembic, no Sentry, no /healthz+/readyz, no CSP/HSTS, no Vercel+Railway deploy, no saved-trips, no gitleaks. Its 'Remaining Functional Gaps' still lists 'Production readiness still needs auth, explicit CORS/origin policy, rate limiting, persistent storage, and CI browser automation' — all of which shipped (per CHANGELOG [Unreleased] and commits acc2625/f7c92a5/55c6a31/6a120d8/5d287d4). Its Verification Summary claims '50 tests' while ground truth shows 131 passing. AGENTS.md/CLAUDE.md line 91 instructs every coding agent to 'Follow the current phase order in docs/current.md', so the stale file actively misdirects agents.",
+      "evidence": "docs/current.md:1 ('— 2026-05-07'); docs/current.md:103 ('with 50 tests'); docs/current.md:159 ('Production readiness still needs auth, explicit CORS/origin policy, rate limiting, persistent storage, and CI browser automation'); CLAUDE.md:91 / AGENTS.md:91 ('Follow the current phase order in `docs/current.md`'); ground-truth backend run: 'Ran 131 tests ... OK'; CHANGELOG.md:10 (enterprise floor shipped).",
+      "recommendation": "Rewrite docs/current.md to reflect post-enterprise-floor state (auth/persistence/Sentry/deploy all shipped, 131 tests, T-001 reviewer + T-DEPLOY-VERIFY status) or replace it with a generated status snapshot. At minimum fix the test count and remove resolved 'remaining gaps'. Because AGENTS.md/CLAUDE.md point agents at this file as canonical, leaving it stale is higher-impact than an ordinary status note.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-2",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "medium",
+      "title": "README.zh-CN.md is a full release behind README.md — missing the entire deploy/enterprise-floor section",
+      "whatExists": "README.zh-CN.md (last modified May 25) mirrors the English README through Phase 3 / trust-layer content and links to it as the English counterpart.",
+      "whatsMissing": "The ZH README has NO equivalent of the EN 'Deploy from scratch (Vercel + Railway + Clerk + Sentry)' section (README.md:484-559) — no Clerk/Sentry/Railway/Vercel provisioning steps, no enterprise-floor env vars. Its roadmap still frames deployment + basic auth as FUTURE work ('后续：iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS') and Phase 5 as '安全基线、错误处理、运行结果持久化、部署上线', whereas the EN roadmap declares '4.7 enterprise floor ... (done)' and Phase 5 as 'error budgets, per-user quotas, audit log, custom domain'. A reader using only the Chinese README would believe auth/persistence/deploy do not exist.",
+      "evidence": "README.zh-CN.md:459 ('后续：iCal export、部署（Vercel + Railway/Render）、基础 auth、CORS、HTTPS') and README.zh-CN.md:460 (Phase 5 still planning deploy/persistence); README.zh-CN.md:464-466 ('## 协议 / 待定。'); contrast README.md:484-559 (full deploy guide) and README.md:563 ('4.7 enterprise floor ... (done)'). ZH file mtime May 25 vs EN mtime Jun 1.",
+      "recommendation": "Port the EN 'Deploy from scratch' section and updated roadmap (4.7 done, new Phase 5) into README.zh-CN.md, or add a banner noting the ZH version trails EN and linking to the EN deploy guide. There is no automated EN/ZH sync check (only AGENTS/CLAUDE have one), so this drift will keep recurring.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-3",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "low",
+      "title": "deployment-design.md claims deploy is not implemented and 'there is no database' — both false after enterprise floor",
+      "whatExists": "docs/deployment-design.md is a detailed Vercel+Railway design doc whose target platform choice (Vercel frontend + Railway backend) matches what shipped.",
+      "whatsMissing": "Its framing is now false: line 3 states 'It is a design doc — no deploy workflow is implemented here. Implementation follows once this design is accepted.' but vercel.json, railway.json, and .github/workflows/deploy-smoke.yml are all committed and the CHANGELOG marks deploy as shipped. Its 'Current runtime assumptions' also assert 'There is no database' (line 15) and CORS is 'wide open ... allow_origins=[\"*\"]' (lines 35-38), both superseded by the Postgres-backed saved-trips and the production CORS allowlist + CSP/HSTS that shipped. It does not mention Clerk, Sentry, SQLAlchemy/Alembic, or /healthz at all.",
+      "evidence": "docs/deployment-design.md:3 ('no deploy workflow is implemented here. Implementation follows once this design is accepted'); docs/deployment-design.md:15 ('There is no database.'); docs/deployment-design.md:35-38 ('Currently wide open ... allow_origins=[\"*\"]'); contrast committed vercel.json, railway.json, .github/workflows/deploy-smoke.yml and CHANGELOG.md:47-49 (Railway/Clerk deploy fixes shipped).",
+      "recommendation": "Add a status banner to deployment-design.md (and its zh-CN twin) marking it 'Implemented as of Phase 4.7 — see README Deploy section' and correct the 'Current runtime assumptions' (DB exists, CORS is an allowlist, Clerk/Sentry added). The README already references the newer enterprise-floor-design spec (README.md:486), so deployment-design.md reads as the obsolete predecessor without saying so.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-5",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "low",
+      "title": "No SECURITY.md / vulnerability-disclosure path despite a dedicated Security track and auth surface",
+      "whatExists": "The project has a substantial security posture: a 'Security' subsection in CHANGELOG (CHANGELOG.md:60-66), gitleaks CI, fail-closed auth, CSP/HSTS, and rate limiting.",
+      "whatsMissing": "There is no SECURITY.md and no vulnerability-reporting contact anywhere in README/README.zh-CN/CLAUDE (grep for 'security@ / report a vulnerability / responsible disclosure' returned nothing). A project that ships Clerk auth, JWT verification, per-identity trip isolation, and a public deploy has no documented way for someone to report a security issue privately.",
+      "evidence": "Filesystem check: SECURITY.md MISSING; grep across README.md/README.zh-CN.md/CLAUDE.md for disclosure language returned exit 1 (no matches); contrast the security work in CHANGELOG.md:60-66.",
+      "recommendation": "Add a short SECURITY.md with a private reporting channel (e.g. the maintainer email) and supported-versions note. GitHub surfaces SECURITY.md in the repo's Security tab, which matters for a repo presented as 'enterprise floor'.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-6",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "medium",
+      "title": "README's own 'Current State' phase table contradicts its Roadmap and the CHANGELOG",
+      "whatExists": "README.md:81-89 'Current State (Phase 4 functional build in progress)' table marks Phase 4 '🟡 In progress' with 'Next: ... deployment hardening' and Phase 5 '⏳ Planned' including 'production deployment, persistence, security baseline'.",
+      "whatsMissing": "The same README's Roadmap (README.md:563) declares '4.7 enterprise floor — Clerk OAuth, Postgres-backed saved trips, Sentry, /healthz + /readyz, CSP/HSTS, gitleaks, Vercel + Railway deploy config (done)', includes a full deploy guide (README.md:484-559), and the CHANGELOG [Unreleased] lists all of it as Added. So the top-of-README status table understates the project by a whole phase: 'production deployment / persistence / security baseline' are presented as still-Planned while elsewhere documented as done.",
+      "evidence": "README.md:81 (header 'Phase 4 functional build in progress'); README.md:88-89 (Phase 4 'In progress' / Phase 5 'Planned' incl. 'production deployment'); contrast README.md:563 ('4.7 enterprise floor ... (done)') and CHANGELOG.md:10 (enterprise floor Added).",
+      "recommendation": "Update the Current-State table to mark Phase 4 done (or 4.7 done) and re-scope Phase 5 to the genuinely-remaining items (error budgets, per-user quotas, audit log, custom domain, PWA), matching the Roadmap and CHANGELOG so the first screen of the README is not contradicted by its last screen.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-7",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "low",
+      "title": "E2E spec count is wrong across README (EN+ZH) and e2e-smoke-matrix after saved_trips.spec.js was added",
+      "whatExists": "frontend/e2e/ contains FIVE spec files: smoke, explain, refine, quote_incomplete, and saved_trips (added May 27). playwright.config.js gates saved_trips behind E2E_INCLUDE_SAVED=1.",
+      "whatsMissing": "Docs still describe only four. README.md:197 says 'frontend/e2e/ has four spec files in two lanes' and README.md:563 says 'full 4-spec lane'; README.zh-CN.md:193 says '四条 spec' and :202 '全确定性 lane（4 条 spec）'; docs/e2e-smoke-matrix.zh-CN.md 'Automation track' (lines 124-187) documents only smoke/refine/explain/quote_incomplete and never mentions saved_trips.spec.js or the E2E_INCLUDE_SAVED=1 flag. The saved-trips E2E (a flagship enterprise-floor feature) is undocumented outside the docs/superpowers specs.",
+      "evidence": "ls frontend/e2e/ shows 5 specs incl. saved_trips.spec.js; frontend/playwright.config.js:18 ('if (process.env.E2E_INCLUDE_SAVED !== \"1\")'); README.md:197 ('four spec files'); README.zh-CN.md:193 ('四条 spec'); docs/e2e-smoke-matrix.zh-CN.md:124-187 (no saved_trips / E2E_INCLUDE_SAVED). grep for saved_trips/E2E_INCLUDE_SAVED across README*.md and docs/*.md matched only docs/superpowers/*.",
+      "recommendation": "Update the spec count to five and document the saved_trips lane + E2E_INCLUDE_SAVED=1 flag in README (EN+ZH) and the e2e-smoke-matrix Automation track, alongside the existing E2E_INCLUDE_REFINE description.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-8",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "low",
+      "title": "Broken hero image: README references docs/demo.gif which does not exist",
+      "whatExists": "README.md:7 embeds '![F1 Paddock Club demo](docs/demo.gif)' immediately under the title, with a TODO comment (lines 9-11) to replace it with a real recording.",
+      "whatsMissing": "docs/demo.gif does not exist on disk, so the very first visual element of the English README renders as a broken image on GitHub and in any markdown viewer.",
+      "evidence": "README.md:7 ('![F1 Paddock Club demo](docs/demo.gif)'); `ls docs/demo.gif` -> 'No such file or directory'. (README.zh-CN.md does not embed the image, so this is EN-only.)",
+      "recommendation": "Either add the demo.gif (the TODO at README.md:9-11 already specifies format) or remove the image line + TODO until the asset exists, so the README does not lead with a broken image.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-10",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "low",
+      "title": "README Project Layout omits the enterprise-floor backend modules (db/models/repository/observability)",
+      "whatExists": "README.md Project Layout (lines 102-135) lists backend modules: main, graph, state, llm, agents/, refine*, _session, tools/, logging_config. README.zh-CN.md mirrors the same list (lines 98-131). All listed paths exist.",
+      "whatsMissing": "The four modules central to the enterprise-floor/deploy story — backend/db.py, backend/models.py, backend/repository.py, backend/observability.py — exist (verified present and import-clean per ground truth) but are absent from both Project Layout listings. A reader using the layout as a map of the backend would not learn where persistence, Sentry/health, or saved-trip data access live.",
+      "evidence": "Filesystem: backend/db.py, backend/models.py, backend/repository.py, backend/observability.py all present (and in the ground-truth import smoke); README.md:107-122 (Project Layout backend list, none of these four appear); README.zh-CN.md:103-118 (same omission).",
+      "recommendation": "Add db.py / models.py / repository.py / observability.py (with one-line descriptions) to the Project Layout in both READMEs so the backend map matches the shipped enterprise-floor modules.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "docs-consistency-11",
+      "source": "audit",
+      "dimension": "docs-consistency",
+      "severity": "low",
+      "title": "No CONTRIBUTING.md consolidating the (already-existing) contributor workflow and commit conventions",
+      "whatExists": "Contributor process is real but scattered: CLAUDE.md/AGENTS.md document working rules and a 'No Co-Authored-By' commit convention (line 97); scripts/check-local.sh + scripts/e2e-local.sh are the canonical gates; .githooks/pre-push enforces them via scripts/install-hooks.sh; README documents env setup.",
+      "whatsMissing": "There is no CONTRIBUTING.md tying these together for a human contributor (branch policy, how to run the gates, commit-message rules, how EN/ZH docs and AGENTS/CLAUDE must be kept in sync). A new contributor must reverse-engineer the process from CLAUDE.md (which is framed for AI agents) plus scattered scripts.",
+      "evidence": "Filesystem check: CONTRIBUTING.md MISSING; the process exists only in CLAUDE.md:88-125 (agent-framed), scripts/check-local.sh, scripts/e2e-local.sh, scripts/install-hooks.sh, and the README. No human-oriented contribution guide.",
+      "recommendation": "Add a short CONTRIBUTING.md pointing humans at scripts/check-local.sh + scripts/e2e-local.sh, the pre-push hook install, the no-AI-attribution commit rule, and the AGENTS/CLAUDE + EN/ZH README sync expectations. Most content can be lifted from CLAUDE.md.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-1",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "medium",
+      "title": "All backend dependencies are unpinned (>=) with no Python lockfile — non-reproducible, supply-chain risk",
+      "whatExists": "backend/requirements.txt lists 19 deps, each with a floor-only specifier (e.g. langgraph>=0.3.0, fastapi>=0.115.0, sqlalchemy>=2.0.30). CI installs with a bare `pip install -r requirements.txt` (ci.yml:77, :136, :188).",
+      "whatsMissing": "No exact pins (==), no upper bounds, and no lockfile of any kind (no constraints.txt, no pip freeze output, no poetry.lock/Pipfile.lock/uv.lock — verified absent by find). Every fresh install can pull newer minor/major-allowed versions, so CI, local, and deploy can resolve different dependency trees with no record of what was tested. A compromised or breaking upstream release is silently picked up.",
+      "evidence": "backend/requirements.txt:1-19 (all 19 lines use `>=`); ci.yml:77 `run: pip install -r requirements.txt`; find for constraints*.txt/poetry.lock/Pipfile*/pdm.lock/uv.lock returned zero results.",
+      "recommendation": "Generate and commit a lockfile: either `pip-compile` (pip-tools) producing a fully-pinned requirements.txt + requirements.in, or `pip freeze > constraints.txt` consumed via `pip install -r requirements.txt -c constraints.txt`, or migrate to uv/poetry. Install in CI with `--require-hashes` for true supply-chain integrity. At minimum pin the direct deps to `==` for the libraries that gate behavior (langgraph, langchain-*, fastapi, sqlalchemy, pydantic).",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-2",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "low",
+      "title": "slowapi declared in requirements.txt but never used anywhere in the codebase",
+      "whatExists": "backend/requirements.txt:19 declares `slowapi>=0.1.9`. The app instead uses a hand-rolled in-process limiter (class IPRateLimiter in backend/main.py:100, instantiated at main.py:122-123 and enforced via _http_rate_limit_dep at main.py:158).",
+      "whatsMissing": "There is no import or reference to slowapi anywhere in the repo (grep for `slowapi` across all non-venv files returns only the requirements.txt line). The dependency is dead weight — it enlarges the install/attack surface and misleads readers into thinking slowapi is the rate-limiting mechanism.",
+      "evidence": "backend/requirements.txt:19 `slowapi>=0.1.9`; `grep -rn slowapi` (excluding .venv and requirements.txt) returns empty; backend/main.py:100 `class IPRateLimiter`, main.py:122 `_http_rate_limiter = IPRateLimiter(...)`.",
+      "recommendation": "Either remove slowapi from requirements.txt (it is unused) or, if a battle-tested limiter is wanted, replace the bespoke IPRateLimiter with slowapi and wire it into FastAPI. Do not ship both an unused dep and a hand-rolled equivalent.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-3",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "low",
+      "title": "starlette and typing_extensions imported by app code but not declared in requirements.txt (rely on transitive resolution)",
+      "whatExists": "App source imports `starlette` directly (backend/observability.py:9 and backend/security_headers.py:17: `from starlette.middleware.base import BaseHTTPMiddleware`) and `typing_extensions` directly (backend/state.py:14: `from typing_extensions import NotRequired, TypedDict`). Both currently resolve only because FastAPI/pydantic pull them in transitively.",
+      "whatsMissing": "Neither starlette nor typing-extensions appears in backend/requirements.txt. Direct first-party imports of a library that is only a transitive dependency is fragile: a future FastAPI release could drop or change its starlette pin, or move typing_extensions to a conditional dependency, silently breaking these imports. Direct deps should be declared directly.",
+      "evidence": "backend/observability.py:9 and backend/security_headers.py:17 import starlette; backend/state.py:14 imports typing_extensions; neither name appears in backend/requirements.txt:1-19.",
+      "recommendation": "Add explicit `starlette` and `typing-extensions` entries to requirements.txt (with the same version range FastAPI currently resolves) so the imports are backed by a declared, pinned dependency rather than transitive luck.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-4",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "medium",
+      "title": "No pinned Python runtime for deploy — Railway/Nixpacks default drifts from CI 3.12 and local 3.11",
+      "whatExists": "CI pins Python 3.12 (ci.yml:72, :131, :182). The local venv is 3.11 (.venv/bin/python -> python3.11, per ground truth). scripts/python-bin.sh prefers python3.12 then python3.11 then python3 (python-bin.sh:25). Deploy uses Railway NIXPACKS (railway.json:3-5) and runs `python -m alembic upgrade head && uvicorn` (railway.json:8).",
+      "whatsMissing": "There is no Python version pin anywhere the deploy build reads: no backend/.python-version, no runtime.txt, no nixpacks.toml, no python version in railway.json (verified absent). Nixpacks will select its own default Python, which can differ from both CI (3.12) and local (3.11). Combined with unpinned deps (deps-config-1), the production interpreter+dependency combination is never the one CI tested. Three different Python versions are in play (3.11 local, 3.12 CI, unknown deploy).",
+      "evidence": "railway.json:3-8 (NIXPACKS builder, no python version field); ci.yml:72/:131/:182 `python-version: '3.12'`; local venv symlinks to python3.11; find for .python-version/runtime.txt/nixpacks.toml returned no matches.",
+      "recommendation": "Pin the deploy Python version to match CI: add backend/.python-version (or runtime.txt `python-3.12.x`, or a nixpacks.toml `[phases.setup] nixPkgs = [\"python312\"]`) and align CI + local venv to the same minor. This guarantees the deployed interpreter equals the tested one.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-5",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "low",
+      "title": "Backend ruff/mypy declared as intended in ci.yml comments but absent — no lint/typecheck gate",
+      "whatExists": "ci.yml explicitly states the intent to add these: ci.yml:21 'Lint / type-check: new step, same pattern' and ci.yml:88-89 'Future steps go here: mypy, ruff.' alembic.ini even ships commented-out ruff post-write-hook examples (alembic.ini:103-113).",
+      "whatsMissing": "No ruff config, no mypy config, no flake8/pyproject.toml anywhere in the repo (verified: no pyproject.toml, no ruff/mypy config files exist). The backend has zero static-analysis or type-checking gate; check-local.sh steps 1-4 are doc-sync + compile + unittest + skill tests only (check-local.sh:14-26), with no lint/typecheck. The stated 'future steps' have never materialized.",
+      "evidence": "ci.yml:88-89 `# Future steps go here: mypy, ruff.`; ci.yml:21; root and backend dir listing show no pyproject.toml / ruff.toml / .ruff.toml / mypy.ini / setup.cfg; check-local.sh:14-26 has no lint/typecheck step.",
+      "recommendation": "Add a pyproject.toml with [tool.ruff] and [tool.mypy] sections, add `ruff check` and `mypy` deps to a dev-requirements, and wire `ruff check backend` + `mypy backend` as named steps in ci.yml (and into check-local.sh) per the comment's own plan.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-6",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "medium",
+      "title": "Frontend has no eslint/prettier/tsconfig — zero static-analysis gate despite ci.yml intent",
+      "whatExists": "ci.yml:119 declares intent: 'Future steps go here: npm run lint, npm test, bundle-size check.' package.json scripts are only dev/build/preview/e2e (package.json:10-15).",
+      "whatsMissing": "No lint or typecheck script in package.json, and no eslint config (.eslintrc*/eslint.config.js), no prettier config, no tsconfig.json — confirmed by ground truth and dir listing (codebase is plain JS/JSX, no .ts/.tsx). There is no static-analysis gate on the React 19 frontend at all; only `vite build` + `npm audit` run. A broken-but-bundleable React component, accessibility regression, or unused import is never caught before deploy.",
+      "evidence": "package.json:10-15 (scripts: dev, build, preview, e2e only); ci.yml:119 future-steps comment; frontend dir listing shows no eslint/prettier/tsconfig files (only package-lock.json among config-like files); ground-truth frontend failure: 'No lint/typecheck script or config exists in the frontend.'",
+      "recommendation": "Add eslint (with eslint-plugin-react / react-hooks) + prettier configs and a `lint` script to package.json, then add an `npm run lint` step to the frontend CI job and check-local.sh per the ci.yml plan. Consider TypeScript or at least `// @ts-check` + jsconfig for basic type safety.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-7",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "medium",
+      "title": "Alembic migrations run in production deploy but are never exercised in CI or the local gate",
+      "whatExists": "railway.json:8 startCommand runs `python -m alembic upgrade head` on every deploy against Postgres. There is one migration (backend/alembic/versions/36ee394e0625_init_enterprise_floor.py) and alembic.ini + env.py are configured.",
+      "whatsMissing": "Neither CI (ci.yml) nor scripts/check-local.sh nor scripts/e2e-local.sh ever runs `alembic upgrade head` (grep for alembic/upgrade/migrat across .github/workflows and scripts returns empty). The first time a migration is actually executed is in production at boot. A bad migration (syntax, ordering, Postgres-only DDL that env.py mishandles) only surfaces on Railway, where the healthcheck (railway.json:9, 60s) and restart policy (max 5 retries) would then fail the deploy. Combined with unpinned alembic (requirements.txt:13 `alembic>=1.13`), behavior can change under the feet of an untested path.",
+      "evidence": "railway.json:8 `python -m alembic upgrade head`; `grep -rn alembic .github/workflows scripts` returns empty; backend/requirements.txt:13 `alembic>=1.13`; only one revision: backend/alembic/versions/36ee394e0625_init_enterprise_floor.py.",
+      "recommendation": "Add a CI step (and a check-local.sh/e2e step) that spins up a throwaway Postgres (CI services) or SQLite and runs `alembic upgrade head` then `alembic downgrade base`/`alembic check`, so migrations are validated before they hit production deploy.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-8",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "low",
+      "title": "Frontend engines.node range has no upper bound and is not enforced; installed node (v25.9.0) falls outside it",
+      "whatExists": "package.json:6-9 declares engines.node `^20.19.0 || >=22.12.0` and npm `>=11`. CI uses node 22 (ci.yml:102, :141, :191) and installs npm@11 (ci.yml:108). vercel.json builds via `npm ci` (vercel.json:3) with no node version field.",
+      "whatsMissing": "The engines field is advisory only: there is no engine-strict (no .npmrc with engine-strict=true) and no .nvmrc to pin node for local/Vercel. Ground truth ran on node v25.9.0, which the `^20.19.0 || >=22.12.0` range technically excludes intent-wise (it has no upper bound, so 25.x passes >=22.12.0, but no caret-bounded major is declared), yet the build succeeded — proving the constraint is not enforced. Local and Vercel can drift from CI's node 22.",
+      "evidence": "package.json:6-9 engines; ci.yml:102 `node-version: '22'`; vercel.json:3 buildCommand with no node pin; ground-truth: 'node v25.9.0 ... technically outside the declared range ... engines field is not honored.'",
+      "recommendation": "Add a .nvmrc (e.g. `22`) and an .npmrc with `engine-strict=true`, and set the Node version in Vercel project settings to match CI's node 22, so the same Node major builds locally, in CI, and on Vercel.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "deps-config-9",
+      "source": "audit",
+      "dimension": "deps-config",
+      "severity": "low",
+      "title": "Pre-push hook runs the full heavyweight gate; no fast pre-commit stage and no local secret-scan hook",
+      "whatExists": "Hooks are correctly wired (scripts/install-hooks.sh:6 sets core.hooksPath=.githooks; verified `git config core.hooksPath` = .githooks). .githooks/pre-push (pre-push:6-7) runs check-agent-doc-sync.sh + check-local.sh, which itself does npm ci + full build + 131 unit tests + skill tests (check-local.sh:17-26).",
+      "whatsMissing": "There is no pre-commit hook (only pre-push exists in .githooks/), so nothing fast (format/lint/quick compile) runs at commit time. There is also no local gitleaks/secret-scan hook even though CI runs gitleaks (ci.yml:47-58) and a .gitleaks.toml exists — secrets are only caught after push reaches CI. The single heavyweight pre-push gate (full npm ci + build) is slow enough that developers may be tempted to `--no-verify`.",
+      "evidence": ".githooks/ contains only pre-push (dir listing); .githooks/pre-push:6-7 invokes check-local.sh; check-local.sh:18-26 runs npm ci + build + audit; ci.yml:47-58 gitleaks job exists but no corresponding local hook; no pre-commit file present.",
+      "recommendation": "Add a lightweight pre-commit hook (ruff/eslint --fix + gitleaks protect --staged) for fast feedback and local secret prevention, keeping the full suite at pre-push. Document `--no-verify` discouragement and ensure install-hooks.sh is run as part of onboarding.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-01",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "high",
+      "title": "No database backup / point-in-time-recovery / restore procedure documented anywhere",
+      "whatExists": "Postgres-backed saved_trips persistence shipped (models.py, repository.py, railway.json runs alembic upgrade head on deploy). User email + saved trip snapshots are stored as durable user data.",
+      "whatsMissing": "No backup, PITR, snapshot, or restore procedure is documented in deployment-design.md, README, or the runbook (grep for backup/pitr/restore/retention/disaster returns nothing relevant). There is no statement of RPO/RTO, no note on whether Railway Postgres backups are enabled, and no restore-drill step. If the Railway DB is lost or a destructive migration runs, there is no documented path to recover user data.",
+      "evidence": "grep -rni 'backup|pitr|point-in-time|restore|snapshot|retention|disaster' docs/deployment-design.md README.md returns only unrelated 'state snapshot'/'restored from Postgres' hits (README.md:401,555); no backup section exists. Storage is durable: backend/models.py:74-96 (SavedTrip), backend/repository.py:47-70 (save_trip).",
+      "recommendation": "Document Railway Postgres backup settings (enable automated backups, state RPO/RTO), add a restore-drill step to the runbook, and pair every destructive migration with a verified backup. Add a periodic backup-verification check.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-02",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "No per-user storage quota — saved_trips inserts are unbounded (cost/abuse + DB bloat)",
+      "whatExists": "save_trip always INSERTs a new row; list_trips reads back the most recent 50 (limit=50).",
+      "whatsMissing": "There is no cap on how many trips a single user can save. _handle_save_trip -> _save_trip_sync -> repository.save_trip does an unconditional INSERT every time SAVE is pressed, with no count check, no upsert/replace, and no row cap. An authenticated user (or a script) can insert unlimited rows; list_trips silently hides everything past 50 so the UI even masks the unbounded growth. This is a storage-cost and abuse vector that the rate limiter (per-connection, not per-write) does not cover.",
+      "evidence": "backend/repository.py:47-70 save_trip = unconditional db.add(SavedTrip(...)); no count/limit. backend/repository.py:73-79 list_trips caps READ at limit=50 but write is uncapped. backend/main.py:752-770 _save_trip_sync has no quota check.",
+      "recommendation": "Enforce a per-user saved-trips cap (e.g. reject or evict-oldest beyond N), or make SAVE an upsert keyed on (user, gp_slug, dates). Add a unit test for the cap.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-03",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "No Clerk user.deleted webhook — deleting a Clerk account orphans Postgres user_profiles + saved_trips (right-to-erasure / GDPR gap)",
+      "whatExists": "Auth is pure JWKS JWT verification; user_profiles rows are lazily upserted by clerk_user_id on first persistence op; FK cascade (ondelete=CASCADE) deletes a user's trips when the user_profiles row is deleted.",
+      "whatsMissing": "There is no Clerk webhook handler (no svix/webhook/user.deleted route anywhere). When a user deletes their account in Clerk, the corresponding user_profiles + saved_trips rows (including their stored email) persist forever in Postgres with no deletion path. There is also no self-service 'delete my account / delete all my data' action in the app (only per-trip delete_trip). For a deployed app storing email + travel data this is a data-retention / right-to-erasure hole.",
+      "evidence": "grep -rni 'webhook|user.deleted|svix' backend/*.py returns nothing. Only delete_trip exists (backend/repository.py:90-96, backend/main.py:808-811). Email is stored: backend/models.py:57 (UserProfile.email), backend/repository.py:37-38 (set from token).",
+      "recommendation": "Add a Clerk svix-verified webhook endpoint that deletes the user_profiles row on user.deleted (FK cascade removes trips), or a documented manual erasure procedure, plus optionally a self-serve account/data deletion action.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-04",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "Migrations run inline in the start command — concurrent Railway replicas race on `alembic upgrade head`",
+      "whatExists": "railway.json startCommand = `cd backend && python -m alembic upgrade head && uvicorn ...`, run on every container start.",
+      "whatsMissing": "Running migrations as part of each instance's start command is unsafe the moment more than one replica boots (or a deploy overlaps a restart): two processes can call `alembic upgrade head` simultaneously with no advisory lock, racing on DDL. There is no separate release/migrate phase, no migration lock, and no documentation that the service must stay single-replica. Combined with the absence of a Python-version pin and migrations never being exercised in CI (audit deps-config-7), the first concurrent-migration race only surfaces in prod.",
+      "evidence": "railway.json:8 startCommand couples `alembic upgrade head` to every uvicorn boot; no `--workers` and no replica-count guard documented. No release-phase separation anywhere.",
+      "recommendation": "Move migrations to a dedicated release/pre-deploy step (or guard with a Postgres advisory lock), and document the single-instance assumption until a release phase exists.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-05",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "WebSocket receive loop has no idle timeout and no cap on concurrent open connections (slow-loris resource exhaustion)",
+      "whatExists": "There is a per-IP WS *connect-rate* limiter (_ws_connect_limiter.allow), an origin gate, auth-close, a 16KB per-message size cap, and the single event loop offloads DB/plan work to threads.",
+      "whatsMissing": "The accepted-connection loop is `while True: raw = await ws.receive_text()` with no asyncio.wait_for idle/inactivity timeout, and there is no global cap on the number of simultaneously OPEN WebSocket sessions (the limiter only throttles new-connection rate, not concurrency). An attacker can open many connections that authenticate then go silent; each holds a session dict and a server-side socket indefinitely on the single uvicorn process. This is a classic slow-loris / connection-exhaustion vector against a single-process server.",
+      "evidence": "backend/main.py:483-484 `while True: raw = await ws.receive_text()` (no wait_for/idle timeout). backend/main.py:377 MAX_WS_MESSAGE_SIZE only bounds message size. _ws_connect_limiter at main.py:466 bounds connect *rate*, not concurrent open count.",
+      "recommendation": "Wrap receive_text in asyncio.wait_for with an idle timeout that closes stale sockets, and add a global semaphore/counter capping concurrent open WS sessions.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-06",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "Frontend is not responsive/mobile — single fixed maxWidth:680, zero @media queries",
+      "whatExists": "Desktop layout with a centered column (maxWidth:680, maxHeight:920) and a viewport meta tag.",
+      "whatsMissing": "There is not a single @media query, matchMedia, or responsive breakpoint anywhere in the frontend (grep across components/, prototype.jsx, src/ returns zero). The app hard-codes a desktop-sized centered card with fixed font sizes (e.g. 9.5px chat text) and a flex column tuned for desktop. On a phone the fixed maxHeight:920 and tiny type produce a degraded, non-adaptive experience. For a trip-planning consumer app, mobile being an afterthought is a real product gap, not just cosmetic.",
+      "evidence": "grep -rn '@media|max-width|min-width|matchMedia' components/ prototype.jsx src/ returns nothing. Layout root: frontend/prototype.jsx:403 (maxWidth:680, maxHeight:920, fixed). index.html:5 has viewport but no responsive CSS follows.",
+      "recommendation": "Add responsive breakpoints (or a CSS framework), make the root container fluid on small screens, and add a mobile E2E viewport in Playwright.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-07",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "low",
+      "title": "No SEO / social / PWA metadata — no description, OG/Twitter tags, favicon, robots, or manifest",
+      "whatExists": "index.html has charset, viewport, and a <title>F1 Paddock Club</title> only.",
+      "whatsMissing": "index.html has no meta description, no Open Graph / Twitter Card tags (so shared links render with no preview image/text), no favicon (blank browser tab icon), no robots meta, no canonical, no web app manifest, and there is no frontend/public/ directory at all. For a deployed consumer-facing site this hurts shareability and basic polish.",
+      "evidence": "frontend/index.html:1-16 contains only charset/viewport/title; grep for 'favicon|og:|twitter:|description|robots|manifest' in index.html returns nothing. `ls frontend/public` does not exist (no static assets dir).",
+      "recommendation": "Add favicon, meta description, OG/Twitter tags with a preview image, robots/canonical, and (optionally) a manifest; create frontend/public for static assets.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-08",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "Sentry is initialized on the frontend but never consumed (no ErrorBoundary, no captureException, no PII scrubbing)",
+      "whatExists": "src/main.jsx calls Sentry.init when VITE_SENTRY_DSN_FRONTEND is set, with tracesSampleRate 0.1.",
+      "whatsMissing": "Beyond the single init call, Sentry is never used: no Sentry.ErrorBoundary, no Sentry.captureException, and no beforeSend/denyUrls scrubber. (The audit noted the missing React error boundary, but missed that the Sentry init itself is functionally inert AND unscrubbed.) Crucially the WS auth token is carried in the URL query string (buildWsUrl appends ?token=JWT); the frontend redactToken regex only sanitizes debug-log STRINGS, not what Sentry breadcrumbs / browser history actually capture, so a live Clerk JWT can land in Sentry. Default Sentry config also sends request URLs/PII. No replay, no release tagging, no user context either.",
+      "evidence": "src/main.jsx:12 is the ONLY Sentry usage (grep 'Sentry.' across components/prototype/src returns only the init). Token-in-URL: frontend/prototype.jsx:47-53 buildWsUrl appends `?token=`/`?demo_token=`. redactToken only operates on log strings: frontend/prototype.jsx:35. No beforeSend scrubber anywhere.",
+      "recommendation": "Wrap the app in Sentry.ErrorBoundary, add a beforeSend that strips token/demo_token query params and disables sending request URLs, and set release/environment tagging. Consider moving the WS token to a subprotocol/header rather than the URL.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-09",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "No uptime/alerting on health probes or errors — observability is collect-only with no routing",
+      "whatExists": "/healthz + /readyz endpoints, RequestIdMiddleware, JSON logging, optional Sentry, and a manual deploy-smoke workflow.",
+      "whatsMissing": "There is no automated monitoring or alerting layer: nothing polls /readyz on a schedule, no uptime monitor (Better Uptime/Pingdom/etc.) or Railway alert is documented, no Sentry alert rule, and deploy-smoke is workflow_dispatch-only (the audit noted deploy-smoke is manual but framed it as a smoke gap, not an ongoing-monitoring gap). So a post-deploy DB outage that flips /readyz to 503, or a Sentry error spike, notifies no one. Observability is purely collection with no signal routing.",
+      "evidence": "health.py:29-40 /readyz returns 503 on DB down but nothing consumes it on a schedule. .github/workflows/deploy-smoke.yml on: workflow_dispatch only (manual). observability.py:54-73 init_sentry has no alerting config. No cron/scheduled workflow exists (.github/workflows has only ci.yml + deploy-smoke.yml).",
+      "recommendation": "Add a scheduled uptime check against /readyz (cron workflow or external monitor) with alert routing, and configure Sentry alert rules for error-rate spikes.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-10",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "No LICENSE file — legal blocker for a public repo with a public deploy",
+      "whatExists": "Public-style repo with README, CHANGELOG, contributor-oriented AGENTS/CLAUDE docs, and a public Vercel/Railway deploy story.",
+      "whatsMissing": "There is no LICENSE / LICENSE.md / COPYING file anywhere. Without a license, default copyright applies and no one may legally reuse, fork, or contribute to the code, and dependency/SBOM tooling cannot classify it. For a project framed as a portfolio/enterprise-floor deploy this is a concrete legal omission the audit's docs-consistency dimension did not flag.",
+      "evidence": "`ls LICENSE LICENSE.md COPYING` -> none found at repo root.",
+      "recommendation": "Add an explicit LICENSE (e.g. MIT/Apache-2.0) appropriate to the intended use.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-11",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "low",
+      "title": "No Dependabot/Renovate — unpinned deps never even receive update PRs, so the unpinned-deps risk is never serviced",
+      "whatExists": "CI runs gitleaks and `npm audit --audit-level=moderate`; backend deps use >= ranges (audit deps-config-1).",
+      "whatsMissing": "There is no .github/dependabot.yml, renovate.json, or .renovaterc. The audit flagged that deps are unpinned and there is no lockfile for Python, but it missed that there is also no automated dependency-update mechanism at all — so neither the unpinned ranges nor the npm lockfile get serviced by update PRs or security alerts. npm audit only reports at build time; it does not open fix PRs, and there is nothing equivalent for Python deps.",
+      "evidence": "`ls .github/dependabot.yml renovate.json .renovaterc` -> NONE. .github/workflows contains only ci.yml + deploy-smoke.yml (no scheduled dependency job).",
+      "recommendation": "Add a Dependabot/Renovate config for both pip (backend/requirements.txt) and npm (frontend) plus GitHub Actions, alongside pinning deps.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-12",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "medium",
+      "title": "E2E and runtime depend on a drifting GP calendar / hardcoded near-term dates — tests silently rot as races pass",
+      "whatExists": "Smoke specs were migrated Canadian GP -> Italian GP specifically because of calendar drift (harness STATE.md note), and the smoke spec fills explicit travel dates 2026-05-22/2026-05-26.",
+      "whatsMissing": "The deterministic E2E lane is time-coupled to a live, advancing calendar: the harness itself records migrating specs off the Canadian GP because 'today past 2026-05-24 race date', and smoke.spec.js hardcodes depart 2026-05-22 / return 2026-05-26 — both already in the PAST as of the current date (2026-06-02). As more 2026 races pass, the chosen GP and these literal dates will keep falling out of the calendar window, making the 'deterministic' lane non-deterministic over time and forcing recurring manual spec edits. There is no relative-date strategy (e.g. compute a future date) and no test that the calendar/date layer degrades sanely once all listed races are past.",
+      "evidence": ".harness/STATE.md:56 documents the Canadian->Italian migration 'for calendar drift (today past 2026-05-24 race date)'. frontend/e2e/smoke.spec.js:47-52 hardcodes 2026-05-22/2026-05-26 (past relative to 2026-06-02). frontend/domain/tripDates.js has no today-relative validation (no Date.now/past check).",
+      "recommendation": "Make E2E dates relative to a fixed/mocked clock or compute future dates, and add coverage for the all-races-past degradation path so the lane stays deterministic.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-13",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "low",
+      "title": "Harness 'done' status contradicts shipped-deploy claims — deploy presented as DONE while the gate (T-001) is still awaiting a verdict",
+      "whatExists": "README Roadmap + CHANGELOG [Unreleased] + railway.json + vercel.json present the enterprise-floor deploy config as shipped/done. Harness STATE.md still lists Phase 4 'deploy readiness' with T-001 awaiting reviewer R10 verdict and T-DEPLOY-VERIFY unstarted.",
+      "whatsMissing": "The audit flagged many docs-vs-reality staleness issues (current.md, ZH README, README status table) but missed this specific live contradiction in the project's own control plane: the harness — the source of truth agents are told to follow — says the deploy-verification work (T-DEPLOY-VERIFY) is planned-but-unstarted and is gated on T-001, which is itself only 'awaiting verdict', yet the user-facing docs already declare the deploy 'done'. An agent following the harness would conclude deploy verification is incomplete; a reader following README would conclude it is finished. This is an unresolved status mismatch about whether the deploy is actually gate-verified.",
+      "evidence": ".harness/STATE.md:4 'Phase: 4 (hardening / E2E automation / deploy readiness)', :8 T-001 'awaiting reviewer R10 verdict', :9-10 'Planned next: T-DEPLOY-VERIFY ... still gated on T-001 close'. Contrast: railway.json/vercel.json committed + README Roadmap '4.7 enterprise floor ... (done)' (per audit docs-consistency findings).",
+      "recommendation": "Reconcile the harness and docs: either close T-001/T-DEPLOY-VERIFY and update STATE.md, or downgrade the README 'done' claim to 'config shipped, verification pending' until the gate closes.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-14",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "low",
+      "title": "No product analytics / usage telemetry — no insight into funnel, plan success rate, or feature adoption",
+      "whatExists": "Sentry error/trace SDK is wired (frontend init + optional backend), and there is a debug trace overlay (?debug).",
+      "whatsMissing": "There is no product-analytics instrumentation of any kind (grep for analytics/gtag/posthog/mixpanel/plausible returns nothing). Nothing records funnel steps (calendar view -> GP select -> plan run -> save), plan success/failure rates, refine usage, or save/load adoption. Sentry traces capture errors/performance, not product usage. For a deployed product there is no signal to know whether features work for users or where they drop off.",
+      "evidence": "grep -rni 'analytics|gtag|posthog|mixpanel|plausible' frontend (components/prototype/src) returns nothing. Only Sentry (error/trace) is present (src/main.jsx:12).",
+      "recommendation": "Add lightweight, consent-aware product analytics for the core funnel and feature usage, and document the data collected in a privacy note.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-15",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "low",
+      "title": "No LLM cost/spend guard or per-call-type budget — refine + multi-agent fan-out can run up unbounded provider cost",
+      "whatExists": ".env.example documents free-tier provider limits and a default cheap model (gpt-4o-mini); get_llm sets max_tokens per call; MAX_CONCURRENT_PLANS bounds concurrent plan runs.",
+      "whatsMissing": "There is no spend/quota guard on LLM usage: no per-user request quota, no daily token/cost ceiling, no circuit breaker on provider spend, and (per audit) no per-call timeout/retry. MAX_CONCURRENT_PLANS bounds concurrency but not total volume — an authenticated user can repeatedly trigger plan + refine (multi-agent fan-out, each calling the provider) with no cost ceiling. For a deploy with a real OPENAI_API_KEY this is an open-ended billing exposure. The rate limiter is per-IP connect-rate, not per-identity LLM-call budget.",
+      "evidence": "backend/llm.py only sets model/temperature/max_tokens (lines 80-89, 105-114) — no cost tracking. No per-user LLM quota anywhere (grep for quota returns nothing in app code). Rate limit is per-IP connect (main.py:466), unrelated to LLM spend.",
+      "recommendation": "Add a per-identity LLM-call/token budget (daily ceiling + 429 on exceed) and a provider-spend circuit breaker; surface usage in logs/metrics.",
+      "verdict": "confirmed_gap"
+    },
+    {
+      "id": "BS-16",
+      "source": "critic",
+      "dimension": "blind-spot",
+      "severity": "low",
+      "title": "deploy-smoke bundle scan is brittle and easily silently-skipped (false-green secret check)",
+      "whatExists": "deploy-smoke greps the built JS bundle for a fixed list of forbidden secret substrings (CLERK_SECRET_KEY, OPENAI_API_KEY, etc.).",
+      "whatsMissing": "The bundle secret-scan can silently pass without scanning anything: if the regex `/assets/index-[hash].js` does not match the index HTML (e.g. Vite output naming changes, code-splitting, or a CDN-rewritten path), the step prints 'Could not locate built JS asset; skipping bundle scan' and EXITS 0 — a false green on a security-relevant check. It also only matches literal env-var NAMES, not actual secret VALUE shapes (sk-..., a real DSN), so a leaked value not adjacent to its variable name would pass. Being manual-only (workflow_dispatch) compounds this. The audit covered deploy-smoke being manual but not that its core secret check is fail-open.",
+      "evidence": ".github/workflows/deploy-smoke.yml: the bundle step echoes 'Could not locate built JS asset; skipping bundle scan' and does not fail when the script tag is not found; forbidden list is variable-name substrings only, not value patterns.",
+      "recommendation": "Make a missing/unscannable asset a hard failure, scan all emitted JS assets (not just the first), and add value-shape patterns (sk-, DSN regex) in addition to variable names.",
+      "verdict": "confirmed_gap"
+    }
+  ]
+}

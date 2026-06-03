@@ -1,39 +1,24 @@
-# Current Project Status — 2026-05-07
+# Current Project Status — 2026-06-03
 
-This note records the current project state after the Round 2 feature-completion
-and Round 3 stabilization work. It intentionally excludes personal interview
-notes, real `.env` files, and local harness records.
+This note is the canonical near-term status snapshot. `AGENTS.md` / `CLAUDE.md`
+point coding agents here, so it must stay accurate: shipped-vs-pending status,
+the real test count, and the genuinely-remaining gaps. It intentionally excludes
+personal interview notes, real `.env` files, and local harness records.
+
+It records the state after the Round 2 feature-completion work, the Round 3
+stabilization work, and the **Phase 4.7 enterprise floor** (auth, persistence,
+observability, deploy config, security baseline) — all of which have shipped.
 
 ## Repo / Tracking
 
-- Current branch: `main`, tracking `origin/main`.
-- Round 2 baseline: `f2433af` (test+ci+docs: feature completion suite + backend
-  tests in CI).
-- Round 2 follow-ups, all on `main`: `8706046` selection quotes + constraint
-  chips, `fb2230f` persistent itinerary/tour edit tools + active constraints,
-  `fd10f6f` selection-driven budget via WebSocket quote, `79b9c9a` quote
-  validation + refinement constraint trust fixes, `7d65400` planning-agents
-  split + card rationales, `de65d21` prototype split + card explainability
-  panel, `7b05606` Round 2 architecture status + smoke matrix refresh,
-  `01d280b` English tour replacement targeting fix, `782f15f` smoke matrix
-  doc refresh.
-- Round 3 stabilization batch (this note's working set, sliced into multiple
-  commits): F1 domain skill (`backend/tools/_f1_domain.py` + tests), booking
-  link normalization (`backend/tools/_links.py` + tests + wiring through
-  `search_*.py` and agents), refine-supervisor split (`refine_state.py`,
-  `refine_reply.py`), recompute multi-leg flight handling, plan validation
-  hardening (`backend/main.py`), Playwright e2e harness
-  (`frontend/e2e/smoke.spec.js` + `playwright.config.js`), local-validation
-  scripts (`check-local.sh`, `check-agent-doc-sync.sh`, `e2e-local.sh`,
-  `python-bin.sh`, `install-hooks.sh`, `install-codex-skills.sh`),
-  `.githooks/pre-push`, repo-local skills (`skills/url-normalizer/`,
-  `skills/orchestrator/`), and the new `docs/intelligence-roadmap.md`.
+- Working branch for the current audit sweep: `gap-audit-sweep`. The deploy
+  branch is `main` (Vercel + Railway auto-deploy on push to `main`).
 - `AGENTS.md` and `CLAUDE.md` are tracked, compact, and kept byte-identical by
   `scripts/check-agent-doc-sync.sh`. Personal/local files remain excluded from
-  git unless separately approved: `.env`, `.local_harness/`, `docs/flaws.md`,
-  AIA/interview docs, and anti-drift notes.
+  git unless separately approved: `.env`, `.harness/`, AIA/interview docs, and
+  anti-drift notes.
 
-## Implemented Functional Work
+## Shipped Functional Work
 
 - Selection-aware quote flow:
   - WebSocket `type="quote"` recomputes selected ticket/flight/hotel totals
@@ -48,15 +33,18 @@ notes, real `.env` files, and local harness records.
     `missing_price_categories`, and `selected_indices`.
   - Unpriced selections are allowed but turn the budget amber/incomplete
     instead of pretending the trip is within budget.
+  - A one-way-only flight set or a hard constraint that empties a category marks
+    the budget incomplete rather than reporting a green within-budget total.
 - Booking/link semantics:
   - Ticket, flight, and hotel cards include `provider`, `link_type`, and
     `booking_confidence` metadata where available.
   - Frontend copy distinguishes official ticket pages, flight searches, hotel
-    listings, maps listings, and generic provider/search pages.
+    listings, maps listings, and generic provider/search pages — never implying
+    a confirmed purchase.
 - Persistent itinerary/tour refinement:
   - Lane 2 exposes `update_itinerary_tool` and `update_tour_tool`.
-  - Tools now edit the server-side state captured by the closure; they no
-    longer accept LLM-supplied current-state JSON.
+  - Tools edit the server-side state captured by the closure; they no longer
+    accept LLM-supplied current-state JSON.
   - If no tool actually updates state, replies cannot claim result cards were
     changed.
 - Structured constraint memory:
@@ -64,34 +52,89 @@ notes, real `.env` files, and local harness records.
     allowed hotel brands, dietary needs, accessibility, avoid-luxury, and
     budget strategy.
   - Constraint extraction supports English and Chinese inputs, plus explicit
-    clearing phrases such as “connections are OK” or “any brand is fine”.
+    clearing phrases such as “connections are OK” or “any brand is fine”, and no
+    longer misfires on neutral wording like “what is my budget?”.
   - A deterministic hard-constraint reconciler removes flights/hotels that
     contradict active constraints after tool output.
 - Card explainability:
   - Ticket, flight, and hotel cards carry deterministic `_rationale` metadata.
   - Frontend cards expose a “Why this card?” panel with reasons, matched
     constraints, source path, and trade-offs.
-  - Source path is a product data path inferred from final card source; it is
+  - Source path is a product data path inferred from the final card source; it is
     not described as a full runtime attempt trace.
+
+## Enterprise Floor (Phase 4.7) — Shipped
+
+These are the items earlier versions of this note listed as "remaining
+production-readiness gaps". They have all shipped:
+
+- **Auth.** Real OAuth sign-in via Clerk (`@clerk/clerk-react`), backend JWT
+  verification against Clerk JWKS, per-identity isolation, and fail-closed
+  behavior (a non-local deploy with neither Clerk nor a demo token configured
+  returns 503 instead of admitting everyone as `demo-user`). Transient JWKS
+  outages serve a stale cached key or return 503/close, not 500.
+- **Persistence.** Postgres-backed saved trips via SQLAlchemy ORM
+  (`backend/models.py`), CRUD in `backend/repository.py`, engine/session wiring
+  in `backend/db.py` (which rewrites Railway's bare `postgresql://` URL to the
+  psycopg3 driver), and Alembic migrations run at deploy time via `railway.json`.
+  Saved trips are owner-scoped per Clerk identity; the shared `demo-user`
+  sentinel cannot own persisted trips on a real deploy.
+- **Observability.** Sentry error tracking on backend and frontend (DSN-gated),
+  structured JSON logging, and per-request `request_id` binding
+  (`backend/observability.py`).
+- **Health probes.** `/healthz` (liveness) and `/readyz` (DB-aware readiness,
+  503 when the DB is down).
+- **Security baseline.** Explicit `ALLOWED_ORIGINS` CORS allowlist (fail-fast on
+  empty in non-local), WebSocket Origin gate, CSP/HSTS middleware in production,
+  per-IP rate limiting keyed off the trusted right-most `X-Forwarded-For` hop and
+  run before auth, interactive API docs disabled on real deploys, and `gitleaks`
+  secret-scan CI on every push/PR.
+- **Deploy config.** `vercel.json` (static frontend + headers), `railway.json`
+  (FastAPI + Postgres, migrations in the start command), and a
+  `deploy-smoke` workflow. A fresh-machine deploy runbook lives in the README
+  ("Deploy from scratch (Vercel + Railway + Clerk + Sentry)").
+- **CI browser automation.** Deterministic Playwright E2E lanes run in CI (see
+  Verification Summary).
+
+The frontend gracefully falls back to demo-token mode for local dev when
+`VITE_CLERK_PUBLISHABLE_KEY` is unset, so the E2E lanes keep running without
+external credentials. The mock/estimate data path remains a permanent
+graceful-degradation fallback.
+
+## Deploy Verification Status (in progress)
+
+Deploy **config** has shipped, but the end-to-end deploy **gate** is not yet
+signed off. Per the harness control plane (`.harness/STATE.md`):
+
+- **T-001** (deterministic E2E in CI) — R10 changes committed; **awaiting the
+  reviewer's R10 verdict**.
+- **T-DEPLOY-VERIFY** (deploy-gate verification + roadmap sync) — **planned, not
+  started**; gated on T-001 closing.
+
+Until those close, treat deploy as **"config shipped, end-to-end gate
+verification pending"** rather than fully signed off. The README "Current State"
+table, the README roadmap, and `docs/deployment-design.md` all carry the same
+caveat so the docs and the harness agree.
 
 ## Internal Stabilization Work
 
 - Frontend structure:
-  - `frontend/prototype.jsx` is now the application orchestrator: state,
-    WebSocket, and page composition.
-  - Pure display/domain rules moved into `frontend/domain/`.
-  - Render-only UI moved into `frontend/components/`, including GP selection,
-    welcome form, budget panel, chat panel, result card, explainability panel,
-    and paddock visuals.
-  - `prototype.jsx` has been reduced from a large single-file prototype to
-    roughly 400 lines.
+  - `frontend/prototype.jsx` is the application orchestrator: state, WebSocket,
+    and page composition (~400 lines).
+  - Pure display/domain rules live in `frontend/domain/`.
+  - Render-only UI lives in `frontend/components/`, including GP selection,
+    welcome form, budget panel, chat panel, result card, and explainability
+    panel.
 - Backend structure:
-  - `backend/agents/__init__.py` is now a facade; individual graph agent nodes
-    live in `backend/agents/*.py`.
-  - `backend/refine_editing.py` owns itinerary/tour text update helpers.
-  - `backend/refine_constraints.py` owns the hard-constraint reconciler.
-  - `backend/refine.py` still owns the supervisor orchestration, but no longer
-    contains all helper logic inline.
+  - `backend/agents/__init__.py` is a facade; individual graph agent nodes live
+    in `backend/agents/*.py`.
+  - `backend/refine_editing.py` owns itinerary/tour text update helpers,
+    `backend/refine_constraints.py` owns the hard-constraint reconciler, and
+    `backend/refine_state.py` / `backend/refine_reply.py` own state-apply and
+    deterministic-reply helpers split out of `backend/refine.py`.
+  - The enterprise-floor modules `backend/db.py`, `backend/models.py`,
+    `backend/repository.py`, and `backend/observability.py` own persistence and
+    observability.
 - Project understanding:
   - `docs/architecture-map.zh-CN.md` explains the current state flow, memory
     layers, quote contract, hard constraints, explainability, and module
@@ -99,78 +142,69 @@ notes, real `.env` files, and local harness records.
 
 ## Verification Summary
 
-- Backend compile passed: `backend/.venv/bin/python -m compileall -q backend`.
-- Backend unit tests passed: `backend/.venv/bin/python -m unittest discover -s backend/tests -v` with 50 tests.
-- Frontend production build passed: `npm run build`.
-- Frontend dependency audit passed: `npm audit --audit-level=moderate`.
+- Backend compile passes: `backend/.venv/bin/python -m compileall -q backend`.
+- Backend unit tests pass: `backend/.venv/bin/python -m unittest discover -s
+  backend/tests -v` — **131 tests, OK** (test_links, test_main_auth,
+  test_main_trip_ws, test_outbound_egress, test_p0_trust_fixes, test_rationale,
+  test_repository, test_security_headers, and the feature-completion suite).
+- Frontend production build passes: `npm run build`.
+- Frontend dependency audit passes: `npm audit --audit-level=moderate`
+  (0 vulnerabilities).
 - Local verification can be run with `./scripts/check-local.sh`, which bundles
   guideline sync, backend compile, backend tests, URL-normalizer skill tests,
   frontend `npm ci`, frontend build, and audit.
-- Browser smoke can be run with `./scripts/e2e-local.sh`, which starts backend
-  and frontend, runs Playwright against `http://localhost:3000`, and cleans up.
-  The Playwright spec at `frontend/e2e/smoke.spec.js` now covers four cases:
-  the original mock-fallback selection/quote/links flow plus three regression
-  guards (direct-only refinement, welcome-form date input async setter, and
-  English tour replacement not appending the old title).
-- `scripts/install-hooks.sh` enables `.githooks/pre-push`, which gates every
-  push on `check-agent-doc-sync.sh` + `check-local.sh`.
-- Browser Use E2E was rerun against restarted local services:
-  - Singapore GP: default dates `2026-10-09` -> `2026-10-14`, normal planning,
-    selected quote, unpriced incomplete quote, explainability panel, and debug
-    trace.
-  - Miami GP: normal planning, direct-only refinement, Chinese Marriott/Hilton
-    brand constraint, itinerary persistence, tour persistence, and
-    explainability panel.
-  - Canadian GP: default dates `2026-05-22` -> `2026-05-27`, same-day rejection,
-    >30-night rejection, and no new console errors during the date-boundary
-    interactions.
-- Browser testing found and fixed three regressions during this batch:
-  - Direct-only refinement could keep a card whose text said `1 stop` when a
-    bad structured field said `stops: 0`.
-  - The extracted `WelcomeForm` date input used `e.currentTarget.value` inside
-    an async state updater, which could null out and blank the page.
-  - English Explore-card replacements such as `Replace Gardens by the Bay with
-    National Gallery Singapore` could append text instead of replacing the
-    targeted tour title; the edit helper now recognizes `with` replacements
-    and prioritizes the named source item.
-- Follow-up trust fixes in this working batch:
-  - Fallback/mock flights now use a single `ROUNDTRIP` flight card, so selected
-    quote totals cannot accidentally count only one direction.
-  - Stale or malformed transport selections that point at `LOCAL` transit are
-    rejected instead of producing a falsely cheap quote.
-  - Plan input validation now rejects non-positive budgets and legacy
-    `extra_days` outside the 0-27 range.
-  - Refinement state-update and deterministic-reply helpers were split out of
-    `backend/refine.py` to reduce the supervisor module's size without changing
-    behavior.
+- Browser smoke can be run with `./scripts/e2e-local.sh`. The Playwright suite
+  in `frontend/e2e/` has **five spec files / seven cases** across three lanes:
+  - **Default lane** (`smoke.spec.js`, `explain.spec.js`) — no LLM keys; mock
+    fallback selection/quote/links, a date-input regression, and the
+    explainability panel content.
+  - **Stub-gated refine lane** (`refine.spec.js`, `quote_incomplete.spec.js`) —
+    `E2E_INCLUDE_REFINE=1` + `LLM_STUB_MODE=1`; direct-only refinement, English
+    Explore-card replacement, and the unpriced/incomplete amber-quote path.
+  - **Saved-trips lane** (`saved_trips.spec.js`) — `E2E_INCLUDE_SAVED=1` +
+    `LLM_STUB_MODE=1`; the enterprise-floor save → reload → list → load
+    round-trip against the SQLite-backed persistence layer.
+- CI (`.github/workflows/ci.yml`) runs the full lane with
+  `E2E_INCLUDE_REFINE=1 LLM_STUB_MODE=1` plus the bundled `check-local.sh` job;
+  Playwright artifacts upload on failure. (The saved-trips lane is gated behind
+  `E2E_INCLUDE_SAVED=1` and is one of the items T-DEPLOY-VERIFY will confirm runs
+  in the gate.)
+- `scripts/install-hooks.sh` enables `.githooks/pre-push`, which gates every push
+  on `check-agent-doc-sync.sh` + `check-local.sh`.
 
 ## Remaining Functional Gaps
+
+These are the genuinely-remaining items now that the enterprise floor has
+shipped:
 
 - Itinerary/tour update tools are deterministic and safer than free-form
   promises, but still basic; a later version should use schema-validated LLM
   rewriting with diff/rollback guards.
-- `active_constraints` and plan state are in-memory per WebSocket session; they
-  do not survive page reloads or backend restarts.
-- Budget is selection-aware and honest about missing prices, but it is not yet
-  a full optimizer that searches all tradeoff combinations.
-- Explainability currently covers ticket, flight, and hotel cards. Schedule and
-  Explore explainability remain future work.
-- Production readiness still needs auth, explicit CORS/origin policy, rate
-  limiting, persistent storage, and CI browser automation.
+- The live per-WebSocket planning session (plan state + `active_constraints`) is
+  in-memory and does not survive a reconnect; only explicitly **saved** trips
+  persist to Postgres. Reusable per-user default constraints
+  (`saved_constraints` table) are not yet wired to any handler.
+- Budget is selection-aware and honest about missing prices, but it is not yet a
+  full optimizer that searches all tradeoff combinations.
+- Explainability covers ticket, flight, and hotel cards. Schedule and Explore
+  explainability remain future work.
+- Operate/scale items remain (Phase 5): error budgets, per-user storage quotas,
+  audit log, custom domain, mobile/PWA polish, a Clerk `user.deleted` erasure
+  webhook, scheduled uptime/alerting, and a cross-instance (Redis) rate limiter.
+- Deploy-gate verification (T-001 / T-DEPLOY-VERIFY) is still pending; see the
+  Deploy Verification Status section above.
 
 ## Next Engineering Priorities
 
-1. Commit the current stabilization batch in labelled slices, keeping personal
-   docs and local harness files out of git.
-2. Add deterministic fixture-backed browser automation so quote/constraint E2E
-   can run in CI instead of only through Browser Use.
-3. Replace basic itinerary/tour text patching with schema-validated rewriting,
+1. Close the deploy gate: land the T-001 R10 verdict, then run T-DEPLOY-VERIFY
+   (confirm the full E2E lane incl. saved-trips runs in CI, then drop the
+   "verification pending" caveat from the README/roadmap/deployment-design).
+2. Replace basic itinerary/tour text patching with schema-validated rewriting,
    diff preview, and rollback guards.
-4. Add an Explainability panel v2 only if it can show true runtime attempt trace
-   rather than inferred source path.
-5. Add iCal export for the selected itinerary once state contracts are stable.
-6. Add a real quote/session store before moving beyond demo mode.
-7. Expand budget strategy from evaluator to tradeoff optimizer.
+3. Add an Explainability panel v2 only if it can show a true runtime attempt
+   trace rather than an inferred source path.
+4. Begin the Phase 5 operate/scale items (per-user quotas, audit log,
+   monitoring/alerting, account-deletion/erasure path).
 
 ## Interview Framing
 
