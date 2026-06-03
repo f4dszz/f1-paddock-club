@@ -39,7 +39,7 @@ psycopg[binary]==3.3.4
 # --- Auth / HTTP / observability ---
 pyjwt[crypto]==2.13.0
 httpx==0.28.1
-sentry-sdk[fastapi]==2.60.0
+sentry-sdk[fastapi]==2.61.1
 python-json-logger==4.1.0
 python-dotenv==1.2.2
 
