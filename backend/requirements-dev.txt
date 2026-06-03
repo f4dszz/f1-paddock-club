@@ -1,0 +1,16 @@
+# ---------------------------------------------------------------------------
+# Backend development / CI-only tooling (deps-config-5, deploy-cicd-1).
+#
+# These are NOT needed at runtime; CI installs them in addition to
+# requirements.txt to run the lint / type-check gate:
+#     pip install -r requirements.txt -r requirements-dev.txt
+#     ruff check backend
+#     mypy backend
+#
+# Config for both tools lives in the repo-root pyproject.toml.
+# Pins are conservative, compatible with Python 3.12 (CI) and 3.11 (local).
+# ---------------------------------------------------------------------------
+-r requirements.txt
+
+ruff==0.13.4
+mypy==1.18.2

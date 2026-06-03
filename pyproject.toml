@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# Repo-root tooling config for the FastAPI/LangGraph backend (deps-config-5).
+#
+# This file holds ONLY static-analysis configuration (ruff + mypy). The project
+# is not packaged from here; dependencies live in backend/requirements*.txt.
+# Tools are installed in CI via backend/requirements-dev.txt, then run as:
+#     ruff check backend
+#     mypy backend
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# Lint/format the backend package; never the vendored venv or migration boilerplate.
+extend-exclude = [
+    ".venv",
+    "backend/.venv",
+    "**/node_modules",
+    "backend/alembic/versions",
+]
+
+[tool.ruff.lint]
+# Conservative starter rule set: pyflakes (F), pycodestyle errors (E),
+# import sorting (I), bugbear (B), pyupgrade (UP), unused-args (ARG).
+# Kept non-pedantic so the gate is adoptable on existing code.
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "E501",  # line length handled by formatter, not enforced as a hard error
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and migrations get extra latitude.
+"backend/tests/**" = ["B", "ARG"]
+"backend/alembic/**" = ["E", "F", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["backend"]
+exclude = '(^|/)(\.venv|node_modules|alembic/versions)/'
+# Lenient baseline so the type-check gate can be adopted incrementally on an
+# untyped codebase without an avalanche of errors. Tighten over time.
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = false
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["backend.alembic.*", "backend.tests.*"]
+ignore_errors = true

@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "jsx": "react-jsx",
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "baseUrl": "."
+  },
+  "include": ["domain/**/*.js", "hooks/**/*.js", "src/**/*.js", "vite.config.js", "vitest.config.js"],
+  "exclude": ["node_modules", "dist", "test-results", "e2e", "playwright.config.js"]
+}
