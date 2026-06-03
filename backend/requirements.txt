@@ -21,7 +21,7 @@ langchain-openai==1.2.1
 langchain-anthropic==1.4.3
 
 # --- Web framework / server ---
-fastapi==0.136.1
+fastapi==0.136.3
 uvicorn[standard]==0.46.0
 # starlette and typing-extensions are imported first-party (observability.py,
 # security_headers.py, state.py) so they are declared directly rather than
