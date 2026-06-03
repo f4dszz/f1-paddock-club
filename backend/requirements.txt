@@ -45,7 +45,7 @@ python-dotenv==1.2.2
 
 # --- External data providers (graceful-degradation paths) ---
 google-search-results==2.4.2
-firecrawl-py==4.25.2
+firecrawl-py==4.28.2
 
 # NOTE: slowapi removed (deps-config-2) — it was never imported anywhere;
 # rate limiting is handled by the in-process IPRateLimiter in main.py.
