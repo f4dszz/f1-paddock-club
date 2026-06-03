@@ -1,0 +1,18 @@
+{
+  "name": "F1 Paddock Club",
+  "short_name": "Paddock Club",
+  "description": "Plan your Formula 1 race weekend — flights, hotels, grandstand tickets, and tours, with a live budget.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

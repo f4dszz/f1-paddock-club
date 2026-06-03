@@ -22,8 +22,9 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
           {[{l:"Flying from",k:"origin",p:"e.g. New York",t:"text"},{l:`Budget (${form.currency})`,k:"budget",p:"2500",t:"number"}].map(f => (
             <div key={f.k}>
-              <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>{f.l}</label>
+              <label htmlFor={`welcome-${f.k}`} style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>{f.l}</label>
               <input
+                id={`welcome-${f.k}`}
                 data-testid={f.k==="origin"?"origin-input":"budget-input"}
                 value={form[f.k]}
                 onChange={e => {
@@ -43,12 +44,14 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
           ))}
         </div>
 
-        <div style={{marginBottom:6}}>
+        <div style={{marginBottom:6}} role="group" aria-label="Currency">
           <label style={{fontSize:8,color:"#555",display:"block",marginBottom:3}}>Currency <span style={{color:"#333"}}>(budget amount is interpreted in this unit)</span></label>
           <div style={{display:"flex",gap:3}}>
             {["EUR","USD","CNY"].map(c => (
               <button
                 key={c}
+                type="button"
+                aria-pressed={form.currency===c}
                 data-testid={`currency-${c}`}
                 onClick={() => setForm(prev => ({...prev,currency:c}))}
                 style={{flex:1,padding:"4px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",border:`1px solid ${form.currency===c?"#E10600":"#222"}`,background:form.currency===c?"#E1060015":"transparent",color:form.currency===c?"#E10600":"#555"}}
@@ -61,8 +64,9 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:dateValidation.error||dateValidation.warnings.length?3:6}}>
           <div>
-            <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Depart date</label>
+            <label htmlFor="welcome-departDate" style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Depart date</label>
             <input
+              id="welcome-departDate"
               data-testid="depart-date-input"
               type="date"
               value={form.departDate}
@@ -78,8 +82,9 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
             />
           </div>
           <div>
-            <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Return date</label>
+            <label htmlFor="welcome-returnDate" style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Return date</label>
             <input
+              id="welcome-returnDate"
               data-testid="return-date-input"
               type="date"
               value={form.returnDate}
@@ -102,12 +107,14 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
           </div>
         )}
 
-        <div style={{marginBottom:6}}>
+        <div style={{marginBottom:6}} role="group" aria-label="Grandstand">
           <label style={{fontSize:8,color:"#555",display:"block",marginBottom:3}}>Grandstand</label>
           <div style={{display:"flex",gap:3}}>
             {[["any","Any"],["ga","GA"],["mid","Mid"],["vip","VIP"]].map(([v,l]) => (
               <button
                 key={v}
+                type="button"
+                aria-pressed={form.stand===v}
                 data-testid={`stand-${v}`}
                 onClick={() => setForm(prev => ({...prev,stand:v}))}
                 style={{flex:1,padding:"4px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",border:`1px solid ${form.stand===v?"#E10600":"#222"}`,background:form.stand===v?"#E1060015":"transparent",color:form.stand===v?"#E10600":"#555"}}
@@ -119,8 +126,9 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
         </div>
 
         <div>
-          <label style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Special requests <span style={{color:"#333"}}>(optional)</span></label>
+          <label htmlFor="welcome-special" style={{fontSize:8,color:"#555",display:"block",marginBottom:2}}>Special requests <span style={{color:"#333"}}>(optional)</span></label>
           <textarea
+            id="welcome-special"
             data-testid="special-requests-input"
             value={form.special}
             onChange={e => {
@@ -139,6 +147,7 @@ export function WelcomeForm({ form, setForm, gp, onSubmit }) {
       </div>
 
       <button
+        type="button"
         data-testid="plan-submit"
         onClick={onSubmit}
         disabled={disabled}

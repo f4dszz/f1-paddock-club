@@ -4,7 +4,13 @@ import { ConFloat, TrackSVG, Zone } from "./PaddockVisuals.jsx";
 export function AppHeader({ gp, phase, pipeIdx, onBack, onReset, rightSlot, extraActions }) {
   return (
     <div style={{padding:"8px 16px",borderBottom:"1px solid #1a1a1a",flexShrink:0,display:"flex",alignItems:"center",gap:8}}>
-      <div onClick={onBack} style={{cursor:"pointer",color:"#555",fontSize:14}}>←</div>
+      <div
+        onClick={onBack}
+        role="button"
+        tabIndex={0}
+        aria-label="Back to Grand Prix selection"
+        onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onBack();}}}
+        style={{cursor:"pointer",color:"#555",fontSize:14}}>←</div>
       {gp && <TrackSVG d={gp.track||TRACK_MAP["Italian GP"]} color={gp.hero||"#059669"} size={28}/>}
       <div style={{flex:1}}>
         <div style={{fontSize:13,fontWeight:700}}>{gp ? `${FLAGS[gp.country]||""} ${SHORT_NAMES[gp.gp_name]||gp.city}` : "Paddock Club"}</div>
@@ -17,7 +23,7 @@ export function AppHeader({ gp, phase, pipeIdx, onBack, onReset, rightSlot, extr
       )}
       {extraActions}
       {phase!=="welcome" && (
-        <button onClick={onReset} style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#555",fontSize:8,cursor:"pointer"}}>
+        <button type="button" onClick={onReset} style={{padding:"3px 8px",borderRadius:5,border:"1px solid #222",background:"transparent",color:"#555",fontSize:8,cursor:"pointer"}}>
           RESET
         </button>
       )}
@@ -43,6 +49,7 @@ export function DebugTrace({ debugLog, copyStatus, setCopyStatus }) {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <div style={{fontSize:8,color:"#555"}}>Debug trace</div>
         <button
+          type="button"
           onClick={async () => {
             try{
               await navigator.clipboard.writeText(debugLog.join("\n"));

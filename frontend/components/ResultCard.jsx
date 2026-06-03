@@ -46,6 +46,12 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
         const unpriced=it.priced===false && (mode==="single"||mode==="multi");
         return(
           <div key={i} data-testid={`result-item-${zoneKey}-${i}`} onClick={()=>selectable&&toggle(value)}
+            // a11y (frontend-completeness-6): selectable rows become keyboard
+            // operable; non-selectable rows stay plain (no role/tab).
+            role={selectable?"button":undefined}
+            tabIndex={selectable?0:undefined}
+            aria-pressed={selectable?isSel:undefined}
+            onKeyDown={selectable?(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle(value);}}:undefined}
             style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",borderBottom:i<items.length-1?"1px solid #1a1a1a":"none",
               cursor:selectable?"pointer":"default",
               background:isSel?z.color+"12":"transparent",
@@ -63,7 +69,7 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
             </div>
             {(zoneKey==="hotel"||zoneKey==="transport")&&it.source&&<SourceBadge source={it.source}/>}
             {(it.rationale||explainDemo)&&onShowExplain&&(
-              <button onClick={(e)=>{e.stopPropagation();onShowExplain(zoneKey,it);}}
+              <button type="button" onClick={(e)=>{e.stopPropagation();onShowExplain(zoneKey,it);}}
                 data-testid={`explain-button-${zoneKey}-${i}`}
                 aria-label="Why this card?"
                 title="Why this card?"
@@ -74,13 +80,13 @@ export function ResultCard({zoneKey,selections,onSelect,liveResults,onShowExplai
               </button>
             )}
             {it.price&&<span style={{fontSize:unpriced?9:10.5,fontWeight:unpriced?400:600,color:unpriced?"#666":(isSel?"#fff":"#888"),fontStyle:unpriced?"italic":"normal"}}>{it.price}</span>}
-            {unpriced&&it.link&&<button data-testid={`book-unpriced-${zoneKey}-${i}`} onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>{linkActionLabel(it)} →</button>}
+            {unpriced&&it.link&&<button type="button" data-testid={`book-unpriced-${zoneKey}-${i}`} onClick={(e)=>{e.stopPropagation();window.open(it.link,"_blank");}} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:`1px solid ${z.color}44`,background:"transparent",color:z.color,cursor:"pointer"}}>{linkActionLabel(it)} →</button>}
           </div>
         );
       })}
       {bookLabel&&hasSelection&&bookableItems.length>0&&(
         <div style={{padding:"6px 10px",borderTop:`1px solid ${z.color}22`}}>
-          <button data-testid={`book-button-${zoneKey}`} onClick={(e)=>{e.stopPropagation();
+          <button type="button" data-testid={`book-button-${zoneKey}`} onClick={(e)=>{e.stopPropagation();
             bookableItems.forEach(item=>{
               const url=item.link;
               if(url) window.open(url,"_blank");

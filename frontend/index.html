@@ -2,11 +2,58 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>F1 Paddock Club</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>F1 Paddock Club — Plan your Formula 1 race weekend</title>
+
+  <!-- BS-07: SEO / discoverability -->
+  <meta name="description" content="Plan your Formula 1 race weekend: flights, hotels, grandstand tickets, and tours with a live budget. Pick a Grand Prix and let the Paddock Club concierge build your trip." />
+  <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="canonical" href="https://f1-paddock-club.vercel.app/" />
+
+  <!-- BS-07: favicon + PWA manifest -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+
+  <!-- BS-07: Open Graph (link previews) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="F1 Paddock Club" />
+  <meta property="og:title" content="F1 Paddock Club — Plan your Formula 1 race weekend" />
+  <meta property="og:description" content="Flights, hotels, grandstand tickets, and tours with a live budget — pick a Grand Prix and let the concierge build your trip." />
+  <meta property="og:url" content="https://f1-paddock-club.vercel.app/" />
+  <meta property="og:image" content="/og-image.svg" />
+
+  <!-- BS-07: Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="F1 Paddock Club — Plan your Formula 1 race weekend" />
+  <meta name="twitter:description" content="Flights, hotels, grandstand tickets, and tours with a live budget — pick a Grand Prix and let the concierge build your trip." />
+  <meta name="twitter:image" content="/og-image.svg" />
+
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #0a0a0a; }
+
+    /* BS-06: targeted responsive pass — keep the desktop centered card intact,
+       but let the root container go fluid below ~700px so it fills small
+       screens instead of staying pinned to a fixed 680px / 920px box. The app
+       root carries data-app-root; these rules relax its fixed sizing on
+       narrow viewports without redesigning the layout. */
+    @media (max-width: 700px) {
+      [data-app-root] {
+        max-width: 100% !important;
+        max-height: none !important;
+        height: 100dvh !important;
+      }
+      [data-gp-grid] {
+        grid-template-columns: repeat(2, 1fr) !important;
+      }
+    }
+    @media (max-width: 380px) {
+      [data-gp-grid] {
+        grid-template-columns: 1fr !important;
+      }
+    }
   </style>
 </head>
 <body>

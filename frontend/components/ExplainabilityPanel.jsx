@@ -1,14 +1,12 @@
-import { useEffect } from "react";
 import { ZONES } from "../domain/planningConstants.js";
 import { describeConstraintMatch, sourceColor, sourceLabel } from "../domain/display.js";
 import { PxChar } from "./PaddockVisuals.jsx";
+import { useFocusTrap } from "../hooks/useFocusTrap.js";
 
 export function ExplainabilityPanel({rationale,zoneKey,itemMain,onClose}){
-  useEffect(()=>{
-    const handler=(e)=>{if(e.key==="Escape")onClose();};
-    window.addEventListener("keydown",handler);
-    return()=>window.removeEventListener("keydown",handler);
-  },[onClose]);
+  // a11y (frontend-completeness-6): move focus into the panel, trap Tab, Esc
+  // to close, and restore focus to the trigger on close.
+  const panelRef=useFocusTrap(!!rationale,onClose);
 
   if(!rationale)return null;
   const z=ZONES.find(z=>z.key===zoneKey)||{color:"#888",label:zoneKey};
@@ -22,7 +20,7 @@ export function ExplainabilityPanel({rationale,zoneKey,itemMain,onClose}){
   return(
     <div style={{position:"fixed",inset:0,zIndex:100,pointerEvents:"auto"}}>
       <div onClick={onClose} style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.55)",animation:"explainFadeIn .18s ease-out"}}/>
-      <div role="dialog" aria-label="Why this card?" data-testid="explain-panel" style={{
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Why this card?" data-testid="explain-panel" style={{
         position:"absolute",top:0,right:0,bottom:0,width:"min(360px, 92vw)",
         background:"#0c0c0c",borderLeft:`1px solid ${z.color}55`,
         boxShadow:"-8px 0 24px rgba(0,0,0,0.5)",display:"flex",
@@ -34,7 +32,7 @@ export function ExplainabilityPanel({rationale,zoneKey,itemMain,onClose}){
             <div style={{fontSize:9,color:"#555",letterSpacing:"0.06em"}}>WHY THIS {z.label.toUpperCase()}?</div>
             <div style={{fontSize:11.5,fontWeight:600,color:"#ddd",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{itemMain||"Selection"}</div>
           </div>
-          <button onClick={onClose} aria-label="Close" style={{background:"transparent",border:"1px solid #222",color:"#888",borderRadius:5,fontSize:12,padding:"3px 8px",cursor:"pointer",lineHeight:1}}>x</button>
+          <button type="button" onClick={onClose} aria-label="Close" style={{background:"transparent",border:"1px solid #222",color:"#888",borderRadius:5,fontSize:12,padding:"3px 8px",cursor:"pointer",lineHeight:1}}>x</button>
         </div>
 
         <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}} data-testid="explain-panel-body">

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#0a0a0a"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#E10600"/>
+  <g transform="translate(80 220)" fill="#ffffff">
+    <rect x="0"   y="0"  width="24" height="24"/>
+    <rect x="48"  y="0"  width="24" height="24"/>
+    <rect x="24"  y="24" width="24" height="24"/>
+    <rect x="72"  y="24" width="24" height="24"/>
+    <rect x="0"   y="48" width="24" height="24"/>
+    <rect x="48"  y="48" width="24" height="24"/>
+    <rect x="24"  y="72" width="24" height="24"/>
+    <rect x="72"  y="72" width="24" height="24"/>
+  </g>
+  <text x="80" y="380" font-family="'DM Sans', Arial, sans-serif" font-size="34" letter-spacing="12" fill="#888">FORMULA 1</text>
+  <text x="80" y="450" font-family="'DM Sans', Arial, sans-serif" font-size="84" font-weight="700" fill="#ffffff">PADDOCK CLUB</text>
+  <text x="80" y="510" font-family="'DM Sans', Arial, sans-serif" font-size="30" fill="#aaaaaa">Plan your F1 race weekend — flights, hotels, tickets &amp; tours</text>
+</svg>

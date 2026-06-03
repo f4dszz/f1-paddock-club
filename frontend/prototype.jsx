@@ -19,6 +19,7 @@ import { WelcomeForm } from "./components/WelcomeForm.jsx";
 import UserMenu from "./components/UserMenu.jsx";
 import SavedTrips from "./components/SavedTrips.jsx";
 import { useBackendToken, useDemoToken } from "./hooks/useBackendToken.js";
+import { track } from "./hooks/analytics.js";
 
 // ── Backend connection config ───────────────────────────────────────
 const cleanBase=(url)=>(url||"").replace(/\/+$/,"");
@@ -67,6 +68,10 @@ export default function App(){
   const closeExplain=useCallback(()=>setExplainState(null),[]);
   const[screen,setScreen]=useState("select");
   const[gpList,setGpList]=useState([]);
+  // frontend-completeness-4 — distinct calendar fetch states so the grid can
+  // show a real error+retry instead of a perpetual "is backend running?".
+  const[calStatus,setCalStatus]=useState("loading"); // loading|error|ready
+  const[calReloadTick,setCalReloadTick]=useState(0);
   const[gp,setGp]=useState(null);
   const[phase,setPhase]=useState("welcome");
   const[form,setForm]=useState({origin:"",budget:"2500",currency:"EUR",stand:"any",extraDays:2,special:"",stops:"",departDate:"",returnDate:""});
@@ -97,6 +102,7 @@ export default function App(){
   const wsRef=useRef(null);
   const wsConnectingRef=useRef(null);
   const quoteSeqRef=useRef(0);
+  const saveTimerRef=useRef(null);
 
   const pushDebug=useCallback((label, data) => {
     const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
@@ -105,18 +111,19 @@ export default function App(){
     setDebugLog(prev => [...prev.slice(-19), line]);
   }, []);
 
-  // Fetch GP calendar from backend on mount
+  // Fetch GP calendar from backend on mount (and on Retry via calReloadTick)
   useEffect(()=>{
     let cancelled = false;
     const calendarUrl=`${API_BASE||window.location.origin}/api/calendar`;
     pushDebug("calendar.fetch.start", calendarUrl);
+    setCalStatus("loading");
     (async () => {
       try {
         const headers = await buildAuthHeaders();
         const r = await fetch(`${API_BASE}/api/calendar`, { headers });
         pushDebug("calendar.fetch.response", { status:r.status, ok:r.ok });
         if (!r.ok) {
-          if (!cancelled) pushDebug("calendar.fetch.error", `HTTP ${r.status}`);
+          if (!cancelled) { pushDebug("calendar.fetch.error", `HTTP ${r.status}`); setCalStatus("error"); }
           return;
         }
         const data = await r.json();
@@ -125,16 +132,22 @@ export default function App(){
         // storing it would leave the grid stuck on "is backend running?".
         if (!Array.isArray(data)) {
           pushDebug("calendar.fetch.error", "non-array calendar body");
+          setCalStatus("error");
           return;
         }
         pushDebug("calendar.fetch.success", { count:data.length });
         setGpList(data);
+        setCalStatus("ready");
+        // BS-14 funnel: top-of-funnel calendar view (count only, no PII).
+        track("calendar_view", { gp_count:data.length });
       } catch (err) {
-        if (!cancelled) pushDebug("calendar.fetch.error", String(err));
+        if (!cancelled) { pushDebug("calendar.fetch.error", String(err)); setCalStatus("error"); }
       }
     })();
     return () => { cancelled = true; };
-  },[pushDebug, buildAuthHeaders]);
+  },[pushDebug, buildAuthHeaders, calReloadTick]);
+
+  const retryCalendar=useCallback(()=>setCalReloadTick(t=>t+1),[]);
 
   useEffect(()=>{if(scrollRef.current)setTimeout(()=>{scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},80);},[results,thinkBatch,chatMsgs,statusMsgs]);
 
@@ -147,7 +160,15 @@ export default function App(){
   const prevResultsRef=useRef(null);
   const highlightTimeoutRef=useRef(null);
   const handleWsMsg=useCallback((evt)=>{
-    const msg=JSON.parse(evt.data);
+    // frontend-completeness-5 — a malformed frame must not throw uncaught
+    // inside the ws onmessage callback (mirrors SavedTrips' guarded parse).
+    let msg;
+    try{
+      msg=JSON.parse(evt.data);
+    }catch(e){
+      pushDebug("ws.message.parse_error", String(e));
+      return;
+    }
     pushDebug("ws.message", msg.type);
     if(msg.type==="message"){
       const agent=msg.data?.agent||"concierge";
@@ -218,8 +239,10 @@ export default function App(){
       setSpeaking(false);setChatLoading(false);
     }
     if(msg.type==="save_trip_ack"){
+      // frontend-completeness-8 — ack arrived: cancel the failure watchdog.
+      if(saveTimerRef.current){clearTimeout(saveTimerRef.current);saveTimerRef.current=null;}
       setSaveStatus({ok:true, id:msg.data?.id, ts:Date.now()});
-      setTimeout(()=>setSaveStatus(prev=>prev&&Date.now()-prev.ts>2500?null:prev), 3000);
+      setTimeout(()=>setSaveStatus(prev=>prev&&prev.ok&&Date.now()-prev.ts>2500?null:prev), 3000);
     }
     if(msg.type==="trip_loaded"){
       const d=msg.data||{};
@@ -278,18 +301,26 @@ export default function App(){
         pushDebug("ws.error", wsLogUrl);
         setChatMsgs(prev=>[...prev,{from:"c",text:"Connection error. Backend or WebSocket proxy is unreachable."}]);
         setPhase(prev=>prev==="running"?"done":prev);setSpeaking(false);
+        // frontend-completeness-3 — a chat refine runs while phase==="done",
+        // so the running-only reset below never fires for it. Clear the GO
+        // spinner unconditionally so the input/button can't stay stuck on "...".
+        setChatLoading(false);
       };
       ws.onclose=(evt)=>{
         pushDebug("ws.close", { code:evt.code, reason:evt.reason || "", wasClean:evt.wasClean });
         // Only clear the ref if this socket is still the live one (a leaked
         // earlier socket closing must not null out a healthy connection).
         if(wsRef.current===ws) wsRef.current=null;
+        // frontend-completeness-3 — clear chatLoading on every close (a
+        // mid-chat drop happens while phase==="done", outside the running
+        // branch below) so the GO button never stays stuck showing "...".
+        setChatLoading(false);
         // A clean close (no onerror) mid-plan would otherwise leave the UI
         // stuck in "running" forever. Recover with an honest message.
         setPhase(prev=>{
           if(prev==="running"){
             setChatMsgs(m=>[...m,{from:"c",text:"Connection closed before planning finished. Please reset and try again."}]);
-            setSpeaking(false);setChatLoading(false);
+            setSpeaking(false);
             return "done";
           }
           return prev;
@@ -313,6 +344,8 @@ export default function App(){
       depart_date: form.departDate,
       return_date: form.returnDate,
     });
+    // BS-14 funnel: plan run started (coarse, no free-text/PII).
+    track("plan_run", { gp:gp?.gp_name||null, currency:form.currency, stand:form.stand });
     cancelRef.current=false;setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setActiveConstraints({});setSelections({});setUpdatedCards(new Set());
     prevResultsRef.current=null;
     setChatMsgs([]);setStatusMsgs([{agent:"concierge",text:"Welcome, VIP! Connecting to your team..."}]);setShowStatus(false);
@@ -345,7 +378,7 @@ export default function App(){
     }
   };
 
-  const reset=()=>{cancelRef.current=true;resolveRef.current=null;try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;wsConnectingRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setActiveConstraints({});setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());setExplainState(null);prevResultsRef.current=null;};
+  const reset=()=>{cancelRef.current=true;resolveRef.current=null;if(saveTimerRef.current){clearTimeout(saveTimerRef.current);saveTimerRef.current=null;}setSaveStatus(null);try{if(wsRef.current&&wsRef.current.readyState<=1)wsRef.current.close();}catch(e){}wsRef.current=null;wsConnectingRef.current=null;setPhase("welcome");setZSt({});setConPos(CONC_HOME);setSpeaking(false);setThinkBatch(null);setResults([]);setLiveResults({});setBudgetSummary(null);setBaselineBudgetSummary(null);setActiveConstraints({});setChatMsgs([]);setStatusMsgs([]);setShowStatus(false);setChatInput("");setPipeIdx(-1);setSelections({});setChatLoading(false);setUpdatedCards(new Set());setExplainState(null);prevResultsRef.current=null;};
   const backToSelect=()=>{reset();setScreen("select");setGp(null);};
   const handleGpSelect=useCallback((selectedGp)=>{
     setGp(selectedGp);
@@ -353,6 +386,8 @@ export default function App(){
     setPhase("welcome");
     const { depart, ret } = defaultTripDates(selectedGp.race_date);
     setForm(f=>({...f, departDate:depart, returnDate:ret}));
+    // BS-14 funnel: GP selected (coarse identifiers only, no PII).
+    track("gp_select", { gp:selectedGp.gp_name, country:selectedGp.country });
   },[]);
 
   const wsAlive=()=>wsRef.current&&wsRef.current.readyState===WebSocket.OPEN;
@@ -396,11 +431,11 @@ export default function App(){
   };
 
   if(screen==="select") return(
-    <GpSelect gpList={gpList} onSelectGp={handleGpSelect} pushDebug={pushDebug}/>
+    <GpSelect gpList={gpList} onSelectGp={handleGpSelect} pushDebug={pushDebug} calStatus={calStatus} onRetry={retryCalendar}/>
   );
 
   return(
-    <div style={{background:"#0a0a0a",fontFamily:"'DM Sans',sans-serif",color:"#fff",maxWidth:680,margin:"0 auto",display:"flex",flexDirection:"column",height:"100vh",maxHeight:920,boxSizing:"border-box"}}>
+    <div data-app-root style={{background:"#0a0a0a",fontFamily:"'DM Sans',sans-serif",color:"#fff",maxWidth:680,width:"100%",margin:"0 auto",display:"flex",flexDirection:"column",height:"100vh",maxHeight:920,boxSizing:"border-box"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 
       <AppHeader gp={gp} phase={phase} pipeIdx={pipeIdx} onBack={backToSelect} onReset={reset}
@@ -408,6 +443,7 @@ export default function App(){
                    <>
                      {phase==="done" && PERSIST_ENABLED && (
                        <button
+                         type="button"
                          data-testid="save-trip-btn"
                          disabled={!wsAlive() || results.length===0}
                          onClick={()=>{
@@ -428,14 +464,26 @@ export default function App(){
                                active_constraints: activeConstraints,
                              },
                            }));
+                           // BS-14 funnel: save action (coarse, no PII).
+                           track("trip_save", { gp:gp?.gp_name||null });
+                           // frontend-completeness-8 — show a pending state and
+                           // a failure watchdog so a dropped ack doesn't leave
+                           // the button silently sitting on "SAVE".
+                           setSaveStatus({pending:true, ts:Date.now()});
+                           if(saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                           saveTimerRef.current=setTimeout(()=>{
+                             setSaveStatus(prev=>prev&&prev.pending?{failed:true, ts:Date.now()}:prev);
+                             saveTimerRef.current=null;
+                           },8000);
                          }}
-                         style={{padding:"3px 8px",borderRadius:5,border:"1px solid #1d4ed8",background:"transparent",color:"#93c5fd",fontSize:8,cursor:"pointer"}}
+                         style={{padding:"3px 8px",borderRadius:5,border:`1px solid ${saveStatus?.failed?"#7f1d1d":"#1d4ed8"}`,background:"transparent",color:saveStatus?.failed?"#fca5a5":"#93c5fd",fontSize:8,cursor:"pointer"}}
                        >
-                         {saveStatus?.ok ? "SAVED" : "SAVE"}
+                         {saveStatus?.ok ? "SAVED" : saveStatus?.failed ? "SAVE FAILED" : saveStatus?.pending ? "SAVING…" : "SAVE"}
                        </button>
                      )}
                      {PERSIST_ENABLED && (
                        <button
+                         type="button"
                          data-testid="my-trips-btn"
                          onClick={async ()=>{
                            // Open WS lazily if not yet connected, then show
@@ -469,7 +517,7 @@ export default function App(){
         ))}
         {phase==="done"&&statusMsgs.length>0&&(
           <div style={{marginBottom:6}}>
-            <button onClick={()=>setShowStatus(!showStatus)} style={{fontSize:8,color:"#444",background:"none",border:"none",cursor:"pointer",padding:0,textDecoration:"underline"}}>
+            <button type="button" onClick={()=>setShowStatus(!showStatus)} style={{fontSize:8,color:"#444",background:"none",border:"none",cursor:"pointer",padding:0,textDecoration:"underline"}}>
               {showStatus?"Hide":"Show"} planning trace ({statusMsgs.length} messages)
             </button>
             {showStatus&&<div style={{marginTop:4,padding:"6px 8px",background:"#0d0d0d",borderRadius:6,border:"1px solid #1a1a1a",maxHeight:120,overflowY:"auto"}}>
