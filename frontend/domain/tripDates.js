@@ -27,7 +27,51 @@ export function defaultTripDates(raceDate){
   return { depart:addIsoDays(raceDate,-2), ret:addIsoDays(raceDate,3) };
 }
 
-export function validateTripDates(depart, returnDate, raceDate){
+// BS-12 — today-relative date helpers. The app's GP calendar drifts as races
+// pass; tests (and the UI) must reason about "is this date/race still in the
+// future" against an injectable clock instead of hardcoded calendar dates.
+// `today` is accepted as an ISO string ("YYYY-MM-DD") or a Date; it defaults
+// to the real clock so production callers keep current behaviour.
+function todayIsoUTC(today){
+  if(typeof today==="string"){
+    return parseIsoDateUTC(today)!==null ? today : "";
+  }
+  const d=today instanceof Date ? today : new Date();
+  return toIsoDateUTC(d);
+}
+
+/**
+ * True when `iso` (YYYY-MM-DD) is strictly before `today`. Unparseable input
+ * is treated as "not past" so it never silently degrades a valid selection.
+ */
+export function isPastIsoDate(iso, today){
+  const day=parseIsoDateUTC(iso);
+  if(day===null) return false;
+  const ref=parseIsoDateUTC(todayIsoUTC(today));
+  if(ref===null) return false;
+  return day<ref;
+}
+
+/**
+ * Given a calendar (array of {race_date} entries) and a reference clock,
+ * return the soonest race whose race_date is today-or-later. Returns null
+ * when every race has passed — the all-races-past degradation path. Pure:
+ * does not mutate the input and ignores entries without a parseable date.
+ */
+export function pickUpcomingRace(races, today){
+  if(!Array.isArray(races)) return null;
+  const ref=parseIsoDateUTC(todayIsoUTC(today));
+  if(ref===null) return null;
+  let best=null, bestUtc=Infinity;
+  for(const race of races){
+    const utc=parseIsoDateUTC(race&&race.race_date);
+    if(utc===null||utc<ref) continue;
+    if(utc<bestUtc){ best=race; bestUtc=utc; }
+  }
+  return best;
+}
+
+export function validateTripDates(depart, returnDate, raceDate, today){
   const warnings=[];
   if(!depart && !returnDate) return { valid:true, error:"", warnings };
   if(!depart || !returnDate) return { valid:false, error:"Please set both depart and return dates.", warnings };
@@ -45,5 +89,10 @@ export function validateTripDates(depart, returnDate, raceDate){
     if(rc!==null&&r<rc) warnings.push("You leave before race day — you won't see the race.");
   }
   if(nights>14) warnings.push(`Trip is ${nights} nights — that's a long F1 weekend.`);
+  // BS-12 today-relative warning: only when a clock is supplied (default
+  // undefined keeps the existing 3-arg WelcomeForm caller byte-for-byte).
+  if(today!==undefined && isPastIsoDate(depart, today)){
+    warnings.push("Depart date is in the past.");
+  }
   return { valid:true, error:"", warnings };
 }

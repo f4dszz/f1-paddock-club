@@ -6,6 +6,20 @@ import { expect, test } from "@playwright/test";
 // firing (which requires a working LLM). Refinement-driven cases live in
 // `refine.spec.js` and are env-gated by `E2E_INCLUDE_REFINE=1`.
 
+// BS-12: never hardcode calendar dates — they rot into the past as races
+// pass (this spec previously used 2026-05-22/26, both now past). Compute a
+// near-future, strictly-ordered, <30-night depart/return pair relative to
+// the run clock so the deterministic lane stays valid over time. Anchored
+// to UTC midnight so the emitted ISO strings are stable regardless of TZ.
+function futureTripDates(departOffsetDays = 90, nights = 4) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const toIso = (utcMs) => new Date(utcMs).toISOString().slice(0, 10);
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const depart = todayUtc + departOffsetDays * DAY_MS;
+  return { depart: toIso(depart), ret: toIso(depart + nights * DAY_MS) };
+}
+
 test("mock/fallback planning flow supports selections, budget quote, debug trace, and honest links", async ({ page }) => {
   await page.goto("/?debug=1");
 
@@ -43,11 +57,13 @@ test("welcome form date inputs preserve values when filled in sequence", async (
 
   const depart = page.getByTestId("depart-date-input");
   const ret = page.getByTestId("return-date-input");
+  // BS-12: relative future dates, not hardcoded literals that rot into the past.
+  const { depart: departIso, ret: returnIso } = futureTripDates();
   // Two consecutive fills exercised the e.currentTarget.value-in-async-setter regression.
-  await depart.fill("2026-05-22");
-  await ret.fill("2026-05-26");
+  await depart.fill(departIso);
+  await ret.fill(returnIso);
 
   // toHaveValue auto-polls up to expect.timeout (15s); no fixed sleep needed.
-  await expect(depart).toHaveValue("2026-05-22");
-  await expect(ret).toHaveValue("2026-05-26");
+  await expect(depart).toHaveValue(departIso);
+  await expect(ret).toHaveValue(returnIso);
 });
