@@ -1,0 +1,57 @@
+name: Uptime
+
+# Scheduled liveness/readiness probe (BS-09). Polls the deployed backend's
+# /readyz on a cron; a non-200 (e.g. the DB flipped to down) fails the run so
+# GitHub notifies via the normal Actions failure path (email / watch settings).
+# This is the lightweight, in-repo alerting layer — point it at an external
+# uptime monitor (Better Uptime / Pingdom) for sub-minute resolution if needed.
+#
+# Setup: add a repo variable (Settings -> Secrets and variables -> Actions ->
+# Variables) named UPTIME_READYZ_URL, e.g.
+#   https://f1-paddock-backend.up.railway.app/readyz
+# Until it is set, the job no-ops with a clear message (so a fresh fork's
+# schedule does not page on a missing variable).
+
+on:
+  schedule:
+    # Every 15 minutes.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      readyz_url:
+        description: "Override the /readyz URL to probe (defaults to repo var UPTIME_READYZ_URL)"
+        required: false
+
+jobs:
+  readyz:
+    name: Probe /readyz
+    runs-on: ubuntu-latest
+    env:
+      READYZ_URL: ${{ inputs.readyz_url || vars.UPTIME_READYZ_URL }}
+    steps:
+      - name: Probe readiness endpoint
+        run: |
+          set -euo pipefail
+          if [ -z "$READYZ_URL" ]; then
+            echo "UPTIME_READYZ_URL is not configured — skipping."
+            echo "Set repo variable UPTIME_READYZ_URL to your backend /readyz URL to enable."
+            exit 0
+          fi
+
+          echo "Probing $READYZ_URL"
+          # Capture body + status separately so we can assert both.
+          code=$(curl -s -o /tmp/readyz.json -w "%{http_code}" --max-time 20 "$READYZ_URL" || echo "000")
+          echo "HTTP $code"
+          cat /tmp/readyz.json || true
+          echo
+
+          if [ "$code" != "200" ]; then
+            echo "FAIL: /readyz returned $code (expected 200)."
+            exit 1
+          fi
+          # Defensive: even a 200 must report the DB as up.
+          if ! grep -q '"db":"ok"' /tmp/readyz.json; then
+            echo "FAIL: /readyz returned 200 but db is not ok."
+            exit 1
+          fi
+          echo "Readiness OK."

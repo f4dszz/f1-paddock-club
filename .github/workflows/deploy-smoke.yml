@@ -1,11 +1,17 @@
 name: Deploy smoke
 
-# Manual post-deploy verification. Triggered from the Actions tab after
-# Vercel + Railway have promoted a new revision. Verifies:
+# Post-deploy verification. Run manually from the Actions tab after Vercel +
+# Railway have promoted a new revision, AND on a schedule so a post-deploy
+# regression (DB down, auth misconfigured, secret leak) is caught even when no
+# human remembers to run it. The scheduled run reads the URLs from repo
+# variables so it needs no inputs (see SMOKE_BACKEND_URL / SMOKE_FRONTEND_URL).
+#
+# Verifies:
 #   - /healthz returns 200 ok
 #   - /readyz reports the DB up
 #   - /api/calendar is gated (401 without a token)
-#   - frontend bundle contains no secret-looking strings
+#   - frontend bundle contains no secret-looking strings (HARD-fails if the
+#     bundle can't be located, scans ALL emitted JS, matches value shapes too)
 
 on:
   workflow_dispatch:
@@ -19,61 +25,117 @@ on:
       demo_token:
         description: "Demo access token, only if Clerk is not configured for this deployment"
         required: false
+  schedule:
+    # Daily at 07:00 UTC. Uses repo variables for URLs (Settings -> Secrets and
+    # variables -> Actions -> Variables): SMOKE_BACKEND_URL, SMOKE_FRONTEND_URL.
+    # A failing scheduled run notifies via the normal GitHub Actions failure path.
+    - cron: "0 7 * * *"
 
 jobs:
   smoke:
     name: Post-deploy smoke
     runs-on: ubuntu-latest
+    env:
+      # Manual runs use the typed inputs; scheduled runs fall back to repo vars.
+      BACKEND_URL: ${{ inputs.backend_url || vars.SMOKE_BACKEND_URL }}
+      FRONTEND_URL: ${{ inputs.frontend_url || vars.SMOKE_FRONTEND_URL }}
+      DEMO_TOKEN: ${{ inputs.demo_token }}
     steps:
+      - name: Verify target URLs are set
+        run: |
+          set -e
+          if [ -z "$BACKEND_URL" ] || [ -z "$FRONTEND_URL" ]; then
+            echo "BACKEND_URL/FRONTEND_URL are empty."
+            echo "For scheduled runs, set repo variables SMOKE_BACKEND_URL and SMOKE_FRONTEND_URL."
+            exit 1
+          fi
+          echo "backend:  $BACKEND_URL"
+          echo "frontend: $FRONTEND_URL"
+
       - name: healthz
         run: |
           set -e
-          body=$(curl -fsS "${{ inputs.backend_url }}/healthz")
+          body=$(curl -fsS "$BACKEND_URL/healthz")
           echo "$body"
           echo "$body" | grep -q '"status":"ok"'
 
       - name: readyz reports DB up
         run: |
           set -e
-          body=$(curl -fsS "${{ inputs.backend_url }}/readyz")
+          body=$(curl -fsS "$BACKEND_URL/readyz")
           echo "$body"
           echo "$body" | grep -q '"db":"ok"'
 
       - name: /api/calendar without auth is 401
         run: |
           set -e
-          code=$(curl -s -o /dev/null -w "%{http_code}" "${{ inputs.backend_url }}/api/calendar")
+          code=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/api/calendar")
           echo "got: $code"
           test "$code" = "401" || (echo "expected 401, got $code"; exit 1)
 
       - name: /api/calendar with demo token works (optional)
-        if: ${{ inputs.demo_token != '' }}
+        if: ${{ env.DEMO_TOKEN != '' }}
         run: |
           set -e
-          curl -fsS -H "Authorization: Bearer ${{ inputs.demo_token }}" \
-            "${{ inputs.backend_url }}/api/calendar" > /tmp/cal.json
+          curl -fsS -H "Authorization: Bearer $DEMO_TOKEN" \
+            "$BACKEND_URL/api/calendar" > /tmp/cal.json
           grep -q "gp_name" /tmp/cal.json
 
       - name: Frontend HTML loads
         run: |
           set -e
-          curl -fsS "${{ inputs.frontend_url }}" > /tmp/index.html
+          curl -fsS "$FRONTEND_URL" > /tmp/index.html
           head -n 20 /tmp/index.html
 
       - name: Frontend bundle exposes no secret strings
+        # HARD-fails if no JS asset can be located (previously this exited 0 — a
+        # false green on a security check). Scans EVERY emitted JS asset and
+        # matches both forbidden env-var NAMES and secret VALUE shapes.
         run: |
-          set -e
-          curl -fsS "${{ inputs.frontend_url }}/assets/" -o /tmp/assets.html || true
-          # Grep the loaded index.html — Vite includes a hashed script tag.
-          script=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' /tmp/index.html | head -n 1)
-          if [ -n "$script" ]; then
-            curl -fsS "${{ inputs.frontend_url }}${script}" > /tmp/bundle.js
-            forbidden='CLERK_SECRET_KEY|OPENAI_API_KEY|DATABASE_URL|SENTRY_DSN_BACKEND|FIRECRAWL_API_KEY|SERPAPI_API_KEY'
-            if grep -E "$forbidden" /tmp/bundle.js; then
-              echo "Forbidden secret patterns found in frontend bundle"
-              exit 1
-            fi
-            echo "Bundle scan clean"
-          else
-            echo "Could not locate built JS asset; skipping bundle scan"
+          set -euo pipefail
+          curl -fsS "$FRONTEND_URL" > /tmp/index.html
+
+          # Collect every hashed JS asset referenced by the entry HTML.
+          mapfile -t scripts < <(grep -oE '/assets/[A-Za-z0-9._/-]+\.js' /tmp/index.html | sort -u)
+
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "FAIL: could not locate any built JS asset in the served HTML."
+            echo "Vite output naming may have changed, or a CDN rewrote the path."
+            echo "Refusing to report a false green on a secret-scan check."
+            exit 1
           fi
+
+          # Forbidden env-var NAMES (a literal secret name leaking into the bundle).
+          name_patterns='CLERK_SECRET_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|DATABASE_URL|SENTRY_DSN_BACKEND|FIRECRAWL_API_KEY|SERPAPI_API_KEY|TAVILY_API_KEY|CLERK_WEBHOOK_SECRET|DEMO_ACCESS_TOKEN'
+          # Secret VALUE shapes — catch a leaked value even when not next to its name.
+          #   sk-...            OpenAI / OpenAI-compatible secret keys
+          #   sk-ant-...        Anthropic secret keys
+          #   sk_live_ / sk_test_   Clerk/Stripe-style secret keys
+          #   postgres(ql)://user:pass@host   a DB URL with embedded credentials
+          #   https://<key>@<org>.ingest.sentry.io/<proj>  a *backend* Sentry DSN
+          value_patterns='sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{20,}|sk_(live|test)_[A-Za-z0-9]{16,}|postgres(ql)?://[^:@/]+:[^@/]+@|https://[a-z0-9]+@[a-z0-9.-]+\.ingest\.sentry\.io/[0-9]+'
+
+          failed=0
+          for s in "${scripts[@]}"; do
+            url="$FRONTEND_URL$s"
+            echo "Scanning $url"
+            if ! curl -fsS "$url" > /tmp/bundle.js; then
+              echo "FAIL: referenced asset could not be fetched: $url"
+              failed=1
+              continue
+            fi
+            if grep -nE "$name_patterns" /tmp/bundle.js; then
+              echo "FAIL: forbidden secret NAME found in $s"
+              failed=1
+            fi
+            if grep -nE "$value_patterns" /tmp/bundle.js; then
+              echo "FAIL: secret VALUE shape (sk-/DSN/DB-URL) found in $s"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Bundle secret scan FAILED."
+            exit 1
+          fi
+          echo "Bundle scan clean across ${#scripts[@]} asset(s)."

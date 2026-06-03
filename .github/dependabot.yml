@@ -1,0 +1,47 @@
+# Dependabot configuration (BS-11).
+#
+# Opens weekly update PRs for all three ecosystems the project depends on, so
+# the deps (and the npm lockfile / GitHub Actions versions) actually get
+# serviced instead of silently aging. npm audit only reports at build time; it
+# does not open fix PRs — this fills that gap and also covers Python, which has
+# no audit equivalent in CI.
+version: 2
+updates:
+  # Backend Python deps (requirements.txt + requirements-dev.txt live here).
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+    commit-message:
+      prefix: "deps(pip)"
+
+  # Frontend npm deps (package.json + package-lock.json).
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "deps(npm)"
+
+  # GitHub Actions used in .github/workflows/*.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "deps(actions)"

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fast pre-commit hook: compile + lint ONLY the files staged for this commit.
+# Deliberately lightweight (sub-second on a typical commit) so committing stays
+# snappy — the heavy full gate (tests, build, migrations, audit) runs on
+# pre-push via scripts/check-local.sh. This catches the cheap, high-signal
+# mistakes (syntax errors, dead imports, undefined vars) before they land.
+#
+# Enable with: scripts/install-hooks.sh  (sets core.hooksPath=.githooks)
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+PYTHON_BIN="$("$ROOT_DIR/scripts/python-bin.sh" "$ROOT_DIR" 2>/dev/null || echo python3)"
+
+# Staged, added/copied/modified files only (skip deletions).
+mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACM)
+
+if [ "${#STAGED[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+PY_FILES=()
+JS_FILES=()
+for f in "${STAGED[@]}"; do
+  case "$f" in
+    backend/*.py)
+      # Skip alembic migration boilerplate from lint latitude but still compile.
+      PY_FILES+=("$ROOT_DIR/$f")
+      ;;
+    frontend/*.js|frontend/*.jsx|frontend/*.mjs)
+      JS_FILES+=("$f")
+      ;;
+  esac
+done
+
+fail=0
+
+if [ "${#PY_FILES[@]}" -gt 0 ]; then
+  echo "[pre-commit] Python byte-compile (${#PY_FILES[@]} file(s))"
+  if ! "$PYTHON_BIN" -m py_compile "${PY_FILES[@]}"; then
+    echo "[pre-commit] Python compile FAILED" >&2
+    fail=1
+  fi
+  # Lint staged python with ruff if available (CI enforces it regardless).
+  if "$PYTHON_BIN" -c "import ruff" >/dev/null 2>&1; then
+    echo "[pre-commit] ruff check (staged python)"
+    if ! ( cd "$ROOT_DIR" && "$PYTHON_BIN" -m ruff check "${PY_FILES[@]}" ); then
+      echo "[pre-commit] ruff FAILED" >&2
+      fail=1
+    fi
+  fi
+fi
+
+if [ "${#JS_FILES[@]}" -gt 0 ]; then
+  echo "[pre-commit] ESLint (${#JS_FILES[@]} staged JS/JSX file(s))"
+  # Pass paths relative to the frontend dir; eslint resolves them from there.
+  REL_JS=()
+  for f in "${JS_FILES[@]}"; do
+    REL_JS+=("${f#frontend/}")
+  done
+  if [ -d "$ROOT_DIR/frontend/node_modules" ]; then
+    if ! ( cd "$ROOT_DIR/frontend" && npx --no-install eslint "${REL_JS[@]}" ); then
+      echo "[pre-commit] ESLint FAILED" >&2
+      fail=1
+    fi
+  else
+    echo "[pre-commit] frontend/node_modules missing — skipping eslint (run npm ci)." >&2
+  fi
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "[pre-commit] blocked: fix the issues above or commit with --no-verify to bypass." >&2
+  exit 1
+fi
+
+exit 0

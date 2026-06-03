@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Heavy pre-push hook: the FULL local gate (compile, lint, type-check, tests +
+# coverage floor, migration smoke, secret scan, frontend lint/test/build/audit).
+# The fast per-file compile+lint runs earlier on pre-commit (.githooks/pre-commit);
+# this is the slow, thorough mirror of CI that must pass before code leaves the
+# machine. Keep both: pre-commit for snappy feedback, pre-push for the contract.
+
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 
 "$ROOT_DIR/scripts/check-agent-doc-sync.sh"

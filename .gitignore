@@ -32,7 +32,9 @@ backend/logs/
 # Tool cache files (disk-backed query results)
 backend/tools/.cache/
 
-# Local SQLite databases (dev fallback + tests)
+# Local SQLite databases (dev fallback + tests) — anywhere, incl. repo root
+*.sqlite
+*.sqlite3
 backend/_dev.sqlite3
 backend/_test*.sqlite3
 

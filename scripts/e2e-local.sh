@@ -49,5 +49,16 @@ FRONTEND_PORT="$FRONTEND_PORT" "$ROOT_DIR/scripts/dev-frontend.sh" &
 FRONTEND_PID=$!
 wait_for_url "Frontend" "http://localhost:$FRONTEND_PORT/" 30
 
+# saved_trips.spec.js needs a deterministic plan first, which only happens under
+# LLM_STUB_MODE=1 (same gate refine/quote_incomplete use). So default the
+# saved_trips lane ON only when stub mode is active — this makes a local
+# `LLM_STUB_MODE=1 ./scripts/e2e-local.sh` match CI (which sets
+# E2E_INCLUDE_SAVED=1 LLM_STUB_MODE=1) without making non-stub runs flaky.
+# Override explicitly with E2E_INCLUDE_SAVED=1|0 at any time.
+if [[ -z "${E2E_INCLUDE_SAVED:-}" && -n "${LLM_STUB_MODE:-}" ]]; then
+  E2E_INCLUDE_SAVED=1
+fi
+export E2E_INCLUDE_SAVED="${E2E_INCLUDE_SAVED:-0}"
+
 cd "$ROOT_DIR/frontend"
 E2E_BASE_URL="http://localhost:$FRONTEND_PORT" npm run e2e
